@@ -499,8 +499,8 @@ requirement.
 Completed GitHub Actions evidence:
 
 - Repository: `mii443/detllm`
-- Commit: `9c50d9c` (`Make CLI temp test paths unique`)
-- Run: <https://github.com/mii443/detllm/actions/runs/28954013506>
+- Commit: `0cf76a4` (`Make CLI unit temp paths unique`)
+- Run: <https://github.com/mii443/detllm/actions/runs/28954531773>
 - Result: passed
 
 The completed run passed the native matrix jobs (`x86_64-linux`,
