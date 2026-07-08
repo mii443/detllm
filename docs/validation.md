@@ -499,8 +499,8 @@ requirement.
 Completed GitHub Actions evidence:
 
 - Repository: `mii443/detllm`
-- Commit: `7fdb647` (`Fix CI workflow parse error`)
-- Run: <https://github.com/mii443/detllm/actions/runs/28953618071>
+- Commit: `9c50d9c` (`Make CLI temp test paths unique`)
+- Run: <https://github.com/mii443/detllm/actions/runs/28954013506>
 - Result: passed
 
 The completed run passed the native matrix jobs (`x86_64-linux`,
