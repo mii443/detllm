@@ -678,6 +678,7 @@ fn check_ci_workflow() -> Result<(), String> {
 fn validate_ci_workflow_text(text: &str) -> Result<(), String> {
     let required = [
         ("hygiene job", "  hygiene:"),
+        ("manual workflow dispatch trigger", "  workflow_dispatch:"),
         ("test job", "  test:"),
         ("logits-hash-match job", "  logits-hash-match:"),
         ("msrv job", "  msrv:"),
@@ -1844,6 +1845,8 @@ floating_table = { version = "2.0" }
 
     fn valid_ci_workflow_text() -> &'static str {
         r#"
+on:
+  workflow_dispatch:
 jobs:
   hygiene:
     steps:

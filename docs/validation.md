@@ -502,10 +502,10 @@ The hygiene job also runs:
 cargo run -p xtask -- check-ci-workflow
 ```
 
-That command validates the workflow structure itself: the three native target
-jobs, two toolchain-skew hash artifacts, wasm build/execution/codec smoke,
-six-artifact final hash verification, and the artifact upload names must all
-remain present.
+That command validates the workflow structure itself: the manual
+`workflow_dispatch` trigger, the three native target jobs, two toolchain-skew
+hash artifacts, wasm build/execution/codec smoke, six-artifact final hash
+verification, and the artifact upload names must all remain present.
 
 The GitHub Actions `wasm` job builds `detllm` for `wasm32-wasip1`, runs
 `selftest`, compares fixture `logits --hash` outputs against native execution,
