@@ -1,0 +1,74 @@
+# detllm
+
+`detllm` is a deterministic Rust LLM inference and lossless compression
+prototype based on the normative design in [detllm-design.md](detllm-design.md).
+The current implementation focuses on bit-identical CPU logits/CDF generation
+for a Llama-style decoder model, GGUF `F32` / `Q8_0` / `Q4_0` tensor loading,
+and a range-coder-backed `compress` / `decompress` CLI.
+
+## Current Status
+
+Implemented crates:
+
+- `det-num`: fixed-order reductions, deterministic rounding, f16 conversion,
+  vendored libm `exp`/`sin`/`cos`/`log`, SHA-256, numeric canary.
+- `det-quant`: `Q8_0`, `Q4_0`, in-memory `Q8A`, scalar and `simd` feature
+  kernels with bit-hash coverage.
+- `det-gguf`: zero-copy GGUF metadata and tensor parsing for repository
+  fixtures.
+- `det-token`: byte fallback, SentencePiece-style, and GPT-2-style tokenizer
+  paths used by the v1 target models.
+- `det-model`: deterministic Llama-style single-token forward pass, RMSNorm,
+  RoPE, GQA attention, SwiGLU, F32/Q8/Q4 GEMV, `parallel` feature row
+  partitioning, and logits hashing.
+- `det-coder`: logits-to-CDF conversion, 64-bit range coder, and DTLZ header.
+- `det-cli`: `selftest`, `gguf-dump`, `sha256`, `tokenize`, `logits`,
+  `compress`, and `decompress`.
+- `xtask`: deterministic generation and stale-checking of repository testdata.
+
+Repository fixtures:
+
+| fixture | purpose | logits hash |
+|---|---|---|
+| `testdata/tiny-f32.gguf` | all-F32 reference path | `92a0280149c6b1505c84dce0d19486a2093f93b7978b579c220000d12e4ef7e7` |
+| `testdata/tiny-qmix.gguf` | mixed `Q8_0`/`Q4_0` path | `8a34d3c4a05e9a30b90aadcdca7b6bac91655e6ab67980ccdb6726565d35f3e4` |
+
+The shared token sequence is `testdata/tiny.tokens.txt`.
+
+## Common Commands
+
+```sh
+cargo run -p xtask -- generate-testdata --check
+cargo run -p xtask -- check-determinism
+cargo run -p xtask -- check-ci-workflow
+cargo run --release -p xtask -- bench-testdata --iters 100
+cargo run --release -p xtask -- bench-file --model testdata/tiny-f32.gguf --input testdata/tiny.tokens.txt --n-ctx 8 --iters 2
+cargo run --release -p xtask -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --iters 1
+cargo run -p det-cli -- tokenize -m model.gguf -p "prompt text"
+cargo run -p xtask -- compare-logits --actual detllm.logits.bin --reference reference.logits.bin --row-size VOCAB --rows TOKENS --min-cosine 0.999
+cargo run -p det-cli -- selftest
+cargo run -p det-cli -- logits -m testdata/tiny-f32.gguf --tokens "$(cat testdata/tiny.tokens.txt)" --hash --chunk-size 3
+cargo run -p det-cli -- logits -m testdata/tiny-qmix.gguf --tokens "$(cat testdata/tiny.tokens.txt)" --hash --chunk-size 3
+cargo test --workspace
+cargo test --workspace --features parallel,simd
+cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --all-targets --features parallel,simd -- -D warnings
+```
+
+## Local Validation Snapshot
+
+The current smoke validation is recorded in
+[docs/validation.md](docs/validation.md). The included compression smoke uses
+the tiny F32 fixture and verifies byte-for-byte round-trip on a small input; it
+is not a meaningful compression-ratio benchmark.
+
+## Remaining Work
+
+The implementation is not yet complete against the full design. In particular,
+the following acceptance evidence is still missing:
+
+- TinyLlama / SmolLM2 / Qwen2.5 external model validation.
+- HF transformers or llama.cpp cosine-similarity sanity checks.
+- enwik8 first-1MB compression-rate measurement with `xtask bench-file`.
+- Criterion or equivalent full benchmark results on real target hardware.
+- Actual GitHub Actions run evidence for the full cross-platform matrix.

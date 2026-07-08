@@ -1,0 +1,26 @@
+[package]
+name = "det-cli"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "detllm"
+path = "src/main.rs"
+
+[dependencies]
+det-num = { path = "../det-num" }
+det-coder = { path = "../det-coder" }
+det-gguf = { path = "../det-gguf" }
+det-model = { path = "../det-model" }
+det-token = { path = "../det-token" }
+det-quant = { path = "../det-quant" }
+
+[features]
+default = []
+parallel = ["det-model/parallel"]
+simd = ["det-model/simd"]
+
+[lints]
+workspace = true

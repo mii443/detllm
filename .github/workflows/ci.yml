@@ -1,0 +1,166 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: aarch64-unknown-linux-gnu
+      - run: cargo fmt --all --check
+      - run: cargo run -p xtask -- generate-testdata --check
+      - run: cargo run -p xtask -- check-determinism
+      - run: cargo run -p xtask -- check-ci-workflow
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo clippy --workspace --all-targets --features parallel -- -D warnings
+      - run: cargo clippy --workspace --all-targets --features simd -- -D warnings
+      - run: cargo clippy --workspace --all-targets --features parallel,simd -- -D warnings
+      - run: RUSTFLAGS="-C target-feature=+avx2" cargo clippy -p det-quant --all-targets --features simd -- -D warnings
+      - run: RUSTFLAGS="-C target-feature=+avx2" cargo test -p det-quant --features simd simd_blocks_match_scalar_bits
+      - run: cargo check -p det-quant --target aarch64-unknown-linux-gnu --features simd
+      - run: cargo run -p det-cli -- selftest
+
+  test:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: x86_64-linux
+          - os: macos-14
+            name: aarch64-macos
+          - os: ubuntu-24.04-arm
+            name: aarch64-linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --workspace
+      - run: cargo test --workspace --features parallel
+      - run: cargo test --workspace --features simd
+      - run: cargo test --workspace --features parallel,simd
+      - run: cargo run -p det-cli -- selftest
+      - run: |
+          cargo run -p det-cli -- logits -m testdata/tiny-f32.gguf --tokens "$(cat testdata/tiny.tokens.txt)" --hash --chunk-size 3 > tiny-f32.logits.sha256
+          cargo run -p det-cli -- logits -m testdata/tiny-qmix.gguf --tokens "$(cat testdata/tiny.tokens.txt)" --hash --chunk-size 3 > tiny-qmix.logits.sha256
+          cmp testdata/tiny-f32.logits.sha256 tiny-f32.logits.sha256
+          cmp testdata/tiny-qmix.logits.sha256 tiny-qmix.logits.sha256
+          {
+            printf 'tiny-f32 '
+            cat tiny-f32.logits.sha256
+            printf 'tiny-qmix '
+            cat tiny-qmix.logits.sha256
+          } > logits-hashes.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: logits-hashes-${{ matrix.name }}
+          path: logits-hashes.txt
+
+  logits-hash-match:
+    runs-on: ubuntu-latest
+    needs: [test, toolchain-skew, wasm]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/download-artifact@v4
+        with:
+          path: logits-hashes
+          pattern: logits-hashes-*
+      - run: cargo run -p xtask -- verify-logits-hashes --dir logits-hashes --expected-count 6
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.77.0"
+      - run: cargo test --workspace
+
+  toolchain-skew:
+    strategy:
+      matrix:
+        toolchain: [stable, "1.94.0"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+      - run: cargo test --workspace
+      - run: cargo run -p det-cli -- selftest
+      - run: |
+          cargo run -p det-cli -- logits -m testdata/tiny-f32.gguf --tokens "$(cat testdata/tiny.tokens.txt)" --hash --chunk-size 3 > tiny-f32.logits.sha256
+          cargo run -p det-cli -- logits -m testdata/tiny-qmix.gguf --tokens "$(cat testdata/tiny.tokens.txt)" --hash --chunk-size 3 > tiny-qmix.logits.sha256
+          cmp testdata/tiny-f32.logits.sha256 tiny-f32.logits.sha256
+          cmp testdata/tiny-qmix.logits.sha256 tiny-qmix.logits.sha256
+          {
+            printf 'tiny-f32 '
+            cat tiny-f32.logits.sha256
+            printf 'tiny-qmix '
+            cat tiny-qmix.logits.sha256
+          } > logits-hashes.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: logits-hashes-toolchain-${{ matrix.toolchain }}
+          path: logits-hashes.txt
+
+  wasm:
+    runs-on: ubuntu-latest
+    env:
+      WASMTIME_VERSION: v46.0.1
+      XDG_CACHE_HOME: ${{ runner.temp }}/wasmtime-cache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+      - name: Install wasmtime
+        run: |
+          set -eu
+          curl -fsSL "https://github.com/bytecodealliance/wasmtime/releases/download/${WASMTIME_VERSION}/wasmtime-${WASMTIME_VERSION}-x86_64-linux.tar.xz" -o wasmtime.tar.xz
+          tar -xf wasmtime.tar.xz
+          echo "$PWD/wasmtime-${WASMTIME_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
+      - run: cargo build --workspace --target wasm32-wasip1
+      - run: cargo build --workspace --target wasm32-wasip1 --features parallel
+      - run: cargo build --workspace --target wasm32-wasip1 --features simd
+      - run: cargo build --workspace --target wasm32-wasip1 --features parallel,simd
+      - run: wasmtime target/wasm32-wasip1/debug/detllm.wasm selftest
+      - run: |
+          cargo run -p det-cli -- logits -m testdata/tiny-f32.gguf --tokens "$(cat testdata/tiny.tokens.txt)" --hash --chunk-size 3 > native-tiny-f32.logits.sha256
+          cargo run -p det-cli -- logits -m testdata/tiny-qmix.gguf --tokens "$(cat testdata/tiny.tokens.txt)" --hash --chunk-size 3 > native-tiny-qmix.logits.sha256
+          cmp testdata/tiny-f32.logits.sha256 native-tiny-f32.logits.sha256
+          cmp testdata/tiny-qmix.logits.sha256 native-tiny-qmix.logits.sha256
+      - run: |
+          wasmtime --dir . target/wasm32-wasip1/debug/detllm.wasm logits -m testdata/tiny-f32.gguf --tokens "$(cat testdata/tiny.tokens.txt)" --hash --chunk-size 3 > tiny-f32.logits.sha256
+          wasmtime --dir . target/wasm32-wasip1/debug/detllm.wasm logits -m testdata/tiny-qmix.gguf --tokens "$(cat testdata/tiny.tokens.txt)" --hash --chunk-size 3 > tiny-qmix.logits.sha256
+          cmp native-tiny-f32.logits.sha256 tiny-f32.logits.sha256
+          cmp native-tiny-qmix.logits.sha256 tiny-qmix.logits.sha256
+          {
+            printf 'tiny-f32 '
+            cat tiny-f32.logits.sha256
+            printf 'tiny-qmix '
+            cat tiny-qmix.logits.sha256
+          } > logits-hashes.txt
+      - run: |
+          set -eu
+          mkdir -p wasm-codec-smoke
+          wasmtime --dir . target/wasm32-wasip1/debug/detllm.wasm compress -m testdata/tiny-f32.gguf -i testdata/tiny.tokens.txt -o wasm-codec-smoke/tiny-f32.dtlz --n-ctx 8
+          wasmtime --dir . target/wasm32-wasip1/debug/detllm.wasm decompress -m testdata/tiny-f32.gguf -i wasm-codec-smoke/tiny-f32.dtlz -o wasm-codec-smoke/tiny-f32.restored
+          cmp testdata/tiny.tokens.txt wasm-codec-smoke/tiny-f32.restored
+          wasmtime --dir . target/wasm32-wasip1/debug/detllm.wasm compress -m testdata/tiny-qmix.gguf -i testdata/tiny.tokens.txt -o wasm-codec-smoke/tiny-qmix.dtlz --n-ctx 8
+          wasmtime --dir . target/wasm32-wasip1/debug/detllm.wasm decompress -m testdata/tiny-qmix.gguf -i wasm-codec-smoke/tiny-qmix.dtlz -o wasm-codec-smoke/tiny-qmix.restored
+          cmp testdata/tiny.tokens.txt wasm-codec-smoke/tiny-qmix.restored
+      - run: cargo run -p det-cli -- quant-kernel-hash > native-quant-kernel-hash.txt
+      - run: RUSTFLAGS="-C target-feature=+simd128" cargo build -p det-cli --target wasm32-wasip1 --features simd
+      - run: wasmtime target/wasm32-wasip1/debug/detllm.wasm quant-kernel-hash > wasm-quant-kernel-hash.txt
+      - run: cmp native-quant-kernel-hash.txt wasm-quant-kernel-hash.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: logits-hashes-wasm32-wasip1
+          path: logits-hashes.txt

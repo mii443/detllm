@@ -1,0 +1,15 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+det-coder = { path = "../crates/det-coder" }
+det-gguf = { path = "../crates/det-gguf" }
+det-model = { path = "../crates/det-model" }
+det-token = { path = "../crates/det-token" }
+
+[lints]
+workspace = true

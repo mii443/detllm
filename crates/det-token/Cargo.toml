@@ -1,0 +1,15 @@
+[package]
+name = "det-token"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+det-gguf = { path = "../det-gguf" }
+
+[lints]
+workspace = true

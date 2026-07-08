@@ -1,0 +1,25 @@
+[workspace]
+members = [
+    "crates/det-num",
+    "crates/det-quant",
+    "crates/det-coder",
+    "crates/det-gguf",
+    "crates/det-token",
+    "crates/det-model",
+    "crates/det-cli",
+    "xtask",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.77"
+license = "MIT OR Apache-2.0"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "warn"
+unwrap_used = "warn"

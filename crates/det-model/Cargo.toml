@@ -1,0 +1,23 @@
+[package]
+name = "det-model"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+det-num = { path = "../det-num" }
+det-coder = { path = "../det-coder" }
+det-gguf = { path = "../det-gguf" }
+det-quant = { path = "../det-quant" }
+
+[features]
+default = []
+parallel = []
+simd = ["det-quant/simd"]
+
+[lib]
+path = "src/lib.rs"
+
+[lints]
+workspace = true
