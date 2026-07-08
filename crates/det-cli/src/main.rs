@@ -920,6 +920,7 @@ fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     #[test]
     fn runtime_canary_matches_current_cross_crate_kernels() {
@@ -1452,10 +1453,12 @@ mod tests {
     }
 
     fn unique_tmp_dir() -> std::path::PathBuf {
+        static NEXT_TMP_ID: AtomicU64 = AtomicU64::new(0);
         let mut dir = std::env::temp_dir();
         dir.push(format!(
-            "detllm-test-{}-{}",
+            "detllm-test-{}-{}-{}",
             std::process::id(),
+            NEXT_TMP_ID.fetch_add(1, Ordering::Relaxed),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("time")
