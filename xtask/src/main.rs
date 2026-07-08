@@ -755,6 +755,12 @@ fn validate_ci_workflow_text(text: &str) -> Result<(), String> {
             "ci workflow must hash bundled fixtures in native, toolchain-skew, and wasm jobs; found {fixture_hash_blocks} tiny-f32 hash commands"
         ));
     }
+    if text.contains("${{ runner.temp }}") {
+        return Err(
+            "ci workflow must not use runner context in job-level env; use a literal /tmp path"
+                .to_owned(),
+        );
+    }
     Ok(())
 }
 
@@ -1841,6 +1847,16 @@ floating_table = { version = "2.0" }
             err.contains("must upload exactly three logits artifact groups"),
             "{err}"
         );
+
+        let bad_runner_context = valid.replace(
+            "XDG_CACHE_HOME: /tmp/detllm-wasmtime-cache",
+            "XDG_CACHE_HOME: ${{ runner.temp }}/wasmtime-cache",
+        );
+        let err = validate_ci_workflow_text(&bad_runner_context).expect_err("bad runner context");
+        assert!(
+            err.contains("must not use runner context in job-level env"),
+            "{err}"
+        );
     }
 
     fn valid_ci_workflow_text() -> &'static str {
@@ -1879,6 +1895,8 @@ jobs:
         with:
           name: logits-hashes-toolchain-${{ matrix.toolchain }}
   wasm:
+    env:
+      XDG_CACHE_HOME: /tmp/detllm-wasmtime-cache
     steps:
       - run: cargo build --workspace --target wasm32-wasip1
       - run: wasmtime target/wasm32-wasip1/debug/detllm.wasm selftest

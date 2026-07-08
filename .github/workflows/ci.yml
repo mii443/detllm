@@ -115,7 +115,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       WASMTIME_VERSION: v46.0.1
-      XDG_CACHE_HOME: ${{ runner.temp }}/wasmtime-cache
+      XDG_CACHE_HOME: /tmp/detllm-wasmtime-cache
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
