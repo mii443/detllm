@@ -59,7 +59,17 @@ pub enum GgmlType {
     F32,
     F16,
     Q4_0,
+    Q4_1,
+    Q5_0,
+    Q5_1,
     Q8_0,
+    Q8_1,
+    Q2K,
+    Q3K,
+    Q4K,
+    Q5K,
+    Q6K,
+    Q8K,
     Other(u32),
 }
 
@@ -69,7 +79,17 @@ impl GgmlType {
             0 => Self::F32,
             1 => Self::F16,
             2 => Self::Q4_0,
+            3 => Self::Q4_1,
+            6 => Self::Q5_0,
+            7 => Self::Q5_1,
             8 => Self::Q8_0,
+            9 => Self::Q8_1,
+            10 => Self::Q2K,
+            11 => Self::Q3K,
+            12 => Self::Q4K,
+            13 => Self::Q5K,
+            14 => Self::Q6K,
+            15 => Self::Q8K,
             other => Self::Other(other),
         }
     }
@@ -79,7 +99,17 @@ impl GgmlType {
             Self::F32 => 0,
             Self::F16 => 1,
             Self::Q4_0 => 2,
+            Self::Q4_1 => 3,
+            Self::Q5_0 => 6,
+            Self::Q5_1 => 7,
             Self::Q8_0 => 8,
+            Self::Q8_1 => 9,
+            Self::Q2K => 10,
+            Self::Q3K => 11,
+            Self::Q4K => 12,
+            Self::Q5K => 13,
+            Self::Q6K => 14,
+            Self::Q8K => 15,
             Self::Other(raw) => raw,
         }
     }
@@ -89,7 +119,17 @@ impl GgmlType {
             Self::F32 => Some(4),
             Self::F16 => Some(2),
             Self::Q4_0 => Some(18),
+            Self::Q4_1 => Some(20),
+            Self::Q5_0 => Some(22),
+            Self::Q5_1 => Some(24),
             Self::Q8_0 => Some(34),
+            Self::Q8_1 => Some(40),
+            Self::Q2K => Some(84),
+            Self::Q3K => Some(110),
+            Self::Q4K => Some(144),
+            Self::Q5K => Some(176),
+            Self::Q6K => Some(210),
+            Self::Q8K => Some(292),
             Self::Other(_) => None,
         }
     }
@@ -97,7 +137,8 @@ impl GgmlType {
     pub fn block_size(self) -> Option<u64> {
         match self {
             Self::F32 | Self::F16 => Some(1),
-            Self::Q4_0 | Self::Q8_0 => Some(32),
+            Self::Q4_0 | Self::Q4_1 | Self::Q5_0 | Self::Q5_1 | Self::Q8_0 | Self::Q8_1 => Some(32),
+            Self::Q2K | Self::Q3K | Self::Q4K | Self::Q5K | Self::Q6K | Self::Q8K => Some(256),
             Self::Other(_) => None,
         }
     }
@@ -672,6 +713,25 @@ mod tests {
             offset: 0,
         };
         assert_eq!(q8.encoded_len(), Ok(102));
+
+        let q6_k = TensorInfo {
+            name: "k".to_owned(),
+            dimensions: vec![256, 2],
+            ty: GgmlType::Q6K,
+            offset: 0,
+        };
+        assert_eq!(q6_k.encoded_len(), Ok(420));
+
+        assert_eq!(GgmlType::Q4_1.type_size(), Some(20));
+        assert_eq!(GgmlType::Q5_0.type_size(), Some(22));
+        assert_eq!(GgmlType::Q5_1.type_size(), Some(24));
+        assert_eq!(GgmlType::Q8_1.type_size(), Some(40));
+        assert_eq!(GgmlType::Q2K.type_size(), Some(84));
+        assert_eq!(GgmlType::Q3K.type_size(), Some(110));
+        assert_eq!(GgmlType::Q4K.type_size(), Some(144));
+        assert_eq!(GgmlType::Q5K.type_size(), Some(176));
+        assert_eq!(GgmlType::Q6K.type_size(), Some(210));
+        assert_eq!(GgmlType::Q8K.type_size(), Some(292));
 
         let bad = TensorInfo {
             name: "c".to_owned(),

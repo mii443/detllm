@@ -826,7 +826,17 @@ fn ggml_type_label(ty: det_gguf::GgmlType) -> String {
         det_gguf::GgmlType::F32 => "F32".to_owned(),
         det_gguf::GgmlType::F16 => "F16".to_owned(),
         det_gguf::GgmlType::Q4_0 => "Q4_0".to_owned(),
+        det_gguf::GgmlType::Q4_1 => "Q4_1".to_owned(),
+        det_gguf::GgmlType::Q5_0 => "Q5_0".to_owned(),
+        det_gguf::GgmlType::Q5_1 => "Q5_1".to_owned(),
         det_gguf::GgmlType::Q8_0 => "Q8_0".to_owned(),
+        det_gguf::GgmlType::Q8_1 => "Q8_1".to_owned(),
+        det_gguf::GgmlType::Q2K => "Q2_K".to_owned(),
+        det_gguf::GgmlType::Q3K => "Q3_K".to_owned(),
+        det_gguf::GgmlType::Q4K => "Q4_K".to_owned(),
+        det_gguf::GgmlType::Q5K => "Q5_K".to_owned(),
+        det_gguf::GgmlType::Q6K => "Q6_K".to_owned(),
+        det_gguf::GgmlType::Q8K => "Q8_K".to_owned(),
         det_gguf::GgmlType::Other(raw) => format!("OTHER_{raw}"),
     }
 }

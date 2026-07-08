@@ -449,6 +449,91 @@ comparison, and `bench-file` output. The required tensor status is evidence
 that the target model has the tensor names, dimensions, and tensor types that
 the deterministic inference path will attempt to load.
 
+### TinyLlama External Smoke
+
+Source:
+
+- Repository: <https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF>
+- Supported model file:
+  `tinyllama-1.1b-chat-v1.0.Q8_0.gguf`
+- Incompatible intake probe:
+  `tinyllama-1.1b-chat-v1.0.Q4_0.gguf`
+
+The Q4_0 file was useful for parser coverage but is not a v1 inference target:
+it contains one `Q6_K` tensor for `output.weight`. `det-gguf` now knows the
+standard GGML K-quant tensor block sizes so `model-info` can parse and report
+this accurately, while `det-model` still rejects the tensor for inference
+because `detllm-design.md` v1 only supports `F32`, `F16` dense loading,
+`Q8_0`, and `Q4_0` inference tensors.
+
+Observed Q4_0 intake result:
+
+```text
+model-info path=/tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf bytes=637699456 sha256=da3087fb14aede55fde6eb81a0e55e886810e43509ec82ecdc7aa5d62a03b556 gguf_version=3 metadata=23 tensors=201 data_offset=1709440
+model-info tensor-inventory total=201 encoded_bytes=635990016 encoded_len_errors=0 F32=45 Q4_0=155 Q6_K=1
+model-info tensor-issue name=output.weight issue=unsupported_type type=Q6_K
+model-info required-tensors status=error checked=201 missing=0 shape_mismatch=0 unsupported_type=1 tied_output=false
+```
+
+Observed Q8_0 intake result:
+
+```text
+model-info path=/tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf bytes=1170781568 sha256=a4c9bb1dbaa372f6381a035fa5c02ef087aaa1ff1f843a56a22328114f03fc59 gguf_version=3 metadata=23 tensors=201 data_offset=1709440
+model-info metadata key=general.architecture string=llama
+model-info metadata key=general.name string=tinyllama_tinyllama-1.1b-chat-v1.0
+model-info metadata key=tokenizer.ggml.model string=llama
+model-info metadata key=tokenizer.ggml.bos_token_id u32=1
+model-info metadata key=tokenizer.ggml.eos_token_id u32=2
+model-info metadata key=tokenizer.ggml.tokens array<string>[32000]
+model-info metadata key=tokenizer.ggml.merges array<string>[61249]
+model-info metadata key=tokenizer.ggml.scores array<f32>[32000]
+model-info metadata key=tokenizer.ggml.token_type array<i32>[32000]
+model-info tokenizer status=ok kind=sentencepiece
+model-info config status=ok block_count=22 embedding_length=2048 feed_forward_length=5632 head_count=32 head_count_kv=4 context_length=2048 rope_dimension_count=64 rope_pairing=Adjacent rope_freq_base=10000.0 rms_epsilon=1e-5 attention_scale=0.125
+model-info tensor-inventory total=201 encoded_bytes=1169072128 encoded_len_errors=0 F32=45 Q8_0=156
+model-info vocab status=ok tokenizer=32000 model=32000 codec_max_symbols=262144
+model-info required-tensors status=ok checked=201 missing=0 shape_mismatch=0 unsupported_type=0 tied_output=false
+```
+
+Minimal logits smoke:
+
+```sh
+cargo run --release -p det-cli -- logits -m /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf --tokens 1 --hash --threads 8
+cargo run --release -p det-cli -- tokenize -m /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf -p "Hello"
+cargo run --release -p det-cli -- logits -m /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf --tokens 1,2,3 --hash --chunk-size 1 --threads 8
+cargo run --release -p det-cli -- logits -m /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf --tokens 1,2,3 --hash --chunk-size 3 --threads 8
+```
+
+Observed output:
+
+```text
+tokens("Hello") = 10994
+tokens=1 hash = 6e485ce2165e7c50da0297576fa56a3528f79ebf0fca0f25a160b61331543248
+tokens=1,2,3 chunk-size=1 hash = 79600ae16f6ba067de254839a0df605a1082b2eb6f75b538411be9403fe9251c
+tokens=1,2,3 chunk-size=3 hash = 79600ae16f6ba067de254839a0df605a1082b2eb6f75b538411be9403fe9251c
+```
+
+Minimal codec smoke:
+
+```sh
+printf 'Hello\n' > /tmp/detllm-external/hello.txt
+cargo run --release -p xtask -- bench-file --model /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf --input /tmp/detllm-external/hello.txt --n-ctx 16 --iters 1
+```
+
+Observed output:
+
+```text
+bench-file model=/tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf input=/tmp/detllm-external/hello.txt limit_bytes=all iters=1 n_ctx=16 overlap=4 model_sha256=a4c9bb1dbaa372f6381a035fa5c02ef087aaa1ff1f843a56a22328114f03fc59 input_sha256=66a045b452102c59d840ec097d59d9467e13a3f34f6494e539ffd32c1bb35f18
+bench-file: source_input_bytes=6 measured_input_bytes=6 total_input_bytes=6 tokens=2 total_tokens=2 payload_bytes=10 dtlz_bytes=66 payload_bits_per_byte=13.333333 dtlz_bits_per_byte=88.000000 compression_ratio=11.000000 elapsed_ms=344.482 input_bytes_per_s=17.417 tokens_per_s=5.806
+```
+
+This is real TinyLlama GGUF evidence for tokenizer construction, model config
+parsing, full required tensor compatibility on Q8_0, single-token forward,
+chunk-size-invariant logits hashing on a three-token stream, and an end-to-end
+codec round-trip on a tiny byte input. It is not a substitute for the HF
+transformers / llama.cpp cosine check or the enwik8 first-1MB compression
+measurement.
+
 ## File Codec Bench Harness
 
 Command:

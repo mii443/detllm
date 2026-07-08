@@ -75,7 +75,8 @@ required tensor shape/type status.
 The implementation is not yet complete against the full design. In particular,
 the following acceptance evidence is still missing:
 
-- TinyLlama / SmolLM2 / Qwen2.5 external model validation.
+- SmolLM2 / Qwen2.5 external model validation, plus broader TinyLlama
+  reference-quality checks beyond the current minimal smoke.
 - HF transformers or llama.cpp cosine-similarity sanity checks.
 - enwik8 first-1MB compression-rate measurement with `xtask bench-file`.
 - Criterion or equivalent full benchmark results on real target hardware.
