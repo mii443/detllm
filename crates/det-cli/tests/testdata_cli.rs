@@ -2,6 +2,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 use det_num::Sha256;
@@ -340,10 +341,12 @@ fn decompress_rejects_noncanonical_payload_with_trailing_bytes() {
 }
 
 fn unique_tmp_dir() -> PathBuf {
+    static NEXT_TMP_ID: AtomicU64 = AtomicU64::new(0);
     let mut dir = std::env::temp_dir();
     dir.push(format!(
-        "detllm-cli-test-{}-{}",
+        "detllm-cli-test-{}-{}-{}",
         std::process::id(),
+        NEXT_TMP_ID.fetch_add(1, Ordering::Relaxed),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("time")
