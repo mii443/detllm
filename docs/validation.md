@@ -419,25 +419,27 @@ required by `detllm-design.md`.
 Command:
 
 ```sh
-cargo run --release -p xtask -- bench-file --model testdata/tiny-f32.gguf --input testdata/tiny.tokens.txt --n-ctx 8 --iters 2
+cargo run --release -p xtask -- bench-file --model testdata/tiny-f32.gguf --input testdata/tiny.tokens.txt --n-ctx 8 --iters 1
 cargo run --release -p xtask -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --iters 1
 ```
 
 Observed smoke output on the bundled token text fixture:
 
-| model | input bytes | tokens | payload bytes | DTLZ bytes | bits/byte |
-|---|---:|---:|---:|---:|---:|
-| `testdata/tiny-f32.gguf` | 24 | 24 | 38 | 150 | 50.000000 |
-| `testdata/tiny-qmix.gguf` | 24 | 24 | 38 | 150 | 50.000000 |
+| model | model SHA-256 | input SHA-256 | measured input bytes | tokens | payload bytes | DTLZ bytes | payload bpb | DTLZ bpb | ratio |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|
+| `testdata/tiny-f32.gguf` | `ce2aa01900a63585a409ef995a2827dcac81e1678e38a1ab0733302ba82ce79b` | `bfdf7888835d22d01ce148aa49e1e766f11e3fbe8631f08215e1c9173270dbd8` | 12 | 12 | 19 | 75 | 12.666667 | 50.000000 | 6.250000 |
+| `testdata/tiny-qmix.gguf` | `4adbef1f9806fb17050d4520135bf8c8b4308840637b2e27589887f7fc03338f` | `bfdf7888835d22d01ce148aa49e1e766f11e3fbe8631f08215e1c9173270dbd8` | 12 | 12 | 19 | 75 | 12.666667 | 50.000000 | 6.250000 |
 
 `bench-file` tokenizes the input, encodes the token stream, decodes it, and
 detokenizes back to bytes on every iteration. It reports payload size and DTLZ
-size, including the 56-byte file header. `--limit-bytes N` truncates the input
-to at most the first `N` bytes before tokenization, so the enwik8 first-1MB
-measurement can use `--limit-bytes 1048576` without creating a separate file.
-This is the harness to use for the enwik8 first-1MB measurement once the
-dataset and a real target model are available; the bundled fixtures are only
-smoke inputs.
+size, including the 56-byte file header. It also reports model and measured
+input SHA-256 values, source and measured input byte counts, one-iteration and
+total token counts, payload-only bpb, DTLZ bpb, compression ratio, elapsed
+time, bytes/s, and tokens/s. `--limit-bytes N` truncates the input to at most
+the first `N` bytes before tokenization, so the enwik8 first-1MB measurement
+can use `--limit-bytes 1048576` without creating a separate file. This is the
+harness to use for the enwik8 first-1MB measurement once the dataset and a
+real target model are available; the bundled fixtures are only smoke inputs.
 The harness applies the same tokenizer/model vocabulary equality check and
 `2^18` codec vocabulary bound as the CLI compression path before accepting a
 model for measurement.

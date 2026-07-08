@@ -397,6 +397,7 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
 
 fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
     let model_bytes = fs::read(&opts.model).map_err(|e| format!("{}: {e}", opts.model))?;
+    let model_sha256 = sha256_hex(&model_bytes);
     let gguf = det_gguf::parse(&model_bytes)
         .map_err(|e| format!("{}: GGUF parse error: {e:?}", opts.model))?;
     let model = det_model::F32Llama::from_gguf(&gguf, &model_bytes)
@@ -405,9 +406,12 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
     let tokenizer = det_token::Tokenizer::from_gguf(&gguf)
         .map_err(|e| format!("{}: tokenizer error: {e:?}", opts.model))?;
     let mut input = fs::read(&opts.input).map_err(|e| format!("{}: {e}", opts.input))?;
+    let source_input_bytes = input.len();
     if let Some(limit_bytes) = opts.limit_bytes {
         input.truncate(limit_bytes);
     }
+    let measured_input_bytes = input.len();
+    let input_sha256 = sha256_hex(&input);
     let token_ids: Vec<usize> = tokenizer
         .tokenize_bytes(&input)
         .map_err(|e| format!("{}: tokenize error: {e:?}", opts.input))?
@@ -436,27 +440,43 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
     let elapsed = start.elapsed();
     let input_bytes = input.len() * opts.iters;
     let dtlz_bytes = payload_bytes + det_coder::file::HEADER_LEN * opts.iters;
-    let bits_per_byte = if input_bytes == 0 {
+    let dtlz_bits_per_byte = if input_bytes == 0 {
         0.0
     } else {
         (dtlz_bytes as f64 * 8.0) / input_bytes as f64
+    };
+    let payload_bits_per_byte = if input_bytes == 0 {
+        0.0
+    } else {
+        (payload_bytes as f64 * 8.0) / input_bytes as f64
+    };
+    let compression_ratio = if input_bytes == 0 {
+        0.0
+    } else {
+        dtlz_bytes as f64 / input_bytes as f64
     };
     let limit_label = opts
         .limit_bytes
         .map_or_else(|| "all".to_owned(), |limit_bytes| limit_bytes.to_string());
     println!(
-        "bench-file model={} input={} limit_bytes={} iters={} n_ctx={} overlap={}",
-        opts.model, opts.input, limit_label, opts.iters, n_ctx, overlap
+        "bench-file model={} input={} limit_bytes={} iters={} n_ctx={} overlap={} model_sha256={} input_sha256={}",
+        opts.model, opts.input, limit_label, opts.iters, n_ctx, overlap, model_sha256, input_sha256
     );
     println!(
-        "bench-file: input_bytes={} tokens={} payload_bytes={} dtlz_bytes={} bits_per_byte={:.6} elapsed_ms={:.3} input_bytes_per_s={:.3}",
+        "bench-file: source_input_bytes={} measured_input_bytes={} total_input_bytes={} tokens={} total_tokens={} payload_bytes={} dtlz_bytes={} payload_bits_per_byte={:.6} dtlz_bits_per_byte={:.6} compression_ratio={:.6} elapsed_ms={:.3} input_bytes_per_s={:.3} tokens_per_s={:.3}",
+        source_input_bytes,
+        measured_input_bytes,
         input_bytes,
+        token_ids.len(),
         token_ids.len() * opts.iters,
         payload_bytes,
         dtlz_bytes,
-        bits_per_byte,
+        payload_bits_per_byte,
+        dtlz_bits_per_byte,
+        compression_ratio,
         elapsed.as_secs_f64() * 1000.0,
-        input_bytes as f64 / elapsed.as_secs_f64()
+        input_bytes as f64 / elapsed.as_secs_f64(),
+        (token_ids.len() * opts.iters) as f64 / elapsed.as_secs_f64()
     );
     Ok(())
 }
@@ -1536,6 +1556,12 @@ fn push_u32(out: &mut Vec<u8>, value: u32) {
 
 fn push_u64(out: &mut Vec<u8>, value: u64) {
     out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut h = det_num::Sha256::new();
+    h.update(bytes);
+    hex(&h.finalize())
 }
 
 fn hex(bytes: &[u8]) -> String {

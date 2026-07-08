@@ -9,6 +9,7 @@ license.workspace = true
 det-coder = { path = "../crates/det-coder" }
 det-gguf = { path = "../crates/det-gguf" }
 det-model = { path = "../crates/det-model" }
+det-num = { path = "../crates/det-num" }
 det-token = { path = "../crates/det-token" }
 
 [lints]

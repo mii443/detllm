@@ -60,7 +60,10 @@ cargo clippy --workspace --all-targets --features parallel,simd -- -D warnings
 The current smoke validation is recorded in
 [docs/validation.md](docs/validation.md). The included compression smoke uses
 the tiny F32 fixture and verifies byte-for-byte round-trip on a small input; it
-is not a meaningful compression-ratio benchmark.
+is not a meaningful compression-ratio benchmark. `bench-file` records model and
+input SHA-256 values, measured byte/token counts, payload and DTLZ bpb,
+compression ratio, and throughput so real enwik8 measurements can be copied
+directly into the validation notes.
 
 ## Remaining Work
 
