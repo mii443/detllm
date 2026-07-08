@@ -1,5 +1,8 @@
 use std::{
-    env, fs,
+    collections::BTreeMap,
+    env,
+    fmt::Write as _,
+    fs,
     path::{Path, PathBuf},
     time::Instant,
 };
@@ -101,6 +104,7 @@ fn real_main() -> Result<(), String> {
             };
             bench_testdata(iters)
         }
+        Some("model-info") => model_info(parse_model_info_opts(args.collect())?),
         Some("bench-file") => bench_file(parse_bench_file_opts(args.collect())?),
         Some("compare-logits") => compare_logits(parse_compare_logits_opts(args.collect())?),
         Some("verify-logits-hashes") => {
@@ -109,7 +113,7 @@ fn real_main() -> Result<(), String> {
         Some("check-ci-workflow") => check_ci_workflow(),
         Some("check-determinism") => check_determinism(),
         _ => Err(
-            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|bench-file --model model.gguf --input file [--limit-bytes N] [--n-ctx N] [--iters N]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
+            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf|bench-file --model model.gguf --input file [--limit-bytes N] [--n-ctx N] [--iters N]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
                 .to_owned(),
         ),
     }
@@ -321,6 +325,11 @@ struct BenchFileOpts {
 }
 
 #[derive(Debug)]
+struct ModelInfoOpts {
+    model: String,
+}
+
+#[derive(Debug)]
 struct CompareLogitsOpts {
     actual: String,
     reference: String,
@@ -332,6 +341,494 @@ struct CompareLogitsOpts {
 struct VerifyLogitsHashesOpts {
     dir: String,
     expected_count: usize,
+}
+
+fn parse_model_info_opts(args: Vec<String>) -> Result<ModelInfoOpts, String> {
+    let mut model = None;
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-m" | "--model" => {
+                i += 1;
+                model = args.get(i).cloned();
+            }
+            other => return Err(format!("unknown model-info argument: {other}")),
+        }
+        i += 1;
+    }
+    Ok(ModelInfoOpts {
+        model: model.ok_or("model-info: missing --model")?,
+    })
+}
+
+fn model_info(opts: ModelInfoOpts) -> Result<(), String> {
+    let bytes = fs::read(&opts.model).map_err(|e| format!("{}: {e}", opts.model))?;
+    print!("{}", model_info_text(&opts.model, &bytes)?);
+    Ok(())
+}
+
+fn model_info_text(path: &str, bytes: &[u8]) -> Result<String, String> {
+    let model_sha256 = sha256_hex(bytes);
+    let gguf = det_gguf::parse(bytes).map_err(|e| format!("{path}: GGUF parse error: {e:?}"))?;
+    let mut out = String::new();
+    writeln!(
+        out,
+        "model-info path={} bytes={} sha256={} gguf_version={} metadata={} tensors={} data_offset={}",
+        path,
+        bytes.len(),
+        model_sha256,
+        gguf.version,
+        gguf.metadata.len(),
+        gguf.tensors.len(),
+        gguf.data_offset
+    )
+    .expect("write to string");
+    write_model_metadata_summary(&mut out, &gguf);
+    write_tokenizer_summary(&mut out, &gguf);
+    write_config_summary(&mut out, &gguf);
+    write_tensor_inventory(&mut out, &gguf);
+    write_vocab_summary(&mut out, &gguf);
+    write_required_tensor_summary(&mut out, &gguf);
+    Ok(out)
+}
+
+fn write_model_metadata_summary(out: &mut String, gguf: &det_gguf::Gguf) {
+    for key in [
+        "general.architecture",
+        "general.name",
+        "tokenizer.ggml.model",
+        "llama.vocab_size",
+        "qwen2.vocab_size",
+        "tokenizer.ggml.add_bos_token",
+        "tokenizer.ggml.add_eos_token",
+        "tokenizer.ggml.bos_token_id",
+        "tokenizer.ggml.eos_token_id",
+    ] {
+        if let Ok(value) = gguf.metadata_value(key) {
+            writeln!(
+                out,
+                "model-info metadata key={} {}",
+                key,
+                metadata_summary(value)
+            )
+            .expect("write to string");
+        }
+    }
+    for key in [
+        "tokenizer.ggml.tokens",
+        "tokenizer.ggml.merges",
+        "tokenizer.ggml.scores",
+        "tokenizer.ggml.token_type",
+    ] {
+        if let Ok(value) = gguf.metadata_value(key) {
+            writeln!(
+                out,
+                "model-info metadata key={} {}",
+                key,
+                metadata_summary(value)
+            )
+            .expect("write to string");
+        }
+    }
+}
+
+fn write_tokenizer_summary(out: &mut String, gguf: &det_gguf::Gguf) {
+    match det_token::Tokenizer::from_gguf(gguf) {
+        Ok(tokenizer) => {
+            let kind = match tokenizer {
+                det_token::Tokenizer::ByteFallback(_) => "byte_fallback",
+                det_token::Tokenizer::ByteBpe(_) => "byte_bpe",
+                det_token::Tokenizer::SentencePiece(_) => "sentencepiece",
+            };
+            writeln!(out, "model-info tokenizer status=ok kind={kind}").expect("write to string");
+        }
+        Err(e) => {
+            writeln!(out, "model-info tokenizer status=error error={e:?}")
+                .expect("write to string");
+        }
+    }
+}
+
+fn write_config_summary(out: &mut String, gguf: &det_gguf::Gguf) {
+    match det_model::LlamaConfig::from_gguf(gguf) {
+        Ok(config) => {
+            writeln!(
+                out,
+                "model-info config status=ok block_count={} embedding_length={} feed_forward_length={} head_count={} head_count_kv={} context_length={} rope_dimension_count={} rope_pairing={:?} rope_freq_base={:?} rms_epsilon={:?} attention_scale={:?}",
+                config.block_count,
+                config.embedding_length,
+                config.feed_forward_length,
+                config.head_count,
+                config.head_count_kv,
+                config.context_length,
+                config.rope_dimension_count,
+                config.rope_pairing,
+                config.rope_freq_base,
+                config.rms_epsilon,
+                config.attention_scale
+            )
+            .expect("write to string");
+        }
+        Err(e) => {
+            writeln!(out, "model-info config status=error error={e:?}").expect("write to string");
+        }
+    }
+}
+
+fn write_tensor_inventory(out: &mut String, gguf: &det_gguf::Gguf) {
+    let mut counts = BTreeMap::<String, usize>::new();
+    let mut encoded_bytes = 0u64;
+    let mut encoded_len_errors = 0usize;
+    for tensor in &gguf.tensors {
+        *counts.entry(ggml_type_label(tensor.ty)).or_default() += 1;
+        match tensor.encoded_len() {
+            Ok(len) => encoded_bytes = encoded_bytes.saturating_add(len),
+            Err(_) => encoded_len_errors += 1,
+        }
+    }
+    write!(
+        out,
+        "model-info tensor-inventory total={} encoded_bytes={} encoded_len_errors={}",
+        gguf.tensors.len(),
+        encoded_bytes,
+        encoded_len_errors
+    )
+    .expect("write to string");
+    for (ty, count) in counts {
+        write!(out, " {}={}", ty, count).expect("write to string");
+    }
+    out.push('\n');
+}
+
+fn write_vocab_summary(out: &mut String, gguf: &det_gguf::Gguf) {
+    let tokenizer_vocab = gguf_token_vocab_len(gguf);
+    let model_vocab = gguf_model_vocab_len(gguf);
+    match (&tokenizer_vocab, &model_vocab) {
+        (Ok(tokenizer_vocab), Ok(model_vocab)) => {
+            let status = match validate_vocab_lengths(*tokenizer_vocab, *model_vocab) {
+                Ok(()) => "ok".to_owned(),
+                Err(e) => format!("error error={e:?}"),
+            };
+            writeln!(
+                out,
+                "model-info vocab status={} tokenizer={} model={} codec_max_symbols={}",
+                status,
+                tokenizer_vocab,
+                model_vocab,
+                det_coder::MAX_SYMBOLS
+            )
+            .expect("write to string");
+        }
+        _ => {
+            writeln!(
+                out,
+                "model-info vocab status=error tokenizer={:?} model={:?} codec_max_symbols={}",
+                tokenizer_vocab,
+                model_vocab,
+                det_coder::MAX_SYMBOLS
+            )
+            .expect("write to string");
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ExpectedTensorKind {
+    DenseVector,
+    WeightMatrix,
+}
+
+struct RequiredTensorSummary {
+    checked: usize,
+    missing: usize,
+    shape_mismatch: usize,
+    unsupported_type: usize,
+    tied_output: bool,
+    issues: Vec<String>,
+}
+
+fn write_required_tensor_summary(out: &mut String, gguf: &det_gguf::Gguf) {
+    let config = match det_model::LlamaConfig::from_gguf(gguf) {
+        Ok(config) => config,
+        Err(e) => {
+            writeln!(
+                out,
+                "model-info required-tensors status=skipped reason=config_error error={e:?}"
+            )
+            .expect("write to string");
+            return;
+        }
+    };
+    let model_vocab = match gguf_model_vocab_len(gguf) {
+        Ok(model_vocab) => model_vocab,
+        Err(e) => {
+            writeln!(
+                out,
+                "model-info required-tensors status=skipped reason=vocab_error error={e:?}"
+            )
+            .expect("write to string");
+            return;
+        }
+    };
+
+    let summary = required_tensor_summary(gguf, config, model_vocab);
+    for issue in &summary.issues {
+        writeln!(out, "model-info tensor-issue {issue}").expect("write to string");
+    }
+    let status =
+        if summary.missing == 0 && summary.shape_mismatch == 0 && summary.unsupported_type == 0 {
+            "ok"
+        } else {
+            "error"
+        };
+    writeln!(
+        out,
+        "model-info required-tensors status={} checked={} missing={} shape_mismatch={} unsupported_type={} tied_output={}",
+        status,
+        summary.checked,
+        summary.missing,
+        summary.shape_mismatch,
+        summary.unsupported_type,
+        summary.tied_output
+    )
+    .expect("write to string");
+}
+
+fn required_tensor_summary(
+    gguf: &det_gguf::Gguf,
+    config: det_model::LlamaConfig,
+    model_vocab: usize,
+) -> RequiredTensorSummary {
+    let mut summary = RequiredTensorSummary {
+        checked: 0,
+        missing: 0,
+        shape_mismatch: 0,
+        unsupported_type: 0,
+        tied_output: false,
+        issues: Vec::new(),
+    };
+    let d = config.embedding_length as u64;
+    let d_ff = config.feed_forward_length as u64;
+    let head_dim = (config.embedding_length / config.head_count) as u64;
+    let q_rows = (config.head_count as u64) * head_dim;
+    let kv_rows = (config.head_count_kv as u64) * head_dim;
+    let vocab = model_vocab as u64;
+
+    check_expected_tensor(
+        gguf,
+        &mut summary,
+        "token_embd.weight",
+        &[d, vocab],
+        ExpectedTensorKind::WeightMatrix,
+    );
+    for layer in 0..config.block_count {
+        check_expected_tensor(
+            gguf,
+            &mut summary,
+            &format!("blk.{layer}.attn_norm.weight"),
+            &[d],
+            ExpectedTensorKind::DenseVector,
+        );
+        check_expected_tensor(
+            gguf,
+            &mut summary,
+            &format!("blk.{layer}.attn_q.weight"),
+            &[d, q_rows],
+            ExpectedTensorKind::WeightMatrix,
+        );
+        check_expected_tensor(
+            gguf,
+            &mut summary,
+            &format!("blk.{layer}.attn_k.weight"),
+            &[d, kv_rows],
+            ExpectedTensorKind::WeightMatrix,
+        );
+        check_expected_tensor(
+            gguf,
+            &mut summary,
+            &format!("blk.{layer}.attn_v.weight"),
+            &[d, kv_rows],
+            ExpectedTensorKind::WeightMatrix,
+        );
+        check_expected_tensor(
+            gguf,
+            &mut summary,
+            &format!("blk.{layer}.attn_output.weight"),
+            &[q_rows, d],
+            ExpectedTensorKind::WeightMatrix,
+        );
+        check_expected_tensor(
+            gguf,
+            &mut summary,
+            &format!("blk.{layer}.ffn_norm.weight"),
+            &[d],
+            ExpectedTensorKind::DenseVector,
+        );
+        check_expected_tensor(
+            gguf,
+            &mut summary,
+            &format!("blk.{layer}.ffn_gate.weight"),
+            &[d, d_ff],
+            ExpectedTensorKind::WeightMatrix,
+        );
+        check_expected_tensor(
+            gguf,
+            &mut summary,
+            &format!("blk.{layer}.ffn_up.weight"),
+            &[d, d_ff],
+            ExpectedTensorKind::WeightMatrix,
+        );
+        check_expected_tensor(
+            gguf,
+            &mut summary,
+            &format!("blk.{layer}.ffn_down.weight"),
+            &[d_ff, d],
+            ExpectedTensorKind::WeightMatrix,
+        );
+    }
+    check_expected_tensor(
+        gguf,
+        &mut summary,
+        "output_norm.weight",
+        &[d],
+        ExpectedTensorKind::DenseVector,
+    );
+    if gguf.tensor("output.weight").is_ok() {
+        check_expected_tensor(
+            gguf,
+            &mut summary,
+            "output.weight",
+            &[d, vocab],
+            ExpectedTensorKind::WeightMatrix,
+        );
+    } else {
+        summary.tied_output = true;
+    }
+    summary
+}
+
+fn check_expected_tensor(
+    gguf: &det_gguf::Gguf,
+    summary: &mut RequiredTensorSummary,
+    name: &str,
+    dimensions: &[u64],
+    kind: ExpectedTensorKind,
+) {
+    summary.checked += 1;
+    let tensor = match gguf.tensor(name) {
+        Ok(tensor) => tensor,
+        Err(_) => {
+            summary.missing += 1;
+            summary.issues.push(format!("name={} issue=missing", name));
+            return;
+        }
+    };
+    if tensor.dimensions.as_slice() != dimensions {
+        summary.shape_mismatch += 1;
+        summary.issues.push(format!(
+            "name={} issue=shape expected={:?} actual={:?}",
+            name, dimensions, tensor.dimensions
+        ));
+    }
+    if !tensor_type_supported_for(kind, tensor.ty) {
+        summary.unsupported_type += 1;
+        summary.issues.push(format!(
+            "name={} issue=unsupported_type type={}",
+            name,
+            ggml_type_label(tensor.ty)
+        ));
+    }
+}
+
+fn tensor_type_supported_for(kind: ExpectedTensorKind, ty: det_gguf::GgmlType) -> bool {
+    match kind {
+        ExpectedTensorKind::DenseVector => {
+            matches!(ty, det_gguf::GgmlType::F32 | det_gguf::GgmlType::F16)
+        }
+        ExpectedTensorKind::WeightMatrix => matches!(
+            ty,
+            det_gguf::GgmlType::F32
+                | det_gguf::GgmlType::F16
+                | det_gguf::GgmlType::Q8_0
+                | det_gguf::GgmlType::Q4_0
+        ),
+    }
+}
+
+fn gguf_model_vocab_len(gguf: &det_gguf::Gguf) -> Result<usize, String> {
+    let arch = gguf
+        .metadata_str("general.architecture")
+        .map_err(|e| format!("general.architecture metadata error: {e:?}"))?;
+    for key in [format!("{arch}.vocab_size"), "llama.vocab_size".to_owned()] {
+        match gguf.metadata_u32(&key) {
+            Ok(v) => return Ok(v as usize),
+            Err(det_gguf::GgufError::MetadataNotFound) => {}
+            Err(e) => return Err(format!("{key} metadata error: {e:?}")),
+        }
+    }
+    if let Ok(tokenizer_vocab) = gguf_token_vocab_len(gguf) {
+        return Ok(tokenizer_vocab);
+    }
+    let token_embd = gguf
+        .tensor("token_embd.weight")
+        .map_err(|e| format!("token_embd.weight tensor error: {e:?}"))?;
+    if token_embd.dimensions.len() == 2 {
+        return usize::try_from(token_embd.dimensions[1])
+            .map_err(|_| "token_embd.weight vocab dimension does not fit usize".to_owned());
+    }
+    Err("model vocabulary metadata is missing".to_owned())
+}
+
+fn metadata_summary(value: &det_gguf::MetadataValue) -> String {
+    match value {
+        det_gguf::MetadataValue::U8(v) => format!("u8={v}"),
+        det_gguf::MetadataValue::I8(v) => format!("i8={v}"),
+        det_gguf::MetadataValue::U16(v) => format!("u16={v}"),
+        det_gguf::MetadataValue::I16(v) => format!("i16={v}"),
+        det_gguf::MetadataValue::U32(v) => format!("u32={v}"),
+        det_gguf::MetadataValue::I32(v) => format!("i32={v}"),
+        det_gguf::MetadataValue::U64(v) => format!("u64={v}"),
+        det_gguf::MetadataValue::I64(v) => format!("i64={v}"),
+        det_gguf::MetadataValue::F32(v) => format!("f32={v:?}"),
+        det_gguf::MetadataValue::F64(v) => format!("f64={v:?}"),
+        det_gguf::MetadataValue::Bool(v) => format!("bool={v}"),
+        det_gguf::MetadataValue::String(v) => format!("string={}", summarize_str(v)),
+        det_gguf::MetadataValue::ArrayU8(v) => format!("array<u8>[{}]", v.len()),
+        det_gguf::MetadataValue::ArrayI8(v) => format!("array<i8>[{}]", v.len()),
+        det_gguf::MetadataValue::ArrayU16(v) => format!("array<u16>[{}]", v.len()),
+        det_gguf::MetadataValue::ArrayI16(v) => format!("array<i16>[{}]", v.len()),
+        det_gguf::MetadataValue::ArrayU32(v) => format!("array<u32>[{}]", v.len()),
+        det_gguf::MetadataValue::ArrayI32(v) => format!("array<i32>[{}]", v.len()),
+        det_gguf::MetadataValue::ArrayF32(v) => format!("array<f32>[{}]", v.len()),
+        det_gguf::MetadataValue::ArrayBool(v) => format!("array<bool>[{}]", v.len()),
+        det_gguf::MetadataValue::ArrayString(v) => format!("array<string>[{}]", v.len()),
+        det_gguf::MetadataValue::ArrayU64(v) => format!("array<u64>[{}]", v.len()),
+        det_gguf::MetadataValue::ArrayI64(v) => format!("array<i64>[{}]", v.len()),
+        det_gguf::MetadataValue::ArrayF64(v) => format!("array<f64>[{}]", v.len()),
+    }
+}
+
+fn summarize_str(value: &str) -> String {
+    const MAX_CHARS: usize = 80;
+    let mut out = String::new();
+    for (i, ch) in value.chars().enumerate() {
+        if i == MAX_CHARS {
+            out.push_str("...");
+            return out;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn ggml_type_label(ty: det_gguf::GgmlType) -> String {
+    match ty {
+        det_gguf::GgmlType::F32 => "F32".to_owned(),
+        det_gguf::GgmlType::F16 => "F16".to_owned(),
+        det_gguf::GgmlType::Q4_0 => "Q4_0".to_owned(),
+        det_gguf::GgmlType::Q8_0 => "Q8_0".to_owned(),
+        det_gguf::GgmlType::Other(raw) => format!("OTHER_{raw}"),
+    }
 }
 
 fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
@@ -1699,6 +2196,35 @@ mod tests {
         ])
         .expect_err("zero limit must be rejected");
         assert_eq!(err, "bench-file: --limit-bytes must be greater than zero");
+    }
+
+    #[test]
+    fn model_info_reports_fixture_config_and_tensor_status() {
+        let model_bytes = tiny_f32_gguf();
+        let text = model_info_text("testdata/tiny-f32.gguf", &model_bytes).expect("model info");
+        assert!(text.contains("model-info path=testdata/tiny-f32.gguf"));
+        assert!(text
+            .contains("sha256=ce2aa01900a63585a409ef995a2827dcac81e1678e38a1ab0733302ba82ce79b"));
+        assert!(text.contains("model-info tokenizer status=ok kind=byte_fallback"));
+        assert!(text.contains("model-info config status=ok block_count=1 embedding_length=4"));
+        assert!(text.contains("model-info tensor-inventory total=12"));
+        assert!(text.contains("F32=12"));
+        assert!(text.contains(
+            "model-info vocab status=ok tokenizer=256 model=256 codec_max_symbols=262144"
+        ));
+        assert!(text.contains(
+            "model-info required-tensors status=ok checked=12 missing=0 shape_mismatch=0 unsupported_type=0 tied_output=false"
+        ));
+    }
+
+    #[test]
+    fn parse_model_info_opts_requires_model() {
+        let opts = parse_model_info_opts(vec!["--model".to_owned(), "model.gguf".to_owned()])
+            .expect("model-info options");
+        assert_eq!(opts.model, "model.gguf");
+
+        let err = parse_model_info_opts(Vec::new()).expect_err("missing model should fail");
+        assert_eq!(err, "model-info: missing --model");
     }
 
     #[test]

@@ -41,6 +41,8 @@ The shared token sequence is `testdata/tiny.tokens.txt`.
 cargo run -p xtask -- generate-testdata --check
 cargo run -p xtask -- check-determinism
 cargo run -p xtask -- check-ci-workflow
+cargo run -p xtask -- model-info --model testdata/tiny-f32.gguf
+cargo run -p xtask -- model-info --model model.gguf
 cargo run --release -p xtask -- bench-testdata --iters 100
 cargo run --release -p xtask -- bench-file --model testdata/tiny-f32.gguf --input testdata/tiny.tokens.txt --n-ctx 8 --iters 2
 cargo run --release -p xtask -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --iters 1
@@ -63,7 +65,10 @@ the tiny F32 fixture and verifies byte-for-byte round-trip on a small input; it
 is not a meaningful compression-ratio benchmark. `bench-file` records model and
 input SHA-256 values, measured byte/token counts, payload and DTLZ bpb,
 compression ratio, and throughput so real enwik8 measurements can be copied
-directly into the validation notes.
+directly into the validation notes. `model-info` records a lightweight GGUF
+intake summary without loading all weights, including model SHA-256, parsed
+config, tokenizer kind, vocabulary/codec compatibility, tensor inventory, and
+required tensor shape/type status.
 
 ## Remaining Work
 

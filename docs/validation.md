@@ -414,6 +414,41 @@ iteration before reporting elapsed time and throughput. The values are useful
 for local regressions, but they are not the real-model benchmark evidence
 required by `detllm-design.md`.
 
+## External Model Intake Harness
+
+Command:
+
+```sh
+cargo run -p xtask -- model-info --model testdata/tiny-f32.gguf
+cargo run -p xtask -- model-info --model model.gguf
+```
+
+`model-info` is the lightweight first step for TinyLlama / SmolLM2 / Qwen2.5
+GGUF validation. It parses the file, reports the model SHA-256, selected GGUF
+metadata, tokenizer kind, deterministic `LlamaConfig` interpretation, tensor
+type inventory, tokenizer/model/codec vocabulary compatibility, and the
+required tensor shape/type status. It does not instantiate `F32Llama`, so it
+can be run before a full logits or compression pass on larger external GGUFs.
+
+Observed smoke output on the bundled F32 fixture:
+
+```text
+model-info path=testdata/tiny-f32.gguf bytes=13520 sha256=ce2aa01900a63585a409ef995a2827dcac81e1678e38a1ab0733302ba82ce79b gguf_version=3 metadata=12 tensors=12 data_offset=4800
+model-info metadata key=general.architecture string=llama
+model-info metadata key=llama.vocab_size u32=256
+model-info metadata key=tokenizer.ggml.tokens array<string>[256]
+model-info tokenizer status=ok kind=byte_fallback
+model-info config status=ok block_count=1 embedding_length=4 feed_forward_length=6 head_count=2 head_count_kv=1 context_length=16 rope_dimension_count=2 rope_pairing=Adjacent rope_freq_base=10000.0 rms_epsilon=1e-5 attention_scale=0.70710677
+model-info tensor-inventory total=12 encoded_bytes=8720 encoded_len_errors=0 F32=12
+model-info vocab status=ok tokenizer=256 model=256 codec_max_symbols=262144
+model-info required-tensors status=ok checked=12 missing=0 shape_mismatch=0 unsupported_type=0 tied_output=false
+```
+
+For external validation, record this output next to the logits hash, cosine
+comparison, and `bench-file` output. The required tensor status is evidence
+that the target model has the tensor names, dimensions, and tensor types that
+the deterministic inference path will attempt to load.
+
 ## File Codec Bench Harness
 
 Command:

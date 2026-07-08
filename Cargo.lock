@@ -60,5 +60,6 @@ dependencies = [
  "det-coder",
  "det-gguf",
  "det-model",
+ "det-num",
  "det-token",
 ]
