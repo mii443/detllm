@@ -71,4 +71,3 @@ the following acceptance evidence is still missing:
 - HF transformers or llama.cpp cosine-similarity sanity checks.
 - enwik8 first-1MB compression-rate measurement with `xtask bench-file`.
 - Criterion or equivalent full benchmark results on real target hardware.
-- Actual GitHub Actions run evidence for the full cross-platform matrix.

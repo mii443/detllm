@@ -494,8 +494,21 @@ artifacts, requires the exact bundled fixture label set (`tiny-f32` and
 `tiny-qmix`) with valid lowercase SHA-256 values, rejects missing or duplicate
 labels, and checks every artifact against the first sorted reference. This is
 a structural CI gate for the `detllm-design.md` §9.5 cross-platform hash-match
-requirement; an actual completed GitHub Actions run is still required as
-acceptance evidence.
+requirement.
+
+Completed GitHub Actions evidence:
+
+- Repository: `mii443/detllm`
+- Commit: `7fdb647` (`Fix CI workflow parse error`)
+- Run: <https://github.com/mii443/detllm/actions/runs/28953618071>
+- Result: passed
+
+The completed run passed the native matrix jobs (`x86_64-linux`,
+`aarch64-macos`, `aarch64-linux`), `wasm32-wasip1`, both toolchain-skew jobs
+(`stable` and `1.94.0`), `msrv`, `hygiene`, and the final
+`logits-hash-match` artifact comparison. The only annotations were GitHub's
+Node.js 20 deprecation notices for third-party actions; they did not affect
+the result.
 The hygiene job also runs:
 
 ```sh
