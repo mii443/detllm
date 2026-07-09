@@ -601,7 +601,8 @@ mod tests {
     ))]
     #[test]
     fn simd_blocks_match_scalar_bits() {
-        for seed in 0..1024u32 {
+        const CASES: u32 = 1_000_000;
+        for seed in 0..CASES {
             let q8 = q8_block(seed);
             let q4 = q4_block(seed ^ 0xa5a5_5a5a);
             let a = q8a_block(seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223));
