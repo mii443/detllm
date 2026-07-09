@@ -117,6 +117,11 @@ scale the measured token throughput to the full tokenized first-1MB prefix.
 `scripts/run-target-full-bench.sh` wraps the final target-model first-1MB
 measurement shape and writes both a combined progress log and a stable
 `bench-file` summary under `/tmp/detllm-target-bench` by default.
+GitHub Actions also includes a `nightly-tinyllama` job that is skipped on
+ordinary push/PR runs and runs only on the scheduled workflow or when
+`workflow_dispatch` is started with `run_nightly_tinyllama=true`; it downloads
+TinyLlama Q8_0 from Hugging Face and runs `model-info`, `logits --hash`, and a
+small compress/decompress smoke.
 `model-info` records a
 lightweight GGUF
 intake summary without loading all weights, including model SHA-256, parsed

@@ -1842,6 +1842,24 @@ That command validates the workflow structure itself: the manual
 hash artifacts, wasm build/execution/codec smoke, six-artifact final hash
 verification, and the artifact upload names must all remain present.
 
+The workflow also includes a `nightly-tinyllama` job for the second CI tier
+described in `detllm-design.md`: it is skipped on ordinary push/PR runs and
+runs only from the nightly `schedule` trigger or from `workflow_dispatch` when
+`run_nightly_tinyllama=true`. That job downloads
+`tinyllama-1.1b-chat-v1.0.Q8_0.gguf` from
+`TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF`, then runs:
+
+```sh
+cargo run -p xtask -- model-info --model "$TINYLLAMA_GGUF"
+cargo run -p det-cli -- logits -m "$TINYLLAMA_GGUF" --tokens 1,2,3 --hash --threads 2
+cargo run -p det-cli -- compress -m "$TINYLLAMA_GGUF" -i /tmp/detllm-nightly-input.txt -o /tmp/detllm-nightly-output.dtlz --n-ctx 16 --threads 2
+cargo run -p det-cli -- decompress -m "$TINYLLAMA_GGUF" -i /tmp/detllm-nightly-output.dtlz -o /tmp/detllm-nightly-restored.txt --threads 2
+cmp /tmp/detllm-nightly-input.txt /tmp/detllm-nightly-restored.txt
+```
+
+`check-ci-workflow` validates that this scheduled/manual-only external GGUF
+smoke remains present without adding the multi-GB download to normal push CI.
+
 The GitHub Actions `wasm` job builds `detllm` for `wasm32-wasip1`, runs
 `selftest`, compares fixture `logits --hash` outputs against native execution,
 and compares the quant-kernel hash against native execution. It also runs a
