@@ -7,10 +7,14 @@ license.workspace = true
 
 [dependencies]
 det-num = { path = "../det-num" }
+rayon = { version = "=1.10.0", optional = true }
+
+[features]
+default = []
+parallel = ["rayon"]
 
 [lib]
 path = "src/lib.rs"
 
 [lints]
 workspace = true
-

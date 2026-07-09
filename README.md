@@ -84,7 +84,9 @@ full validation scan for CDFs built by the codec path. The hot forward path
 uses layout checks for already-loaded models instead of re-scanning all weight
 tensors on every token and GEMV. With the `parallel` feature, row-parallel
 GEMV reuses fixed-size Rayon worker pools keyed by `--threads` instead of
-spawning OS threads per matrix multiply. `model-info` records a
+spawning OS threads per matrix multiply, and CDF construction parallelizes only
+the independent `exp[i]` fill while keeping `Z` and prefix sums single-threaded.
+`model-info` records a
 lightweight GGUF
 intake summary without loading all weights, including model SHA-256, parsed
 config, tokenizer kind, byte coverage, vocabulary/codec compatibility, tensor

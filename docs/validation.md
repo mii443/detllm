@@ -430,6 +430,12 @@ accepted boundary and the first rejected symbol count for logits-derived,
 uniform, and public CDF validation paths. The CLI `LoadedModel` path applies
 the same bound before a model is accepted for compression or decompression, so
 codec use fails at model load time instead of after the first CDF construction.
+With the `parallel` feature, CDF construction fills the independent
+`exp_f32(logit[i] - max)` scratch slots with Rayon, then returns to the
+normative single-threaded 8-lane `Z` reduction and prefix-sum construction.
+The unit test `logits_to_cdf_matches_scalar_reference_for_large_vocab`
+compares the feature-selected path against a scalar reference over a 10,003
+symbol deterministic vector.
 
 ## Local Testdata Bench Harness
 
@@ -1011,13 +1017,13 @@ cargo run --release -p xtask --features parallel,simd -- bench-file --model /tmp
 ```
 
 ```text
-bench-file-progress phase=encode tokens_done=8 tokens_total=16 elapsed_ms=1030.885 tokens_per_s=7.760
-bench-file-progress phase=encode tokens_done=16 tokens_total=16 elapsed_ms=2048.368 tokens_per_s=7.811
-bench-file-progress phase=decode tokens_done=8 tokens_total=16 elapsed_ms=1011.406 tokens_per_s=7.910
-bench-file-progress phase=decode tokens_done=16 tokens_total=16 elapsed_ms=2027.190 tokens_per_s=7.893
+bench-file-progress phase=encode tokens_done=8 tokens_total=16 elapsed_ms=1050.789 tokens_per_s=7.613
+bench-file-progress phase=encode tokens_done=16 tokens_total=16 elapsed_ms=2139.837 tokens_per_s=7.477
+bench-file-progress phase=decode tokens_done=8 tokens_total=16 elapsed_ms=1035.976 tokens_per_s=7.722
+bench-file-progress phase=decode tokens_done=16 tokens_total=16 elapsed_ms=2142.781 tokens_per_s=7.467
 bench-file model=/tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=16 iters=1 warmup=false threads=8 n_ctx=64 overlap=16 model_sha256=d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8 input_sha256=4fe5a21798e43c8258edcf9f3a98fac2df77613b4d2add15a2a3082eedc7b0b2
-bench-file: source_input_bytes=100000000 measured_input_bytes=53 total_input_bytes=53 tokens=16 total_tokens=16 payload_bytes=14 dtlz_bytes=70 payload_bits_per_byte=2.113208 dtlz_bits_per_byte=10.566038 compression_ratio=1.320755 elapsed_ms=4192.280 input_bytes_per_s=12.642 tokens_per_s=3.817
-bench-file-phases: model_read_ms=1975.629 gguf_parse_ms=23.768 model_load_ms=1947.239 tokenizer_setup_ms=252.702 input_read_ms=109.353 tokenize_ms=932.701 token_prefix_ms=9.603 warmup_ms=0.001 measured_ms=4192.280 total_ms=15103.638
+bench-file: source_input_bytes=100000000 measured_input_bytes=53 total_input_bytes=53 tokens=16 total_tokens=16 payload_bytes=14 dtlz_bytes=70 payload_bits_per_byte=2.113208 dtlz_bits_per_byte=10.566038 compression_ratio=1.320755 elapsed_ms=4401.062 input_bytes_per_s=12.043 tokens_per_s=3.635
+bench-file-phases: model_read_ms=1762.778 gguf_parse_ms=26.603 model_load_ms=2143.894 tokenizer_setup_ms=284.896 input_read_ms=116.791 tokenize_ms=902.602 token_prefix_ms=9.986 warmup_ms=0.000 measured_ms=4401.062 total_ms=15488.167
 ```
 
 This is input-scale and round-trip evidence for the `bench-file`
@@ -1058,7 +1064,7 @@ stderr every N encode/decode tokens and at phase completion; the stdout summary
 lines remain stable for copying into this file. The Qwen2.5 prefix run above
 shows 1MB ByteBPE tokenization is below one second; after streaming KV-cache
 reuse and validated-model hot-path checks, the 16-token measured encode/decode
-loop is roughly 4.2 seconds. The model forward path also reuses
+loop is roughly 4.4 seconds. The model forward path also reuses
 `ForwardWorkspace` scratch buffers across tokens, avoiding per-token allocation
 of the large hidden-state, projection, attention, and feed-forward vectors, and
 uses layout checks for already-loaded models instead of re-scanning all weight
@@ -1071,7 +1077,9 @@ the validated CDF lookup for CDFs built by this codec path, avoiding a full CDF
 validation scan on every decoded token while leaving the public validating
 `symbol_for` helper available for untrusted tables. With the `parallel`
 feature, row-parallel GEMV reuses fixed-size Rayon worker pools keyed by
-`--threads` instead of spawning OS threads for every matrix multiply.
+`--threads` instead of spawning OS threads for every matrix multiply, and CDF
+construction parallelizes only the independent `exp[i]` fill while keeping `Z`
+and prefix sums single-threaded.
 This is the harness to use for target-model enwik8 first-1MB measurements; the
 bundled fixtures remain smoke and input-scale checks.
 The harness applies the same tokenizer/model vocabulary equality check and

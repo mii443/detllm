@@ -1,4 +1,6 @@
 use det_num::{exp_f32, sum_f32_ref};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 const M: f32 = 16_777_216.0;
 pub const MAX_SYMBOLS: usize = 1 << 18;
@@ -50,11 +52,7 @@ pub fn logits_to_cdf_with_scratch<'a>(
         }
     }
 
-    scratch.exp.clear();
-    scratch.exp.reserve(logits.len());
-    for &x in logits {
-        scratch.exp.push(exp_f32((x - max).max(-88.0)));
-    }
+    fill_exp_scratch(logits, max, &mut scratch.exp);
     let z = sum_f32_ref(&scratch.exp);
 
     scratch.cdf.freq.clear();
@@ -76,6 +74,27 @@ pub fn logits_to_cdf_with_scratch<'a>(
     }
     scratch.cdf.total = total;
     Ok(&scratch.cdf)
+}
+
+fn fill_exp_scratch(logits: &[f32], max: f32, exp: &mut Vec<f32>) {
+    exp.resize(logits.len(), 0.0);
+    fill_exp_slice(logits, max, exp);
+}
+
+#[cfg(feature = "parallel")]
+fn fill_exp_slice(logits: &[f32], max: f32, exp: &mut [f32]) {
+    exp.par_iter_mut()
+        .zip(logits.par_iter())
+        .for_each(|(dst, &x)| {
+            *dst = exp_f32((x - max).max(-88.0));
+        });
+}
+
+#[cfg(not(feature = "parallel"))]
+fn fill_exp_slice(logits: &[f32], max: f32, exp: &mut [f32]) {
+    for (dst, &x) in exp.iter_mut().zip(logits) {
+        *dst = exp_f32((x - max).max(-88.0));
+    }
 }
 
 pub fn uniform_cdf(symbols: usize) -> Result<Cdf, CdfError> {
@@ -187,6 +206,62 @@ mod tests {
         assert_eq!(second.freq.len(), 2);
         assert_eq!(second.cum.len(), 2);
         assert_eq!(second.total, second.freq.iter().map(|&f| f as u64).sum());
+    }
+
+    #[test]
+    fn logits_to_cdf_matches_scalar_reference_for_large_vocab() {
+        let mut state = 0x1234_5678_9abc_def0u64;
+        let mut logits = Vec::with_capacity(10_003);
+        for _ in 0..10_003 {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            let unit = ((state >> 40) as f32) / ((1u32 << 24) as f32);
+            logits.push(unit * 40.0 - 20.0);
+        }
+
+        let expected = logits_to_cdf_scalar_reference(&logits).expect("reference");
+        let actual = logits_to_cdf(&logits).expect("actual");
+        assert_eq!(actual, expected);
+    }
+
+    fn logits_to_cdf_scalar_reference(logits: &[f32]) -> Result<Cdf, CdfError> {
+        if logits.is_empty() {
+            return Err(CdfError::Empty);
+        }
+        if logits.len() > MAX_SYMBOLS {
+            return Err(CdfError::TooManySymbols);
+        }
+        let mut max = f32::NEG_INFINITY;
+        for &x in logits {
+            if !x.is_finite() {
+                return Err(CdfError::NonFiniteLogit);
+            }
+            if x > max {
+                max = x;
+            }
+        }
+
+        let mut exp = Vec::with_capacity(logits.len());
+        for &x in logits {
+            exp.push(det_num::exp_f32((x - max).max(-88.0)));
+        }
+        let z = det_num::sum_f32_ref(&exp);
+
+        let mut freq = Vec::with_capacity(logits.len());
+        let mut cum = Vec::with_capacity(logits.len());
+        let mut total = 0u64;
+        for &ei in &exp {
+            let p = ei / z;
+            let f = ((p * M) as u32) + 1;
+            cum.push(total);
+            freq.push(f);
+            total += f as u64;
+        }
+        if total >= (1u64 << 31) {
+            return Err(CdfError::TotalTooLarge);
+        }
+        Ok(Cdf { freq, cum, total })
     }
 
     #[test]

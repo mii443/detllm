@@ -19,7 +19,7 @@ det-quant = { path = "../det-quant" }
 
 [features]
 default = []
-parallel = ["det-model/parallel"]
+parallel = ["det-coder/parallel", "det-model/parallel"]
 simd = ["det-model/simd"]
 
 [lints]
