@@ -64,6 +64,20 @@ cargo run -p det-cli -- logits -m model.gguf --tokens TOKENS --hash --dump detll
 cargo run -p xtask -- compare-logits --actual detllm.logits.bin --reference llama.logits.bin --row-size VOCAB --rows 8 --min-cosine 0.999 --worst-rows 8 --top-diffs 5
 ```
 
+The checked matrix can be reproduced with:
+
+```sh
+cargo build --release -p det-cli --features parallel,simd
+scripts/run-target-logits-matrix.sh \
+  --reference /tmp/reference_logits_llamacpp \
+  --tinyllama-q8 /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf \
+  --tinyllama-q4 /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf \
+  --qwen25-q8 /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf \
+  --smollm2-q8 /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf \
+  --out /tmp/detllm-logits-matrix-rerun \
+  --threads 8
+```
+
 ## Architecture Metadata Compatibility
 
 `det-model` has a synthetic GGUF test for `general.architecture = "qwen2"`
@@ -852,46 +866,29 @@ output for `Hello world from detllm validation.`:
 cargo run --release -p det-cli -- tokenize -m /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf -p "Hello world from detllm validation."
 cargo run --release -p det-cli -- logits -m /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf --tokens 19556,905,429,964,764,93,13132,30 --dump /tmp/detllm-smollm2-current-tokenized-8.rawlogits.bin --hash --threads 8
 /tmp/reference_logits_llamacpp --model /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf --tokens 19556,905,429,964,764,93,13132,30 --out /tmp/llamacpp-smollm2-current-tokenized-8.rawlogits.bin --threads 8 --ctx-size 16 --batch-size 16 --expected-vocab 49152 --expected-rows 8 --sequential --quiet
-cargo run --release -p xtask -- compare-logits --actual /tmp/detllm-smollm2-current-tokenized-8.rawlogits.bin --reference /tmp/llamacpp-smollm2-current-tokenized-8.rawlogits.bin --row-size 49152 --rows 8 --min-cosine 0.997
+cargo run --release -p xtask -- compare-logits --actual /tmp/detllm-smollm2-current-tokenized-8.rawlogits.bin --reference /tmp/llamacpp-smollm2-current-tokenized-8.rawlogits.bin --row-size 49152 --rows 8 --min-cosine 0.999 --worst-rows 8 --top-diffs 5
 ```
 
 Observed output:
 
 ```text
 19556,905,429,964,764,93,13132,30
-ab8c994d4c7c017c86195ed8a03a6790a2fffa3c9d6c1de8a7fe6d6a72d80a12
+f9b3942c20f3a4177f8d41544a918af6cc6ec90a51c085f1f69cc73cf9f6683a
 reference_logits_llamacpp rows=8 vocab=49152 values=393216
-compare-logits values=393216 cosine=0.999240860 max_abs_diff=1.400400162 rms_diff=0.128983806 rows=8 row_size=49152 min_row_cosine=0.998830694
-```
-
-The same 8-token raw-logits dump does not yet meet the stricter 0.999
-per-row cosine target:
-
-```text
-xtask: compare-logits: min row cosine 0.998830694 is below threshold 0.999000000
-```
-
-The miss is already visible on the first token in that tokenizer-backed
-sequence, so it is not caused by multi-token KV-cache accumulation:
-
-```sh
-cargo run --release -p det-cli -- logits -m /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf --tokens 19556 --dump /tmp/detllm-smollm2-19556.rawlogits.bin --hash --threads 8
-/tmp/reference_logits_llamacpp --model /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf --tokens 19556 --out /tmp/llamacpp-smollm2-19556.rawlogits.bin --threads 8 --ctx-size 16 --batch-size 16 --expected-vocab 49152 --expected-rows 1 --sequential --quiet
-cargo run --release -p xtask -- compare-logits --actual /tmp/detllm-smollm2-19556.rawlogits.bin --reference /tmp/llamacpp-smollm2-19556.rawlogits.bin --row-size 49152 --rows 1 --min-cosine 0.0 --worst-rows 1 --top-diffs 5
-```
-
-Observed output:
-
-```text
-cd6ecb7a6204975dbb4ff284044381a3626d77fdbbafc26d107b2e7e54be54d8
-reference_logits_llamacpp rows=1 vocab=49152 values=49152
-compare-logits values=49152 cosine=0.998830694 max_abs_diff=1.400400162 rms_diff=0.231572242 rows=1 row_size=49152 min_row=0 min_row_cosine=0.998830694
-compare-logits-worst-row row=0 cosine=0.998830694 max_abs_diff=1.400400162 rms_diff=0.231572242
-compare-logits-top-diff rank=1 index=7370 row=0 col=7370 actual=-14.188291550 reference=-15.588691711 abs_diff=1.400400162
-compare-logits-top-diff rank=2 index=7359 row=0 col=7359 actual=-9.997969627 reference=-11.300146103 abs_diff=1.302176476
-compare-logits-top-diff rank=3 index=41150 row=0 col=41150 actual=-11.929577827 reference=-13.226449966 abs_diff=1.296872139
-compare-logits-top-diff rank=4 index=44956 row=0 col=44956 actual=-11.395421028 reference=-12.628348351 abs_diff=1.232927322
-compare-logits-top-diff rank=5 index=7910 row=0 col=7910 actual=-8.055624962 reference=-9.281610489 abs_diff=1.225985527
+compare-logits values=393216 cosine=0.999467131 max_abs_diff=0.856705666 rms_diff=0.107144161 rows=8 row_size=49152 min_row=7 min_row_cosine=0.999227139
+compare-logits-worst-row row=7 cosine=0.999227139 max_abs_diff=0.441878259 rms_diff=0.116565931
+compare-logits-worst-row row=3 cosine=0.999329501 max_abs_diff=0.490562439 rms_diff=0.114232291
+compare-logits-worst-row row=2 cosine=0.999332700 max_abs_diff=0.856705666 rms_diff=0.168937839
+compare-logits-worst-row row=5 cosine=0.999390521 max_abs_diff=0.472980499 rms_diff=0.088065795
+compare-logits-worst-row row=4 cosine=0.999393480 max_abs_diff=0.464054108 rms_diff=0.084072347
+compare-logits-worst-row row=6 cosine=0.999442562 max_abs_diff=0.493749619 rms_diff=0.088909721
+compare-logits-worst-row row=1 cosine=0.999634599 max_abs_diff=0.547472954 rms_diff=0.084311656
+compare-logits-worst-row row=0 cosine=0.999860060 max_abs_diff=0.349436283 rms_diff=0.082614803
+compare-logits-top-diff rank=1 index=110078 row=2 col=11774 actual=-11.189858437 reference=-12.046564102 abs_diff=0.856705666
+compare-logits-top-diff rank=2 index=138149 row=2 col=39845 actual=-4.718740940 reference=-5.537504196 abs_diff=0.818763256
+compare-logits-top-diff rank=3 index=116485 row=2 col=18181 actual=-5.734763622 reference=-6.507501602 abs_diff=0.772737980
+compare-logits-top-diff rank=4 index=132505 row=2 col=34201 actual=-9.688414574 reference=-10.455325127 abs_diff=0.766910553
+compare-logits-top-diff rank=5 index=117723 row=2 col=19419 actual=-16.741926193 reference=-17.489261627 abs_diff=0.747335434
 ```
 
 Tokenizer-backed text paths can use bytes that are present in the partial BPE
@@ -953,8 +950,8 @@ This is real SmolLM2 GGUF evidence for model config parsing, required tensor
 compatibility on Q8_0, single-token forward, chunk-size-invariant logits
 hashing on a three-token stream, a three-token llama.cpp raw-logits cosine
 check that passes the 0.999 target, and an 8-token tokenizer-backed
-raw-logits check whose aggregate cosine passes 0.999 but whose first row
-remains below the 0.999 per-row target. It also records that partial GPT-2 BPE
+raw-logits check that passes the 0.999 per-row target. It also records that
+partial GPT-2 BPE
 tokenizer construction is usable for present-byte text, while the tested full
 GGUF and the two metadata-prefix-screened public candidates expose only 235 of
 the 256 byte values as single-byte BPE seed tokens. The byte escape tail keeps
