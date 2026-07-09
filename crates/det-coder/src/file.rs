@@ -1,6 +1,8 @@
 pub const MAGIC: [u8; 4] = *b"DTLZ";
 pub const VERSION: u16 = 1;
 pub const FLAGS: u16 = 0;
+pub const FLAG_BYTE_ESCAPES: u16 = 1 << 0;
+pub const SUPPORTED_FLAGS: u16 = FLAG_BYTE_ESCAPES;
 pub const HEADER_LEN: usize = 4 + 2 + 2 + 32 + 4 + 4 + 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,7 +43,7 @@ impl DtlzHeader {
     }
 
     pub fn validate(self) -> Result<(), FileError> {
-        if self.flags != FLAGS {
+        if self.flags & !SUPPORTED_FLAGS != 0 {
             return Err(FileError::UnsupportedFlags(self.flags));
         }
         if self.n_ctx == 0 {
@@ -65,7 +67,7 @@ impl DtlzHeader {
             return Err(FileError::UnsupportedVersion(version));
         }
         let flags = u16::from_le_bytes([bytes[6], bytes[7]]);
-        if flags != FLAGS {
+        if flags & !SUPPORTED_FLAGS != 0 {
             return Err(FileError::UnsupportedFlags(flags));
         }
         let mut model_sha256 = [0u8; 32];
@@ -94,7 +96,7 @@ mod tests {
     #[test]
     fn header_round_trips() {
         let h = DtlzHeader {
-            flags: FLAGS,
+            flags: FLAG_BYTE_ESCAPES,
             model_sha256: [7; 32],
             n_ctx: 2048,
             overlap: 512,
@@ -106,19 +108,43 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unsupported_flags() {
+    fn accepts_known_flags_and_rejects_unsupported_flags() {
         let h = DtlzHeader {
-            flags: 1,
+            flags: FLAGS,
             model_sha256: [7; 32],
             n_ctx: 2048,
             overlap: 512,
             orig_len: 123456789,
         };
-        assert_eq!(h.validate(), Err(FileError::UnsupportedFlags(1)));
-        assert_eq!(h.encode_checked(), Err(FileError::UnsupportedFlags(1)));
+        assert_eq!(h.validate(), Ok(()));
+        assert_eq!(DtlzHeader::decode(&h.encode()), Ok(h));
+
+        let h = DtlzHeader {
+            flags: FLAG_BYTE_ESCAPES,
+            model_sha256: [7; 32],
+            n_ctx: 2048,
+            overlap: 512,
+            orig_len: 123456789,
+        };
+        assert_eq!(h.validate(), Ok(()));
+        assert_eq!(DtlzHeader::decode(&h.encode()), Ok(h));
+
+        let unsupported = FLAG_BYTE_ESCAPES << 1;
+        let h = DtlzHeader {
+            flags: unsupported,
+            model_sha256: [7; 32],
+            n_ctx: 2048,
+            overlap: 512,
+            orig_len: 123456789,
+        };
+        assert_eq!(h.validate(), Err(FileError::UnsupportedFlags(unsupported)));
+        assert_eq!(
+            h.encode_checked(),
+            Err(FileError::UnsupportedFlags(unsupported))
+        );
         assert_eq!(
             DtlzHeader::decode(&h.encode()),
-            Err(FileError::UnsupportedFlags(1))
+            Err(FileError::UnsupportedFlags(unsupported))
         );
     }
 

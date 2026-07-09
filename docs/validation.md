@@ -226,8 +226,9 @@ encodes `vocab_len + byte`; decompression writes that byte directly and does
 not advance the model context for the escape symbol. The CDF assigns these
 escape symbols minimum frequency after normal logits-derived vocabulary
 symbols, while the initial empty-context CDF is uniform over vocabulary plus
-escapes. Unit tests cover partial-BPE inputs where present bytes still use BPE
-tokens and missing bytes use byte escapes.
+escapes. New DTLZ files set `FLAG_BYTE_ESCAPES` in the header; `flags=0`
+remains the legacy token-only CDF mode. Unit tests cover partial-BPE inputs
+where present bytes still use BPE tokens and missing bytes use byte escapes.
 The byte-token mapping must also be unambiguous. `det-token` rejects duplicate
 canonical `<0xNN>` byte fallback entries, and BPE tokenizers reject duplicate
 emittable token byte sequences, including single-byte tokens, instead of
@@ -379,8 +380,10 @@ declared context length instead of silently clamping them before writing the
 DTLZ header. This keeps the recorded window settings equal to the caller's
 explicit request.
 DTLZ header invariants are checked on both decode and checked-encode paths:
-unsupported flags, zero `n_ctx`, and `overlap >= n_ctx` are rejected before a
-header is accepted or written by the CLI.
+unknown flag bits, zero `n_ctx`, and `overlap >= n_ctx` are rejected before a
+header is accepted or written by the CLI. `FLAG_BYTE_ESCAPES` is accepted and
+is written by new CLI compression output; `flags=0` remains accepted for
+legacy token-only payloads.
 The unit test `rejects_malformed_header_envelope` also covers too-short files,
 bad magic bytes, and unsupported header versions before any payload decoding is
 attempted.
@@ -889,6 +892,31 @@ Observed output:
 bench-file model=/tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf input=/tmp/detllm-smollm2-escape.bin limit_bytes=all limit_tokens=all iters=1 warmup=false threads=default n_ctx=16 overlap=4 model_sha256=0f3fb091804c48a561b42a4ca1be9ce2c353017187f74c48f52299cae790abe5 input_sha256=85932b70980ded4c5fc6a3b73b47839b3e4fcb65a51a7f164b5b267e8da02a71
 bench-file: source_input_bytes=10 measured_input_bytes=10 total_input_bytes=10 tokenized_tokens=7 tokens=7 total_tokens=7 payload_bytes=22 dtlz_bytes=78 payload_bits_per_byte=17.600000 dtlz_bits_per_byte=62.400000 compression_ratio=7.800000 elapsed_ms=1581.394 input_bytes_per_s=6.324 tokens_per_s=4.426
 bench-file-phases: model_read_ms=3274.449 gguf_parse_ms=6.978 model_load_ms=2615.510 tokenizer_setup_ms=104.751 input_read_ms=0.050 tokenize_ms=1.346 token_prefix_ms=0.000 warmup_ms=0.000 measured_ms=1581.394 total_ms=13855.380
+```
+
+The public CLI writes the byte-escape flag in new DTLZ files and restores the
+same bytes:
+
+```sh
+cargo run --release -p det-cli -- compress -m /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf -i /tmp/detllm-smollm2-escape.bin -o /tmp/detllm-smollm2-escape.dtlz --n-ctx 16 --threads 8
+cargo run --release -p det-cli -- decompress -m /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf -i /tmp/detllm-smollm2-escape.dtlz -o /tmp/detllm-smollm2-escape.restored --threads 8
+xxd -p -l 8 /tmp/detllm-smollm2-escape.dtlz
+cmp /tmp/detllm-smollm2-escape.bin /tmp/detllm-smollm2-escape.restored
+sha256sum /tmp/detllm-smollm2-escape.bin /tmp/detllm-smollm2-escape.restored /tmp/detllm-smollm2-escape.dtlz
+wc -c /tmp/detllm-smollm2-escape.bin /tmp/detllm-smollm2-escape.restored /tmp/detllm-smollm2-escape.dtlz
+```
+
+Observed output:
+
+```text
+44544c5a01000100
+85932b70980ded4c5fc6a3b73b47839b3e4fcb65a51a7f164b5b267e8da02a71  /tmp/detllm-smollm2-escape.bin
+85932b70980ded4c5fc6a3b73b47839b3e4fcb65a51a7f164b5b267e8da02a71  /tmp/detllm-smollm2-escape.restored
+f238623da90e2452fcce0370fe4dfe516aa715f84a08301f128cb6d3d5837116  /tmp/detllm-smollm2-escape.dtlz
+10 /tmp/detllm-smollm2-escape.bin
+10 /tmp/detllm-smollm2-escape.restored
+78 /tmp/detllm-smollm2-escape.dtlz
+98 total
 ```
 
 This is real SmolLM2 GGUF evidence for model config parsing, required tensor

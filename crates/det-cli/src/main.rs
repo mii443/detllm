@@ -437,9 +437,9 @@ fn compress(args: Vec<String>) -> Result<(), String> {
     let overlap = n_ctx / 4;
     validate_window(n_ctx, overlap, loaded.model.config.context_length)?;
 
-    let payload = encode_symbols_with_model(&loaded.model, &symbols, n_ctx, overlap)?;
+    let payload = encode_symbols_with_model(&loaded.model, &symbols, n_ctx, overlap, true)?;
     let header = det_coder::DtlzHeader {
-        flags: 0,
+        flags: det_coder::FLAG_BYTE_ESCAPES,
         model_sha256: loaded.model_sha256,
         n_ctx: n_ctx as u32,
         overlap: overlap as u32,
@@ -475,6 +475,7 @@ fn decompress(args: Vec<String>) -> Result<(), String> {
     let n_ctx = header.n_ctx as usize;
     let overlap = header.overlap as usize;
     validate_window(n_ctx, overlap, loaded.model.config.context_length)?;
+    let use_byte_escapes = header.flags & det_coder::FLAG_BYTE_ESCAPES != 0;
 
     let restored_len =
         usize::try_from(header.orig_len).map_err(|_| "orig_len does not fit usize")?;
@@ -485,9 +486,15 @@ fn decompress(args: Vec<String>) -> Result<(), String> {
         restored_len,
         n_ctx,
         overlap,
+        use_byte_escapes,
     )?;
-    let canonical_payload =
-        encode_symbols_with_model(&loaded.model, &decoded.symbols, n_ctx, overlap)?;
+    let canonical_payload = encode_symbols_with_model(
+        &loaded.model,
+        &decoded.symbols,
+        n_ctx,
+        overlap,
+        use_byte_escapes,
+    )?;
     if canonical_payload != payload {
         return Err(
             "DTLZ payload is not the canonical encoding for the restored stream".to_owned(),
@@ -503,7 +510,7 @@ fn encode_tokens_with_model(
     n_ctx: usize,
     overlap: usize,
 ) -> Result<Vec<u8>, String> {
-    encode_symbols_with_model(model, tokens, n_ctx, overlap)
+    encode_symbols_with_model(model, tokens, n_ctx, overlap, true)
 }
 
 fn encode_symbols_with_model(
@@ -511,17 +518,24 @@ fn encode_symbols_with_model(
     symbols: &[usize],
     n_ctx: usize,
     overlap: usize,
+    use_byte_escapes: bool,
 ) -> Result<Vec<u8>, String> {
     validate_window(n_ctx, overlap, model.config.context_length)?;
     let mut enc = det_coder::RangeEncoder::new();
-    let mut state = WindowedModelState::new(model, n_ctx)?;
+    let mut state = WindowedModelState::new(model, n_ctx, use_byte_escapes)?;
     let mut context_tokens = Vec::new();
     let vocab_len = model.output.rows();
     for &symbol in symbols {
         state.sync(context_tokens.len(), &context_tokens, overlap)?;
         let cdf = state.cdf()?;
         encode_symbol(&mut enc, cdf, symbol)?;
-        if det_token::Tokenizer::codec_symbol_is_token(symbol, vocab_len) {
+        if use_byte_escapes && !det_token::Tokenizer::codec_symbol_is_token(symbol, vocab_len) {
+            continue;
+        }
+        if symbol >= vocab_len {
+            return Err(format!("symbol {symbol} is outside vocabulary"));
+        }
+        {
             context_tokens.push(symbol);
             state.advance(symbol)?;
         }
@@ -541,7 +555,7 @@ fn decode_tokens_with_model(
     let mut dec =
         det_coder::RangeDecoder::new(payload).map_err(|e| format!("range decoder error: {e:?}"))?;
     let mut tokens = Vec::with_capacity(token_len);
-    let mut state = WindowedModelState::new(model, n_ctx)?;
+    let mut state = WindowedModelState::new(model, n_ctx, true)?;
     let vocab_len = model.output.rows();
     while tokens.len() < token_len {
         state.sync(tokens.len(), &tokens, overlap)?;
@@ -568,6 +582,7 @@ fn decode_bytes_with_model(
     byte_len: usize,
     n_ctx: usize,
     overlap: usize,
+    use_byte_escapes: bool,
 ) -> Result<DecodedBytes, String> {
     validate_window(n_ctx, overlap, model.config.context_length)?;
     let mut dec =
@@ -575,21 +590,32 @@ fn decode_bytes_with_model(
     let mut context_tokens = Vec::new();
     let mut symbols = Vec::new();
     let mut bytes = Vec::with_capacity(byte_len.min(8192));
-    let mut state = WindowedModelState::new(model, n_ctx)?;
+    let mut state = WindowedModelState::new(model, n_ctx, use_byte_escapes)?;
     let vocab_len = model.output.rows();
     while bytes.len() < byte_len {
         state.sync(context_tokens.len(), &context_tokens, overlap)?;
         let cdf = state.cdf()?;
         let symbol = decode_symbol(&mut dec, cdf)?;
-        let piece = tokenizer
-            .decode_codec_symbol(symbol, vocab_len)
-            .map_err(|e| format!("detokenize error: {e:?}"))?;
+        let piece = if use_byte_escapes {
+            tokenizer
+                .decode_codec_symbol(symbol, vocab_len)
+                .map_err(|e| format!("detokenize error: {e:?}"))?
+        } else {
+            let token =
+                u32::try_from(symbol).map_err(|_| format!("decoded token too large: {symbol}"))?;
+            tokenizer
+                .detokenize_bytes(&[token])
+                .map_err(|e| format!("detokenize error: {e:?}"))?
+        };
         if piece.is_empty() {
             return Err(format!("decoded symbol {symbol} produced no bytes"));
         }
         bytes.extend_from_slice(&piece);
         symbols.push(symbol);
-        if det_token::Tokenizer::codec_symbol_is_token(symbol, vocab_len) {
+        if use_byte_escapes && !det_token::Tokenizer::codec_symbol_is_token(symbol, vocab_len) {
+            continue;
+        }
+        {
             context_tokens.push(symbol);
             state.advance(symbol)?;
         }
@@ -608,10 +634,15 @@ struct WindowedModelState<'a> {
     logits: Vec<f32>,
     uniform_cdf: det_coder::Cdf,
     cdf_scratch: det_coder::CdfScratch,
+    use_byte_escapes: bool,
 }
 
 impl<'a> WindowedModelState<'a> {
-    fn new(model: &'a det_model::F32Llama, n_ctx: usize) -> Result<Self, String> {
+    fn new(
+        model: &'a det_model::F32Llama,
+        n_ctx: usize,
+        use_byte_escapes: bool,
+    ) -> Result<Self, String> {
         let rope = det_model::RopeTables::llama(model.config, n_ctx)
             .map_err(|e| format!("rope error: {e:?}"))?;
         let cache =
@@ -619,8 +650,12 @@ impl<'a> WindowedModelState<'a> {
         let workspace = model
             .forward_workspace(n_ctx)
             .map_err(|e| format!("workspace error: {e:?}"))?;
-        let uniform_cdf = det_coder::uniform_cdf_with_byte_escapes(model.output.rows())
-            .map_err(|e| format!("uniform CDF error: {e:?}"))?;
+        let uniform_cdf = if use_byte_escapes {
+            det_coder::uniform_cdf_with_byte_escapes(model.output.rows())
+        } else {
+            det_coder::uniform_cdf(model.output.rows())
+        }
+        .map_err(|e| format!("uniform CDF error: {e:?}"))?;
         Ok(Self {
             model,
             n_ctx,
@@ -632,6 +667,7 @@ impl<'a> WindowedModelState<'a> {
             logits: vec![0.0f32; model.output.rows()],
             uniform_cdf,
             cdf_scratch: det_coder::CdfScratch::default(),
+            use_byte_escapes,
         })
     }
 
@@ -661,8 +697,11 @@ impl<'a> WindowedModelState<'a> {
     fn cdf(&mut self) -> Result<&det_coder::Cdf, String> {
         if self.context_len == 0 {
             Ok(&self.uniform_cdf)
-        } else {
+        } else if self.use_byte_escapes {
             det_coder::logits_to_cdf_with_byte_escapes(&self.logits, &mut self.cdf_scratch)
+                .map_err(|e| format!("CDF error: {e:?}"))
+        } else {
+            det_coder::logits_to_cdf_with_scratch(&self.logits, &mut self.cdf_scratch)
                 .map_err(|e| format!("CDF error: {e:?}"))
         }
     }
@@ -1255,6 +1294,7 @@ mod tests {
         assert_eq!(fs::read(restored_path).expect("restored"), input);
         let encoded = fs::read(compressed_path).expect("compressed");
         let header = det_coder::DtlzHeader::decode(&encoded).expect("header");
+        assert_eq!(header.flags, det_coder::FLAG_BYTE_ESCAPES);
         assert_eq!(header.n_ctx, 8);
         assert_eq!(header.overlap, 2);
         assert_eq!(header.orig_len, input.len() as u64);
@@ -1562,6 +1602,7 @@ mod tests {
         assert_eq!(fs::read(restored_path).expect("restored"), input);
         let encoded = fs::read(compressed_path).expect("compressed");
         let header = det_coder::DtlzHeader::decode(&encoded).expect("header");
+        assert_eq!(header.flags, det_coder::FLAG_BYTE_ESCAPES);
         assert_eq!(header.orig_len, 4);
 
         let loaded = LoadedModel::load(model_path.to_str().expect("model path")).expect("load");
@@ -1590,7 +1631,8 @@ mod tests {
             b"ab"
         );
 
-        let payload = encode_tokens_with_model(&loaded.model, &[256], 8, 2).expect("encode");
+        let payload =
+            encode_symbols_with_model(&loaded.model, &[256], 8, 2, false).expect("encode");
         let header = det_coder::DtlzHeader {
             flags: 0,
             model_sha256: loaded.model_sha256,
@@ -1663,6 +1705,7 @@ mod tests {
             assert_eq!(fs::read(restored_path).expect("restored"), input);
             let encoded = fs::read(compressed_path).expect("compressed");
             let header = det_coder::DtlzHeader::decode(&encoded).expect("header");
+            assert_eq!(header.flags, det_coder::FLAG_BYTE_ESCAPES);
             assert_eq!(header.n_ctx, 8);
             assert_eq!(header.overlap, 2);
             assert_eq!(header.orig_len, input.len() as u64);

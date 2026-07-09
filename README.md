@@ -76,7 +76,9 @@ codec-symbol prefix limit, warmup mode, and thread override so real enwik8
 measurements can be copied directly into the validation notes. Tokenizers that
 cannot emit all 256 byte values use deterministic byte escape symbols after the
 model vocabulary for codec round-trip, with the model context advanced only for
-real vocabulary tokens. Long target-model measurements can use
+real vocabulary tokens; new DTLZ files set the `FLAG_BYTE_ESCAPES` header bit
+so decoders can distinguish this CDF alphabet from legacy token-only payloads.
+Long target-model measurements can use
 `--progress-every N` to emit encode/decode token progress on stderr without
 changing the stdout result lines. The codec benchmark path reuses a
 streaming KV cache inside each
