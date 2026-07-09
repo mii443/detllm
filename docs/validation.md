@@ -46,6 +46,12 @@ and `tiny-qmix`.
 using `qwen2.*` metadata keys with the same dense decoder tensor names. This
 covers the first loader-level compatibility issue for Qwen2.5-family GGUFs
 without claiming real-model correctness.
+Qwen2-family attention projections may include optional
+`blk.N.attn_{q,k,v}.bias` tensors. The loader reads those biases when present,
+validates their projected vector lengths, and applies them after the Q/K/V
+GEMV step before RoPE and KV-cache storage. Synthetic qwen2 coverage checks
+that those optional tensors load, while llama-style fixtures continue to load
+with no attention projection biases.
 
 The loader also selects RoPE pairing by architecture, matching llama.cpp's
 architecture mapping for the supported set: `llama` uses adjacent value pairs
@@ -580,9 +586,26 @@ Observed output:
 
 ```text
 tokens("Hello") = 9707
-tokens=151643 hash = 6d26b369afb23cf98f405a9139a0999c11d9a00937eebb4c65cd484730de90ec
-tokens=151643,9707,151645 chunk-size=1 hash = 64d86bcdfc80c0b5ea791d739d9e877c58f26046ed15ffc1a1f7e8d063be7db8
-tokens=151643,9707,151645 chunk-size=3 hash = 64d86bcdfc80c0b5ea791d739d9e877c58f26046ed15ffc1a1f7e8d063be7db8
+tokens=151643 hash = 26c0784ba271b6a72170625ff878536576b6a1618a65db476721ce562f1ccba6
+tokens=151643,9707,151645 chunk-size=1 hash = 54a2d926c73430df3b849f91ad106f0723bc5f007d851c2767e8b115e1ca7fc7
+tokens=151643,9707,151645 chunk-size=3 hash = 54a2d926c73430df3b849f91ad106f0723bc5f007d851c2767e8b115e1ca7fc7
+```
+
+Raw logits llama.cpp reference:
+
+```sh
+c++ -std=c++17 -O2 -I/usr/local/include scripts/reference_logits_llamacpp.cpp -L/usr/local/lib -Wl,-rpath,/usr/local/lib -lllama -lggml -lggml-cpu -lggml-base -o /tmp/reference_logits_llamacpp
+cargo run --release -p det-cli -- logits -m /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --tokens 151643,9707,151645 --dump /tmp/detllm-qwen-151643-9707-151645.rawlogits.bin --hash --threads 8
+/tmp/reference_logits_llamacpp --model /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --tokens 151643,9707,151645 --out /tmp/llamacpp-qwen-151643-9707-151645.rawlogits.bin --threads 8 --ctx-size 16 --batch-size 16 --expected-vocab 151936 --expected-rows 3 --quiet
+cargo run -p xtask -- compare-logits --actual /tmp/detllm-qwen-151643-9707-151645.rawlogits.bin --reference /tmp/llamacpp-qwen-151643-9707-151645.rawlogits.bin --row-size 151936 --rows 3 --min-cosine 0.999
+```
+
+Observed output:
+
+```text
+54a2d926c73430df3b849f91ad106f0723bc5f007d851c2767e8b115e1ca7fc7
+reference_logits_llamacpp rows=3 vocab=151936 values=455808
+compare-logits values=455808 cosine=0.999795659 max_abs_diff=0.504380226 rms_diff=0.078664062 rows=3 row_size=151936 min_row_cosine=0.999737289
 ```
 
 Minimal codec smoke:
@@ -595,16 +618,17 @@ Observed output:
 
 ```text
 bench-file model=/tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf input=/tmp/detllm-external/hello.txt limit_bytes=all iters=1 n_ctx=16 overlap=4 model_sha256=d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8 input_sha256=66a045b452102c59d840ec097d59d9467e13a3f34f6494e539ffd32c1bb35f18
-bench-file: source_input_bytes=6 measured_input_bytes=6 total_input_bytes=6 tokens=2 total_tokens=2 payload_bytes=10 dtlz_bytes=66 payload_bits_per_byte=13.333333 dtlz_bits_per_byte=88.000000 compression_ratio=11.000000 elapsed_ms=439.175 input_bytes_per_s=13.662 tokens_per_s=4.554
+bench-file: source_input_bytes=6 measured_input_bytes=6 total_input_bytes=6 tokens=2 total_tokens=2 payload_bytes=10 dtlz_bytes=66 payload_bits_per_byte=13.333333 dtlz_bits_per_byte=88.000000 compression_ratio=11.000000 elapsed_ms=412.009 input_bytes_per_s=14.563 tokens_per_s=4.854
 ```
 
 This is real Qwen2.5 GGUF evidence for GPT-2-style ByteBPE tokenizer
 construction, `qwen2` metadata parsing, split-half RoPE configuration, full
-required tensor compatibility on Q8_0, single-token forward,
-chunk-size-invariant logits hashing on a three-token stream, and an end-to-end
-codec round-trip on a tiny byte input. It is not a substitute for the HF
-transformers raw-logits cosine check, a Qwen2.5 llama.cpp log-probability
-check, or the enwik8 first-1MB compression measurement.
+required tensor compatibility on Q8_0, optional attention projection bias
+loading, single-token forward, chunk-size-invariant logits hashing on a
+three-token stream, a llama.cpp raw-logits cosine check, and an end-to-end codec
+round-trip on a tiny byte input. It is not a substitute for a Qwen2.5
+llama.cpp log-probability check or the enwik8 first-1MB compression
+measurement.
 
 ### SmolLM2 External Smoke
 

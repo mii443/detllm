@@ -84,7 +84,8 @@ the following acceptance evidence is still missing:
   256 input bytes; the tested Unsloth Q8_0 GGUF has 21 missing byte tokens.
 - Broader TinyLlama / Qwen2.5 / SmolLM2 reference-quality checks beyond the
   current minimal smoke.
-- Qwen2.5 / SmolLM2 raw-logits cosine-similarity evidence; TinyLlama now has
-  llama.cpp raw-logits and perplexity-path log-probability sanity checks.
+- SmolLM2 raw-logits cosine-similarity evidence; TinyLlama and Qwen2.5 now
+  have llama.cpp raw-logits checks, and TinyLlama also has a perplexity-path
+  log-probability sanity check.
 - enwik8 first-1MB compression-rate measurement with `xtask bench-file`.
 - Criterion or equivalent full benchmark results on real target hardware.

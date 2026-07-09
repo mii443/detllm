@@ -56,8 +56,11 @@ pub struct F32Matrix {
 pub struct F32LayerWeights {
     pub attention_norm: Vec<f32>,
     pub wq: WeightMatrix,
+    pub attn_q_bias: Option<Vec<f32>>,
     pub wk: WeightMatrix,
+    pub attn_k_bias: Option<Vec<f32>>,
     pub wv: WeightMatrix,
+    pub attn_v_bias: Option<Vec<f32>>,
     pub wo: WeightMatrix,
     pub ffn_norm: Vec<f32>,
     pub w_gate: WeightMatrix,
@@ -613,6 +616,12 @@ impl F32Llama {
                     config.head_count * head_dim,
                     d,
                 )?,
+                attn_q_bias: read_optional_f32_vector(
+                    gguf,
+                    bytes,
+                    &format!("blk.{layer}.attn_q.bias"),
+                    config.head_count * head_dim,
+                )?,
                 wk: read_weight_matrix(
                     gguf,
                     bytes,
@@ -620,12 +629,24 @@ impl F32Llama {
                     config.head_count_kv * head_dim,
                     d,
                 )?,
+                attn_k_bias: read_optional_f32_vector(
+                    gguf,
+                    bytes,
+                    &format!("blk.{layer}.attn_k.bias"),
+                    config.head_count_kv * head_dim,
+                )?,
                 wv: read_weight_matrix(
                     gguf,
                     bytes,
                     &format!("blk.{layer}.attn_v.weight"),
                     config.head_count_kv * head_dim,
                     d,
+                )?,
+                attn_v_bias: read_optional_f32_vector(
+                    gguf,
+                    bytes,
+                    &format!("blk.{layer}.attn_v.bias"),
+                    config.head_count_kv * head_dim,
                 )?,
                 wo: read_weight_matrix(
                     gguf,
@@ -698,10 +719,22 @@ impl F32Llama {
                 || layer.ffn_norm.len() != d
                 || layer.wq.rows() != self.config.head_count * head_dim
                 || layer.wq.cols() != d
+                || layer
+                    .attn_q_bias
+                    .as_ref()
+                    .is_some_and(|bias| bias.len() != self.config.head_count * head_dim)
                 || layer.wk.rows() != self.config.head_count_kv * head_dim
                 || layer.wk.cols() != d
+                || layer
+                    .attn_k_bias
+                    .as_ref()
+                    .is_some_and(|bias| bias.len() != self.config.head_count_kv * head_dim)
                 || layer.wv.rows() != self.config.head_count_kv * head_dim
                 || layer.wv.cols() != d
+                || layer
+                    .attn_v_bias
+                    .as_ref()
+                    .is_some_and(|bias| bias.len() != self.config.head_count_kv * head_dim)
                 || layer.wo.rows() != d
                 || layer.wo.cols() != self.config.head_count * head_dim
                 || layer.w_gate.rows() != d_ff
@@ -715,6 +748,15 @@ impl F32Llama {
             }
             ensure_finite_slice(&layer.attention_norm)?;
             ensure_finite_slice(&layer.ffn_norm)?;
+            if let Some(bias) = &layer.attn_q_bias {
+                ensure_finite_slice(bias)?;
+            }
+            if let Some(bias) = &layer.attn_k_bias {
+                ensure_finite_slice(bias)?;
+            }
+            if let Some(bias) = &layer.attn_v_bias {
+                ensure_finite_slice(bias)?;
+            }
             layer.wq.validate()?;
             layer.wk.validate()?;
             layer.wv.validate()?;
@@ -772,12 +814,15 @@ impl F32Llama {
             layer
                 .wq
                 .gemv_with_optional_q8a(&h, h_q8a.as_deref(), &mut q)?;
+            add_optional_bias(&mut q, layer.attn_q_bias.as_deref())?;
             layer
                 .wk
                 .gemv_with_optional_q8a(&h, h_q8a.as_deref(), &mut k)?;
+            add_optional_bias(&mut k, layer.attn_k_bias.as_deref())?;
             layer
                 .wv
                 .gemv_with_optional_q8a(&h, h_q8a.as_deref(), &mut v)?;
+            add_optional_bias(&mut v, layer.attn_v_bias.as_deref())?;
             apply_rope(&mut q, self.config.head_count, head_dim, pos, rope)?;
             apply_rope(&mut k, self.config.head_count_kv, head_dim, pos, rope)?;
             cache.store(layer_idx, pos, &k, &v)?;
@@ -1123,6 +1168,19 @@ fn read_f32_vector(
     read_dense_tensor_as_f32(gguf, bytes, name)
 }
 
+fn read_optional_f32_vector(
+    gguf: &det_gguf::Gguf,
+    bytes: &[u8],
+    name: &str,
+    len: usize,
+) -> Result<Option<Vec<f32>>, ModelError> {
+    match gguf.tensor(name) {
+        Ok(_) => read_f32_vector(gguf, bytes, name, len).map(Some),
+        Err(det_gguf::GgufError::TensorNotFound) => Ok(None),
+        Err(_) => Err(ModelError::Gguf),
+    }
+}
+
 fn read_f32_matrix(
     gguf: &det_gguf::Gguf,
     bytes: &[u8],
@@ -1295,6 +1353,24 @@ fn residual_add(x: &mut [f32], residual: &[f32]) -> Result<(), ModelError> {
     ensure_finite_slice(x)?;
     ensure_finite_slice(residual)?;
     for (dst, &value) in x.iter_mut().zip(residual) {
+        *dst += value;
+        if !dst.is_finite() {
+            return Err(ModelError::NonFinite);
+        }
+    }
+    Ok(())
+}
+
+fn add_optional_bias(x: &mut [f32], bias: Option<&[f32]>) -> Result<(), ModelError> {
+    let Some(bias) = bias else {
+        return Ok(());
+    };
+    if x.len() != bias.len() {
+        return Err(ModelError::Shape);
+    }
+    ensure_finite_slice(x)?;
+    ensure_finite_slice(bias)?;
+    for (dst, &value) in x.iter_mut().zip(bias) {
         *dst += value;
         if !dst.is_finite() {
             return Err(ModelError::NonFinite);
@@ -1985,8 +2061,11 @@ mod tests {
             layers: vec![F32LayerWeights {
                 attention_norm: vec![1.0; 4],
                 wq: patterned_matrix(4, 4, 0.01).into(),
+                attn_q_bias: None,
                 wk: patterned_matrix(2, 4, -0.02).into(),
+                attn_k_bias: None,
                 wv: patterned_matrix(2, 4, 0.03).into(),
+                attn_v_bias: None,
                 wo: patterned_matrix(4, 4, -0.015).into(),
                 ffn_norm: vec![1.0; 4],
                 w_gate: patterned_matrix(6, 4, 0.025).into(),
@@ -2093,8 +2172,11 @@ mod tests {
             layers: vec![F32LayerWeights {
                 attention_norm: vec![1.0; 4],
                 wq: patterned_matrix(4, 4, 0.01).into(),
+                attn_q_bias: None,
                 wk: patterned_matrix(2, 4, -0.02).into(),
+                attn_k_bias: None,
                 wv: patterned_matrix(2, 4, 0.03).into(),
+                attn_v_bias: None,
                 wo: patterned_matrix(4, 4, -0.015).into(),
                 ffn_norm: vec![1.0; 4],
                 w_gate: patterned_matrix(6, 4, 0.025).into(),
@@ -2132,6 +2214,9 @@ mod tests {
         let model = F32Llama::from_gguf(&gguf, &bytes).expect("model");
         assert_eq!(model.token_embedding.rows(), 3);
         assert_eq!(model.output.rows(), 3);
+        assert!(model.layers[0].attn_q_bias.is_none());
+        assert!(model.layers[0].attn_k_bias.is_none());
+        assert!(model.layers[0].attn_v_bias.is_none());
         let hash = model.logits_hash_for_tokens(&[0, 1]).expect("hash");
         assert_ne!(hash, [0u8; 32]);
     }
@@ -2249,6 +2334,18 @@ mod tests {
         let model = F32Llama::from_gguf(&gguf, &bytes).expect("model");
         assert_eq!(model.token_embedding.rows(), 3);
         assert_eq!(model.output.rows(), 3);
+        assert_eq!(
+            model.layers[0].attn_q_bias.as_deref(),
+            Some(&[0.001; 4][..])
+        );
+        assert_eq!(
+            model.layers[0].attn_k_bias.as_deref(),
+            Some(&[-0.002; 2][..])
+        );
+        assert_eq!(
+            model.layers[0].attn_v_bias.as_deref(),
+            Some(&[0.003; 2][..])
+        );
         let hash = model.logits_hash_for_tokens(&[0, 1]).expect("hash");
         assert_ne!(hash, [0u8; 32]);
     }
@@ -2811,6 +2908,9 @@ mod tests {
         push_tensor(&mut tensors, &mut bytes, "token_embd.weight", 3, 4, 0.01);
         push_vector(&mut tensors, &mut bytes, "blk.0.attn_norm.weight", 4, 1.0);
         push_tensor(&mut tensors, &mut bytes, "blk.0.attn_q.weight", 4, 4, 0.02);
+        if arch == "qwen2" {
+            push_vector(&mut tensors, &mut bytes, "blk.0.attn_q.bias", 4, 0.001);
+        }
         push_tensor(
             &mut tensors,
             &mut bytes,
@@ -2819,7 +2919,13 @@ mod tests {
             4,
             -0.015,
         );
+        if arch == "qwen2" {
+            push_vector(&mut tensors, &mut bytes, "blk.0.attn_k.bias", 2, -0.002);
+        }
         push_tensor(&mut tensors, &mut bytes, "blk.0.attn_v.weight", 2, 4, 0.025);
+        if arch == "qwen2" {
+            push_vector(&mut tensors, &mut bytes, "blk.0.attn_v.bias", 2, 0.003);
+        }
         push_tensor(
             &mut tensors,
             &mut bytes,

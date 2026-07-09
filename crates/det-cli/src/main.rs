@@ -298,8 +298,11 @@ fn fixture_model() -> Result<det_model::F32Llama, String> {
         layers: vec![det_model::F32LayerWeights {
             attention_norm: vec![1.0; 4],
             wq: fixture_matrix(4, 4, 0.02)?.into(),
+            attn_q_bias: None,
             wk: fixture_matrix(2, 4, -0.015)?.into(),
+            attn_k_bias: None,
             wv: fixture_matrix(2, 4, 0.025)?.into(),
+            attn_v_bias: None,
             wo: fixture_matrix(4, 4, -0.02)?.into(),
             ffn_norm: vec![1.0; 4],
             w_gate: fixture_matrix(6, 4, 0.03)?.into(),
