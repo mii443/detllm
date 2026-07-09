@@ -392,6 +392,12 @@ pub fn dot_q8_0_q8a_block(w: Q8_0Block, a: Q8ABlock) -> f32 {
         // scaling order is shared with the scalar path.
         unsafe { x86_64_avx2::dot_q8_0_q8a_block(w, a) }
     }
+    #[cfg(all(feature = "simd", target_arch = "x86_64", not(target_feature = "avx2")))]
+    {
+        // SAFETY: SSE2 is part of the x86_64 baseline. The SIMD path computes
+        // only the exact i32 dot sum; f32 scaling order is shared.
+        unsafe { x86_64_sse2::dot_q8_0_q8a_block(w, a) }
+    }
     #[cfg(all(feature = "simd", target_arch = "aarch64"))]
     {
         // SAFETY: NEON is part of the aarch64 baseline. The NEON path computes
@@ -406,6 +412,7 @@ pub fn dot_q8_0_q8a_block(w: Q8_0Block, a: Q8ABlock) -> f32 {
     }
     #[cfg(not(any(
         all(feature = "simd", target_arch = "x86_64", target_feature = "avx2"),
+        all(feature = "simd", target_arch = "x86_64", not(target_feature = "avx2")),
         all(feature = "simd", target_arch = "aarch64"),
         all(feature = "simd", target_arch = "wasm32", target_feature = "simd128")
     )))]
@@ -433,6 +440,12 @@ pub fn dot_q4_0_q8a_block(w: Q4_0Block, a: Q8ABlock) -> f32 {
         // scaling order is shared with the scalar path.
         unsafe { x86_64_avx2::dot_q4_0_q8a_block(w, a) }
     }
+    #[cfg(all(feature = "simd", target_arch = "x86_64", not(target_feature = "avx2")))]
+    {
+        // SAFETY: SSE2 is part of the x86_64 baseline. The SIMD path computes
+        // only the exact i32 dot sum; f32 scaling order is shared.
+        unsafe { x86_64_sse2::dot_q4_0_q8a_block(w, a) }
+    }
     #[cfg(all(feature = "simd", target_arch = "aarch64"))]
     {
         // SAFETY: NEON is part of the aarch64 baseline. The NEON path computes
@@ -447,6 +460,7 @@ pub fn dot_q4_0_q8a_block(w: Q4_0Block, a: Q8ABlock) -> f32 {
     }
     #[cfg(not(any(
         all(feature = "simd", target_arch = "x86_64", target_feature = "avx2"),
+        all(feature = "simd", target_arch = "x86_64", not(target_feature = "avx2")),
         all(feature = "simd", target_arch = "aarch64"),
         all(feature = "simd", target_arch = "wasm32", target_feature = "simd128")
     )))]
@@ -458,14 +472,12 @@ pub fn dot_q4_0_q8a_block(w: Q4_0Block, a: Q8ABlock) -> f32 {
 #[inline]
 pub fn dot_q4_0_q8a_block_scalar(w: Q4_0Block, a: Q8ABlock) -> f32 {
     let mut isum = 0i32;
-    for i in 0..BLOCK {
-        let nibble = if i < BLOCK / 2 {
-            w.qs[i] & 0x0f
-        } else {
-            w.qs[i - BLOCK / 2] >> 4
-        };
-        let q = (nibble as i32) - 8;
-        isum += q * (a.q[i] as i32);
+    for i in 0..(BLOCK / 2) {
+        let packed = w.qs[i];
+        let lo = ((packed & 0x0f) as i32) - 8;
+        let hi = ((packed >> 4) as i32) - 8;
+        isum += lo * (a.q[i] as i32);
+        isum += hi * (a.q[i + BLOCK / 2] as i32);
     }
     let scale = w.d * a.d;
     scale * (isum as f32)
@@ -532,6 +544,63 @@ fn q6_k_scale_index(index: usize) -> usize {
         2 => sc_base + l / 16 + 4,
         3 => sc_base + l / 16 + 6,
         _ => unreachable!(),
+    }
+}
+
+#[cfg(all(feature = "simd", target_arch = "x86_64", not(target_feature = "avx2")))]
+mod x86_64_sse2 {
+    use super::{Q4_0Block, Q8ABlock, Q8_0Block, BLOCK};
+    use core::arch::x86_64::{
+        __m128i, _mm_add_epi32, _mm_and_si128, _mm_cmpgt_epi8, _mm_loadu_si128, _mm_madd_epi16,
+        _mm_set1_epi8, _mm_setzero_si128, _mm_srli_epi16, _mm_storeu_si128, _mm_sub_epi8,
+        _mm_unpackhi_epi8, _mm_unpacklo_epi8,
+    };
+
+    pub unsafe fn dot_q8_0_q8a_block(w: Q8_0Block, a: Q8ABlock) -> f32 {
+        let isum = dot_i8x32(&w.q, &a.q);
+        let scale = w.d * a.d;
+        scale * (isum as f32)
+    }
+
+    pub unsafe fn dot_q4_0_q8a_block(w: Q4_0Block, a: Q8ABlock) -> f32 {
+        let packed = _mm_loadu_si128(w.qs.as_ptr().cast::<__m128i>());
+        let mask = _mm_set1_epi8(0x0f);
+        let offset = _mm_set1_epi8(8);
+        let q_lo = _mm_sub_epi8(_mm_and_si128(packed, mask), offset);
+        let q_hi = _mm_sub_epi8(_mm_and_si128(_mm_srli_epi16(packed, 4), mask), offset);
+        let a_lo = _mm_loadu_si128(a.q.as_ptr().cast::<__m128i>());
+        let a_hi = _mm_loadu_si128(a.q.as_ptr().add(BLOCK / 2).cast::<__m128i>());
+        let isum =
+            horizontal_sum_i32x4(_mm_add_epi32(dot_i8x16(q_lo, a_lo), dot_i8x16(q_hi, a_hi)));
+        let scale = w.d * a.d;
+        scale * (isum as f32)
+    }
+
+    unsafe fn dot_i8x32(x: &[i8; BLOCK], y: &[i8; BLOCK]) -> i32 {
+        let x0 = _mm_loadu_si128(x.as_ptr().cast::<__m128i>());
+        let x1 = _mm_loadu_si128(x.as_ptr().add(16).cast::<__m128i>());
+        let y0 = _mm_loadu_si128(y.as_ptr().cast::<__m128i>());
+        let y1 = _mm_loadu_si128(y.as_ptr().add(16).cast::<__m128i>());
+        let sum0 = dot_i8x16(x0, y0);
+        let sum1 = dot_i8x16(x1, y1);
+        horizontal_sum_i32x4(_mm_add_epi32(sum0, sum1))
+    }
+
+    unsafe fn dot_i8x16(x: __m128i, y: __m128i) -> __m128i {
+        let zero = _mm_setzero_si128();
+        let x_sign = _mm_cmpgt_epi8(zero, x);
+        let y_sign = _mm_cmpgt_epi8(zero, y);
+        let x_lo = _mm_unpacklo_epi8(x, x_sign);
+        let x_hi = _mm_unpackhi_epi8(x, x_sign);
+        let y_lo = _mm_unpacklo_epi8(y, y_sign);
+        let y_hi = _mm_unpackhi_epi8(y, y_sign);
+        _mm_add_epi32(_mm_madd_epi16(x_lo, y_lo), _mm_madd_epi16(x_hi, y_hi))
+    }
+
+    unsafe fn horizontal_sum_i32x4(v: __m128i) -> i32 {
+        let mut lanes = [0i32; 4];
+        _mm_storeu_si128(lanes.as_mut_ptr().cast::<__m128i>(), v);
+        lanes.iter().sum()
     }
 }
 

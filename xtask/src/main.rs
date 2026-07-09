@@ -117,7 +117,7 @@ fn real_main() -> Result<(), String> {
         Some("check-ci-workflow") => check_ci_workflow(),
         Some("check-determinism") => check_determinism(),
         _ => Err(
-            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf [--metadata-prefix]|bench-file --model model.gguf --input file [--limit-bytes N] [--limit-tokens N] [--n-ctx N] [--iters N] [--threads N] [--progress-every N] [--no-warmup] [--show-phases]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N] [--worst-rows N] [--top-diffs N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
+            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf [--metadata-prefix]|bench-file --model model.gguf --input file [--limit-bytes N] [--limit-tokens N] [--n-ctx N] [--iters N] [--threads N] [--progress-every N] [--no-warmup] [--encode-only] [--show-phases]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N] [--worst-rows N] [--top-diffs N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
                 .to_owned(),
         ),
     }
@@ -330,6 +330,7 @@ struct BenchFileOpts {
     threads: Option<usize>,
     progress_every: Option<usize>,
     warmup: bool,
+    encode_only: bool,
     show_phases: bool,
 }
 
@@ -925,6 +926,7 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
     let mut threads = None;
     let mut progress_every = None;
     let mut warmup = true;
+    let mut encode_only = false;
     let mut show_phases = false;
     let mut i = 0usize;
     while i < args.len() {
@@ -1007,6 +1009,9 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
             "--no-warmup" => {
                 warmup = false;
             }
+            "--encode-only" => {
+                encode_only = true;
+            }
             "--show-phases" => {
                 show_phases = true;
             }
@@ -1027,6 +1032,7 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
         threads,
         progress_every,
         warmup,
+        encode_only,
         show_phases,
     })
 }
@@ -1097,9 +1103,15 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
 
     let phase_start = Instant::now();
     if opts.warmup {
-        let (_, restored) = codec_round_trip(&model, &tokenizer, &symbols, n_ctx, overlap, None)?;
-        if restored != input {
-            return Err("bench-file: warmup did not round-trip".to_owned());
+        if opts.encode_only {
+            let _payload =
+                encode_symbols_with_model_progress(&model, &symbols, n_ctx, overlap, None)?;
+        } else {
+            let (_, restored) =
+                codec_round_trip(&model, &tokenizer, &symbols, n_ctx, overlap, None)?;
+            if restored != input {
+                return Err("bench-file: warmup did not round-trip".to_owned());
+            }
         }
     }
     let warmup_ms = phase_start.elapsed().as_secs_f64() * 1000.0;
@@ -1107,18 +1119,29 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
     let start = Instant::now();
     let mut payload_bytes = 0usize;
     for _ in 0..opts.iters {
-        let (payload, restored) = codec_round_trip(
-            &model,
-            &tokenizer,
-            &symbols,
-            n_ctx,
-            overlap,
-            opts.progress_every,
-        )?;
-        if restored != input {
-            return Err("bench-file: benchmark iteration did not round-trip".to_owned());
+        if opts.encode_only {
+            let payload = encode_symbols_with_model_progress(
+                &model,
+                &symbols,
+                n_ctx,
+                overlap,
+                opts.progress_every,
+            )?;
+            payload_bytes += payload.len();
+        } else {
+            let (payload, restored) = codec_round_trip(
+                &model,
+                &tokenizer,
+                &symbols,
+                n_ctx,
+                overlap,
+                opts.progress_every,
+            )?;
+            if restored != input {
+                return Err("bench-file: benchmark iteration did not round-trip".to_owned());
+            }
+            payload_bytes += payload.len();
         }
-        payload_bytes += payload.len();
     }
     let elapsed = start.elapsed();
     let input_bytes = input.len() * opts.iters;
@@ -1145,13 +1168,14 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
         .limit_tokens
         .map_or_else(|| "all".to_owned(), |limit_tokens| limit_tokens.to_string());
     println!(
-        "bench-file model={} input={} limit_bytes={} limit_tokens={} iters={} warmup={} threads={} n_ctx={} overlap={} model_sha256={} input_sha256={}",
+        "bench-file model={} input={} limit_bytes={} limit_tokens={} iters={} warmup={} mode={} threads={} n_ctx={} overlap={} model_sha256={} input_sha256={}",
         opts.model,
         opts.input,
         limit_label,
         token_limit_label,
         opts.iters,
         opts.warmup,
+        if opts.encode_only { "encode-only" } else { "round-trip" },
         opts.threads
             .map_or_else(|| "default".to_owned(), |threads| threads.to_string()),
         n_ctx,
@@ -3312,6 +3336,7 @@ mod tests {
             "--progress-every".to_owned(),
             "100".to_owned(),
             "--no-warmup".to_owned(),
+            "--encode-only".to_owned(),
             "--show-phases".to_owned(),
         ])
         .expect("bench-file options");
@@ -3324,6 +3349,7 @@ mod tests {
         assert_eq!(opts.threads, Some(8));
         assert_eq!(opts.progress_every, Some(100));
         assert!(!opts.warmup);
+        assert!(opts.encode_only);
         assert!(opts.show_phases);
 
         let err = parse_bench_file_opts(vec![
