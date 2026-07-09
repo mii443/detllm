@@ -6,7 +6,8 @@
 //       -o /tmp/reference_logits_llamacpp
 //
 // Usage example:
-//   /tmp/reference_logits_llamacpp --model model.gguf --tokens 1,2,3 --out llama.logits.bin --quiet
+//   /tmp/reference_logits_llamacpp --model model.gguf --tokens 1,2,3 --out llama.logits.bin \
+//       --sequential --quiet
 //
 // The output is row-major little-endian f32:
 //   position 0 vocab logits | position 1 vocab logits | ...
@@ -36,6 +37,8 @@ struct Options {
     int batch_size = 0;
     int expected_vocab = 0;
     int expected_rows = 0;
+    bool kv_f32 = false;
+    bool sequential = false;
     bool quiet = false;
 };
 
@@ -47,7 +50,7 @@ struct Options {
 [[noreturn]] void usage() {
     fail("usage: reference_logits_llamacpp --model model.gguf --tokens 1,2,3 --out logits.bin "
          "[--threads N] [--ctx-size N] [--batch-size N] [--expected-vocab N] [--expected-rows N] "
-         "[--quiet]");
+         "[--kv-f32] [--sequential] [--quiet]");
 }
 
 void log_callback(ggml_log_level level, const char * text, void * user_data) {
@@ -94,6 +97,10 @@ Options parse_options(int argc, char ** argv) {
             opts.expected_vocab = parse_positive_int(value(arg.c_str()), "--expected-vocab");
         } else if (arg == "--expected-rows") {
             opts.expected_rows = parse_positive_int(value(arg.c_str()), "--expected-rows");
+        } else if (arg == "--kv-f32") {
+            opts.kv_f32 = true;
+        } else if (arg == "--sequential") {
+            opts.sequential = true;
         } else if (arg == "--quiet") {
             opts.quiet = true;
         } else if (arg == "--help" || arg == "-h") {
@@ -142,6 +149,13 @@ void write_f32_dump(const std::string & path, const float * logits, size_t count
     }
 }
 
+void write_f32_row(std::ofstream & out, const float * logits, size_t count) {
+    out.write(reinterpret_cast<const char *>(logits), static_cast<std::streamsize>(count * sizeof(float)));
+    if (!out) {
+        fail("failed to write logits row");
+    }
+}
+
 } // namespace
 
 int main(int argc, char ** argv) {
@@ -184,6 +198,10 @@ int main(int argc, char ** argv) {
     ctx_params.n_seq_max = 1;
     ctx_params.n_threads = opts.threads;
     ctx_params.n_threads_batch = opts.threads;
+    if (opts.kv_f32) {
+        ctx_params.type_k = GGML_TYPE_F32;
+        ctx_params.type_v = GGML_TYPE_F32;
+    }
     ctx_params.no_perf = true;
     if (ctx_params.n_ctx < tokens.size()) {
         llama_model_free(model);
@@ -198,38 +216,75 @@ int main(int argc, char ** argv) {
         fail("failed to create llama context");
     }
 
-    llama_batch batch = llama_batch_init(static_cast<int32_t>(tokens.size()), 0, 1);
-    for (size_t i = 0; i < tokens.size(); ++i) {
-        batch.token[i] = tokens[i];
-        batch.pos[i] = static_cast<llama_pos>(i);
-        batch.n_seq_id[i] = 1;
-        batch.seq_id[i][0] = 0;
-        batch.logits[i] = 1;
-    }
-    batch.n_tokens = static_cast<int32_t>(tokens.size());
-
-    const int rc = llama_decode(ctx, batch);
-    if (rc != 0) {
+    if (opts.sequential) {
+        std::ofstream out(opts.out, std::ios::binary);
+        if (!out) {
+            llama_free(ctx);
+            llama_model_free(model);
+            llama_backend_free();
+            fail("failed to open output file: " + opts.out);
+        }
+        llama_batch batch = llama_batch_init(1, 0, 1);
+        for (size_t i = 0; i < tokens.size(); ++i) {
+            batch.token[0] = tokens[i];
+            batch.pos[0] = static_cast<llama_pos>(i);
+            batch.n_seq_id[0] = 1;
+            batch.seq_id[0][0] = 0;
+            batch.logits[0] = 1;
+            batch.n_tokens = 1;
+            const int rc = llama_decode(ctx, batch);
+            if (rc != 0) {
+                llama_batch_free(batch);
+                llama_free(ctx);
+                llama_model_free(model);
+                llama_backend_free();
+                fail("llama_decode failed with code " + std::to_string(rc));
+            }
+            const float * logits = llama_get_logits(ctx);
+            if (logits == nullptr) {
+                llama_batch_free(batch);
+                llama_free(ctx);
+                llama_model_free(model);
+                llama_backend_free();
+                fail("llama_get_logits returned null");
+            }
+            write_f32_row(out, logits, static_cast<size_t>(n_vocab));
+        }
         llama_batch_free(batch);
-        llama_free(ctx);
-        llama_model_free(model);
-        llama_backend_free();
-        fail("llama_decode failed with code " + std::to_string(rc));
-    }
+    } else {
+        llama_batch batch = llama_batch_init(static_cast<int32_t>(tokens.size()), 0, 1);
+        for (size_t i = 0; i < tokens.size(); ++i) {
+            batch.token[i] = tokens[i];
+            batch.pos[i] = static_cast<llama_pos>(i);
+            batch.n_seq_id[i] = 1;
+            batch.seq_id[i][0] = 0;
+            batch.logits[i] = 1;
+        }
+        batch.n_tokens = static_cast<int32_t>(tokens.size());
 
-    const float * logits = llama_get_logits(ctx);
-    if (logits == nullptr) {
+        const int rc = llama_decode(ctx, batch);
+        if (rc != 0) {
+            llama_batch_free(batch);
+            llama_free(ctx);
+            llama_model_free(model);
+            llama_backend_free();
+            fail("llama_decode failed with code " + std::to_string(rc));
+        }
+
+        const float * logits = llama_get_logits(ctx);
+        if (logits == nullptr) {
+            llama_batch_free(batch);
+            llama_free(ctx);
+            llama_model_free(model);
+            llama_backend_free();
+            fail("llama_get_logits returned null");
+        }
+        write_f32_dump(opts.out, logits, tokens.size() * static_cast<size_t>(n_vocab));
         llama_batch_free(batch);
-        llama_free(ctx);
-        llama_model_free(model);
-        llama_backend_free();
-        fail("llama_get_logits returned null");
     }
-    write_f32_dump(opts.out, logits, tokens.size() * static_cast<size_t>(n_vocab));
     std::cout << "reference_logits_llamacpp rows=" << tokens.size() << " vocab=" << n_vocab
               << " values=" << tokens.size() * static_cast<size_t>(n_vocab) << "\n";
 
-    llama_batch_free(batch);
     llama_free(ctx);
     llama_model_free(model);
     llama_backend_free();

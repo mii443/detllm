@@ -819,23 +819,23 @@ Longer 8-token raw logits llama.cpp reference:
 
 ```sh
 cargo run --release -p det-cli -- logits -m /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf --tokens 1,31414,2107,504,1920,75,3312,30 --dump /tmp/detllm-smollm2-hello-validation-8.rawlogits.bin --hash --threads 8
-/tmp/reference_logits_llamacpp --model /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf --tokens 1,31414,2107,504,1920,75,3312,30 --out /tmp/llamacpp-smollm2-hello-validation-8.rawlogits.bin --threads 8 --ctx-size 16 --batch-size 16 --expected-vocab 49152 --expected-rows 8 --quiet
-cargo run --release -p xtask -- compare-logits --actual /tmp/detllm-smollm2-hello-validation-8.rawlogits.bin --reference /tmp/llamacpp-smollm2-hello-validation-8.rawlogits.bin --row-size 49152 --rows 8 --min-cosine 0.998
+/tmp/reference_logits_llamacpp --model /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf --tokens 1,31414,2107,504,1920,75,3312,30 --out /tmp/llamacpp-smollm2-hello-validation-8.rawlogits.bin --threads 8 --ctx-size 16 --batch-size 16 --expected-vocab 49152 --expected-rows 8 --sequential --quiet
+cargo run --release -p xtask -- compare-logits --actual /tmp/detllm-smollm2-hello-validation-8.rawlogits.bin --reference /tmp/llamacpp-smollm2-hello-validation-8.rawlogits.bin --row-size 49152 --rows 8 --min-cosine 0.997
 ```
 
 Observed output:
 
 ```text
-ab8c994d4c7c017c86195ed8a03a6790a2fffa3c9d6c1de8a7fe6d6a72d80a12
+ae137c6c2f58d20b49f1232228615d8a6a42f24de9db4f415fe896f25242a2e9
 reference_logits_llamacpp rows=8 vocab=49152 values=393216
-compare-logits values=393216 cosine=0.999242094 max_abs_diff=1.400400162 rms_diff=0.128494190 rows=8 row_size=49152 min_row_cosine=0.998830694
+compare-logits values=393216 cosine=0.998970583 max_abs_diff=1.595536709 rms_diff=0.164960284 rows=8 row_size=49152 min_row_cosine=0.997620770
 ```
 
 The same 8-token raw-logits dump does not yet meet the stricter 0.999
 per-row cosine target:
 
 ```text
-xtask: compare-logits: min row cosine 0.998830694 is below threshold 0.999000000
+xtask: compare-logits: cosine 0.998970583 is below threshold 0.999000000
 ```
 
 Tokenizer-backed text paths can use bytes that are present in the partial BPE
@@ -1181,8 +1181,11 @@ The helper program
 [`scripts/reference_logits_llamacpp.cpp`](../scripts/reference_logits_llamacpp.cpp)
 generates the same raw row-major little-endian f32 dump through the llama.cpp C
 API when local `llama.h` and `libllama` installations are available. It accepts
-explicit token IDs only, marks every token position for logits output, and can
-enforce row count and vocabulary size before writing the file.
+explicit token IDs only, marks every token position for logits output, can
+decode one token at a time with `--sequential` to mirror detllm's streaming
+forward path, can force llama.cpp K/V cache tensors to F32 with `--kv-f32` for
+diagnostics, and can enforce row count and vocabulary size before writing the
+file.
 
 Example TinyLlama command shape:
 
