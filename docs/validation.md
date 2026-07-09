@@ -1015,6 +1015,38 @@ binary-mixed, and context-spanning inputs for the tracked model/quantization
 set. Larger arbitrary-byte and multi-window payloads can still be used as
 stress tests, but this matrix is the acceptance smoke for each target model.
 
+### Target-Model Determinism Matrix
+
+The target-model determinism matrix checks that the current external GGUF set
+keeps identical logits bytes across deterministic chunking and thread-count
+settings. It uses the same tokenizer-backed 8-token streams as the raw-logits
+reference matrix and compares the public `detllm logits --hash` output for
+`threads=1,2,8` and `chunk-size=1,2,8`.
+
+Command:
+
+```sh
+scripts/run-target-determinism-matrix.sh \
+  --tinyllama-q8 /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf \
+  --tinyllama-q4 /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf \
+  --qwen25-q8 /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf \
+  --smollm2-q8 /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf
+```
+
+Observed output summary:
+
+| model | invariant settings | logits hash |
+|---|---:|---|
+| TinyLlama Q8_0 | 9 | `ded3a5204a66f58e529101511fe8d2e051fe9d71897d930ea49ec57372f3001a` |
+| TinyLlama Q4_0 | 9 | `da312ede8d5c3ac7599987204c7ba954f3d86315c259c7f6c3838040cf95efb5` |
+| Qwen2.5 Q8_0 | 9 | `22a98865d5bd6c45a2ae4c1a29e8b37db58a78a6c7c8caedb53a3d6baee33088` |
+| SmolLM2 Q8_0 | 9 | `f9b3942c20f3a4177f8d41544a918af6cc6ec90a51c085f1f69cc73cf9f6683a` |
+
+Each row passed all `3 thread counts * 3 chunk sizes` combinations
+bit-for-bit. This broadens the target-model evidence for DET-2, M5, and M8,
+but it is not a cross-platform target-model run; CI cross-platform hash
+checking still uses the bundled fixtures.
+
 ## File Codec Bench Harness
 
 Command:
