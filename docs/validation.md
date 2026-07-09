@@ -220,11 +220,14 @@ CLI paths that pair the tokenizer with the model reject GGUFs where
 vocabulary. This keeps compression, decompression, and prompt-backed logits
 from carrying a tokenizer/model vocabulary mismatch into CDF construction,
 detokenization, or logits dumps.
-Those model-loading paths also reject tokenizers without a complete byte
-fallback mapping for all `0x00..0xff` values. The unit test
-`loaded_model_rejects_tokenizer_without_complete_byte_fallback` covers the v1
-rule that models unable to losslessly represent arbitrary input bytes are not
-accepted for compression or decompression.
+Codec paths reserve 256 deterministic byte escape symbols after the model
+vocabulary. If a tokenizer cannot emit a byte as a vocabulary token, compression
+encodes `vocab_len + byte`; decompression writes that byte directly and does
+not advance the model context for the escape symbol. The CDF assigns these
+escape symbols minimum frequency after normal logits-derived vocabulary
+symbols, while the initial empty-context CDF is uniform over vocabulary plus
+escapes. Unit tests cover partial-BPE inputs where present bytes still use BPE
+tokens and missing bytes use byte escapes.
 The byte-token mapping must also be unambiguous. `det-token` rejects duplicate
 canonical `<0xNN>` byte fallback entries, and BPE tokenizers reject duplicate
 emittable token byte sequences, including single-byte tokens, instead of
@@ -871,17 +874,21 @@ Observed output:
 19556
 ```
 
-Codec paths still reject this GGUF for v1 arbitrary-byte losslessness before
-running a measurement:
+Codec paths now use deterministic byte escapes for bytes missing from the BPE
+seed set. Minimal arbitrary-byte codec smoke with bytes that SmolLM2 cannot
+emit as single-byte vocabulary tokens:
 
 ```sh
-cargo run --release -p xtask -- bench-file --model /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf --input /tmp/detllm-external/hello.txt --n-ctx 16 --iters 1 --no-warmup
+printf 'detllm\xff\xc0\x04\n' > /tmp/detllm-smollm2-escape.bin
+cargo run --release -p xtask -- bench-file --model /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf --input /tmp/detllm-smollm2-escape.bin --n-ctx 16 --iters 1 --no-warmup --show-phases
 ```
 
 Observed output:
 
 ```text
-xtask: tokenizer byte coverage error: IncompleteByteFallback(missing=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,fb,fc,fd,fe,ff)
+bench-file model=/tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf input=/tmp/detllm-smollm2-escape.bin limit_bytes=all limit_tokens=all iters=1 warmup=false threads=default n_ctx=16 overlap=4 model_sha256=0f3fb091804c48a561b42a4ca1be9ce2c353017187f74c48f52299cae790abe5 input_sha256=85932b70980ded4c5fc6a3b73b47839b3e4fcb65a51a7f164b5b267e8da02a71
+bench-file: source_input_bytes=10 measured_input_bytes=10 total_input_bytes=10 tokenized_tokens=7 tokens=7 total_tokens=7 payload_bytes=22 dtlz_bytes=78 payload_bits_per_byte=17.600000 dtlz_bits_per_byte=62.400000 compression_ratio=7.800000 elapsed_ms=1581.394 input_bytes_per_s=6.324 tokens_per_s=4.426
+bench-file-phases: model_read_ms=3274.449 gguf_parse_ms=6.978 model_load_ms=2615.510 tokenizer_setup_ms=104.751 input_read_ms=0.050 tokenize_ms=1.346 token_prefix_ms=0.000 warmup_ms=0.000 measured_ms=1581.394 total_ms=13855.380
 ```
 
 This is real SmolLM2 GGUF evidence for model config parsing, required tensor
@@ -889,14 +896,11 @@ compatibility on Q8_0, single-token forward, chunk-size-invariant logits
 hashing on a three-token stream, a three-token llama.cpp raw-logits cosine
 check that passes the 0.999 target, and an 8-token tokenizer-backed
 raw-logits check whose aggregate cosine passes 0.999 but whose first row
-remains below the 0.999 per-row target. It also records that partial GPT-2 BPE tokenizer
-construction is usable for present-byte text, while the tested full GGUF and
-the two metadata-prefix-screened public candidates expose only 235 of the 256
-byte values as single-byte BPE seed tokens. Codec paths therefore reject them
-for `detllm-design.md` §7's arbitrary-byte losslessness requirement. Full
-SmolLM2 codec validation needs a compatible GGUF/tokenizer source or a
-deterministic tokenizer strategy that can represent all byte values without
-changing the model vocabulary.
+remains below the 0.999 per-row target. It also records that partial GPT-2 BPE
+tokenizer construction is usable for present-byte text, while the tested full
+GGUF and the two metadata-prefix-screened public candidates expose only 235 of
+the 256 byte values as single-byte BPE seed tokens. The byte escape tail keeps
+arbitrary-byte codec round-trip possible without changing the model vocabulary.
 
 ### Target-Model Mixed-Byte Round-Trip Smoke
 
@@ -1001,6 +1005,10 @@ Build `xtask` with `--features parallel,simd` for target-model benchmark
 commands. The `parallel` feature forwards to `det-model/parallel`, so
 `--threads N` engages deterministic row-parallel GEMV; `simd` forwards to the
 quantized kernel feature.
+For tokenizers with incomplete byte coverage, `bench-file` counts byte escapes
+as codec symbols in the `tokenized_tokens`, `tokens`, and `total_tokens`
+fields; for complete byte-coverage tokenizers these remain ordinary tokenizer
+token counts.
 
 Observed smoke output on the bundled token text fixture:
 

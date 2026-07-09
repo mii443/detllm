@@ -4,6 +4,7 @@ use rayon::prelude::*;
 
 const M: f32 = 16_777_216.0;
 pub const MAX_SYMBOLS: usize = 1 << 18;
+pub const BYTE_ESCAPE_SYMBOLS: usize = 256;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CdfError {
@@ -74,6 +75,52 @@ pub fn logits_to_cdf_with_scratch<'a>(
     }
     scratch.cdf.total = total;
     Ok(&scratch.cdf)
+}
+
+pub fn logits_to_cdf_with_byte_escapes<'a>(
+    logits: &[f32],
+    scratch: &'a mut CdfScratch,
+) -> Result<&'a Cdf, CdfError> {
+    if logits.len().saturating_add(BYTE_ESCAPE_SYMBOLS) > MAX_SYMBOLS {
+        return Err(CdfError::TooManySymbols);
+    }
+    logits_to_cdf_with_scratch(logits, scratch)?;
+    append_uniform_tail(&mut scratch.cdf, BYTE_ESCAPE_SYMBOLS, 1)?;
+    Ok(&scratch.cdf)
+}
+
+pub fn uniform_cdf_with_byte_escapes(vocab_len: usize) -> Result<Cdf, CdfError> {
+    uniform_cdf(
+        vocab_len
+            .checked_add(BYTE_ESCAPE_SYMBOLS)
+            .ok_or(CdfError::TooManySymbols)?,
+    )
+}
+
+fn append_uniform_tail(cdf: &mut Cdf, symbols: usize, freq: u32) -> Result<(), CdfError> {
+    if cdf.freq.len().saturating_add(symbols) > MAX_SYMBOLS {
+        return Err(CdfError::TooManySymbols);
+    }
+    if freq == 0 {
+        return Err(CdfError::Malformed);
+    }
+    let add_total = (symbols as u64)
+        .checked_mul(freq as u64)
+        .ok_or(CdfError::TotalTooLarge)?;
+    if cdf
+        .total
+        .checked_add(add_total)
+        .ok_or(CdfError::TotalTooLarge)?
+        >= (1u64 << 31)
+    {
+        return Err(CdfError::TotalTooLarge);
+    }
+    for _ in 0..symbols {
+        cdf.cum.push(cdf.total);
+        cdf.freq.push(freq);
+        cdf.total += freq as u64;
+    }
+    Ok(())
 }
 
 fn fill_exp_scratch(logits: &[f32], max: f32, exp: &mut Vec<f32>) {
@@ -206,6 +253,22 @@ mod tests {
         assert_eq!(second.freq.len(), 2);
         assert_eq!(second.cum.len(), 2);
         assert_eq!(second.total, second.freq.iter().map(|&f| f as u64).sum());
+    }
+
+    #[test]
+    fn byte_escape_cdf_appends_minimum_frequency_tail() {
+        let mut scratch = CdfScratch::default();
+        let base = logits_to_cdf(&[0.0, 1.0]).expect("base cdf");
+        let cdf = logits_to_cdf_with_byte_escapes(&[0.0, 1.0], &mut scratch).expect("escape cdf");
+        assert_eq!(cdf.freq.len(), 2 + BYTE_ESCAPE_SYMBOLS);
+        assert_eq!(&cdf.freq[..2], base.freq.as_slice());
+        assert_eq!(cdf.freq[2..], [1u32; BYTE_ESCAPE_SYMBOLS]);
+        assert_eq!(cdf.cum[2], base.total);
+        assert_eq!(cdf.total, base.total + BYTE_ESCAPE_SYMBOLS as u64);
+
+        let uniform = uniform_cdf_with_byte_escapes(2).expect("uniform cdf");
+        assert_eq!(uniform.freq.len(), 2 + BYTE_ESCAPE_SYMBOLS);
+        assert!(uniform.freq.iter().all(|&freq| freq == 1));
     }
 
     #[test]

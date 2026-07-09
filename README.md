@@ -72,10 +72,13 @@ the tiny F32 fixture and verifies byte-for-byte round-trip on a small input; it
 is not a meaningful compression-ratio benchmark. `bench-file` records model and
 input SHA-256 values, measured byte/token counts, tokenized count before
 `--limit-tokens`, payload and DTLZ bpb, compression ratio, throughput, optional
-token-prefix limit, warmup mode, and thread override so real enwik8 measurements
-can be copied directly into the validation notes. Long target-model measurements
-can use `--progress-every N` to emit encode/decode token progress on stderr
-without changing the stdout result lines. The codec benchmark path reuses a
+codec-symbol prefix limit, warmup mode, and thread override so real enwik8
+measurements can be copied directly into the validation notes. Tokenizers that
+cannot emit all 256 byte values use deterministic byte escape symbols after the
+model vocabulary for codec round-trip, with the model context advanced only for
+real vocabulary tokens. Long target-model measurements can use
+`--progress-every N` to emit encode/decode token progress on stderr without
+changing the stdout result lines. The codec benchmark path reuses a
 streaming KV cache inside each
 fixed context window and only replays the configured overlap after window
 rollover; repeated forward calls also reuse `ForwardWorkspace` scratch buffers
@@ -120,21 +123,14 @@ quality measurements.
 The implementation is not yet complete against the full design. In particular,
 the following acceptance evidence is still missing:
 
-- SmolLM2 full codec validation with a tokenizer/model source that covers all
-  256 input bytes; tested Unsloth, bartowski, and HuggingFaceTB GGUFs expose
-  21 missing byte tokens. The tokenizer can be constructed for ordinary text
-  whose bytes are present, but codec paths now check complete byte coverage and
-  reject these GGUFs for arbitrary-byte losslessness. HuggingFaceTB Q4_K_M
-  tensor types pass `model-info --metadata-prefix`; byte coverage remains the
-  blocker.
 - Further SmolLM2 reference-quality work remains: three-token raw-logits
   evidence passes the 0.999 cosine threshold, and 8-token log-probability target
   checks pass, but the current tokenizer-backed 8-token raw-logits comparison
   still has a first row below the 0.999 per-row cosine target. Broader
   target-model checks are also still needed
   beyond the current TinyLlama/Qwen2.5/SmolLM2 logits/log-probability smoke
-  evidence, TinyLlama Q4_0 raw-logits evidence, and TinyLlama Q8/Q4 plus
-  Qwen2.5 mixed-byte round-trip smoke.
+  evidence, TinyLlama Q4_0 raw-logits evidence, and TinyLlama Q8/Q4,
+  Qwen2.5, plus SmolLM2 mixed-byte round-trip smoke.
 - Target-model enwik8 first-1MB compression-rate measurement with
   `xtask bench-file`; the bundled tiny fixture has input-scale enwik8 evidence.
 - Broader benchmark results on real target hardware beyond the current bundled

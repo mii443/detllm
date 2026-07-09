@@ -61,6 +61,12 @@ pub struct ByteCoverage {
     pub missing_emittable_bytes: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodecSymbol {
+    Token(u32),
+    ByteEscape(u8),
+}
+
 #[derive(Debug, Clone)]
 pub struct ByteBpeTokenizer {
     byte_to_token: [Option<u32>; 256],
@@ -137,6 +143,66 @@ impl Tokenizer {
             Self::ByteFallback(t) => t.detokenize_bytes(tokens),
             Self::ByteBpe(t) => t.detokenize_bytes(tokens),
             Self::SentencePiece(t) => t.detokenize_bytes(tokens),
+        }
+    }
+
+    pub fn codec_symbols(&self, input: &[u8], vocab_len: usize) -> Result<Vec<usize>, TokenError> {
+        let mut out = Vec::new();
+        for symbol in self.codec_symbol_stream(input)? {
+            out.push(match symbol {
+                CodecSymbol::Token(token) => token as usize,
+                CodecSymbol::ByteEscape(byte) => vocab_len + byte as usize,
+            });
+        }
+        Ok(out)
+    }
+
+    pub fn codec_symbol_stream(&self, input: &[u8]) -> Result<Vec<CodecSymbol>, TokenError> {
+        let mut out = Vec::new();
+        let mut pos = 0usize;
+        while pos < input.len() {
+            if !self.has_single_byte_token(input[pos]) {
+                out.push(CodecSymbol::ByteEscape(input[pos]));
+                pos += 1;
+                continue;
+            }
+            let start = pos;
+            pos += 1;
+            while pos < input.len() && self.has_single_byte_token(input[pos]) {
+                pos += 1;
+            }
+            for token in self.tokenize_bytes(&input[start..pos])? {
+                out.push(CodecSymbol::Token(token));
+            }
+        }
+        Ok(out)
+    }
+
+    pub fn decode_codec_symbol(
+        &self,
+        symbol: usize,
+        vocab_len: usize,
+    ) -> Result<Vec<u8>, TokenError> {
+        if symbol < vocab_len {
+            let token = u32::try_from(symbol).map_err(|_| TokenError::TokenIndexOverflow)?;
+            self.detokenize_bytes(&[token])
+        } else if symbol < vocab_len + 256 {
+            Ok(vec![(symbol - vocab_len) as u8])
+        } else {
+            let token = u32::try_from(symbol).unwrap_or(u32::MAX);
+            Err(TokenError::InvalidToken(token))
+        }
+    }
+
+    pub fn codec_symbol_is_token(symbol: usize, vocab_len: usize) -> bool {
+        symbol < vocab_len
+    }
+
+    fn has_single_byte_token(&self, byte: u8) -> bool {
+        match self {
+            Self::ByteFallback(t) => t.byte_to_token[byte as usize].is_some(),
+            Self::ByteBpe(t) => t.byte_to_token[byte as usize].is_some(),
+            Self::SentencePiece(t) => t.byte_fallback.byte_to_token[byte as usize].is_some(),
         }
     }
 }
@@ -1081,6 +1147,33 @@ mod tests {
         assert_eq!(
             tok.tokenize_bytes(&[0xff]),
             Err(TokenError::MissingByteFallback(0xff))
+        );
+    }
+
+    #[test]
+    fn codec_symbols_escape_missing_bpe_seed_bytes() {
+        let mut tokens: Vec<String> = (0..=254)
+            .map(|b| String::from_utf8(gpt2_byte_unicode_token_bytes(b)).expect("utf8"))
+            .collect();
+        let hi = tokens.len() as u32;
+        tokens.push("hi".to_owned());
+        let merges = vec!["h i".to_owned()];
+        let tok = Tokenizer::ByteBpe(
+            ByteBpeTokenizer::from_tokens_and_merges(&tokens, &merges).expect("bpe"),
+        );
+
+        assert_eq!(
+            tok.codec_symbol_stream(b"hi\xff!").expect("symbols"),
+            [
+                CodecSymbol::Token(hi),
+                CodecSymbol::ByteEscape(0xff),
+                CodecSymbol::Token(b'!' as u32),
+            ]
+        );
+        assert_eq!(
+            tok.codec_symbols(b"hi\xff!", tokens.len())
+                .expect("symbols"),
+            [hi as usize, tokens.len() + 0xff, b'!' as usize]
         );
     }
 

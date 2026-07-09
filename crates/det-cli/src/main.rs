@@ -428,19 +428,16 @@ fn compress(args: Vec<String>) -> Result<(), String> {
     apply_threads(opts.threads)?;
     let input = fs::read(&opts.input).map_err(|e| e.to_string())?;
     let loaded = LoadedModel::load(&opts.model)?;
-    let token_ids: Vec<usize> = loaded
+    let symbols = loaded
         .tokenizer
-        .tokenize_bytes(&input)
-        .map_err(|e| format!("tokenize error: {e:?}"))?
-        .into_iter()
-        .map(|token| token as usize)
-        .collect();
+        .codec_symbols(&input, loaded.model.output.rows())
+        .map_err(|e| format!("tokenize error: {e:?}"))?;
 
     let n_ctx = opts.n_ctx.unwrap_or(loaded.model.config.context_length);
     let overlap = n_ctx / 4;
     validate_window(n_ctx, overlap, loaded.model.config.context_length)?;
 
-    let payload = encode_tokens_with_model(&loaded.model, &token_ids, n_ctx, overlap)?;
+    let payload = encode_symbols_with_model(&loaded.model, &symbols, n_ctx, overlap)?;
     let header = det_coder::DtlzHeader {
         flags: 0,
         model_sha256: loaded.model_sha256,
@@ -490,7 +487,7 @@ fn decompress(args: Vec<String>) -> Result<(), String> {
         overlap,
     )?;
     let canonical_payload =
-        encode_tokens_with_model(&loaded.model, &decoded.tokens, n_ctx, overlap)?;
+        encode_symbols_with_model(&loaded.model, &decoded.symbols, n_ctx, overlap)?;
     if canonical_payload != payload {
         return Err(
             "DTLZ payload is not the canonical encoding for the restored stream".to_owned(),
@@ -499,20 +496,35 @@ fn decompress(args: Vec<String>) -> Result<(), String> {
     fs::write(&opts.output, &decoded.bytes[..restored_len]).map_err(|e| e.to_string())
 }
 
+#[cfg(test)]
 fn encode_tokens_with_model(
     model: &det_model::F32Llama,
     tokens: &[usize],
     n_ctx: usize,
     overlap: usize,
 ) -> Result<Vec<u8>, String> {
+    encode_symbols_with_model(model, tokens, n_ctx, overlap)
+}
+
+fn encode_symbols_with_model(
+    model: &det_model::F32Llama,
+    symbols: &[usize],
+    n_ctx: usize,
+    overlap: usize,
+) -> Result<Vec<u8>, String> {
     validate_window(n_ctx, overlap, model.config.context_length)?;
     let mut enc = det_coder::RangeEncoder::new();
     let mut state = WindowedModelState::new(model, n_ctx)?;
-    for pos in 0..tokens.len() {
-        state.sync(pos, &tokens[..pos], overlap)?;
+    let mut context_tokens = Vec::new();
+    let vocab_len = model.output.rows();
+    for &symbol in symbols {
+        state.sync(context_tokens.len(), &context_tokens, overlap)?;
         let cdf = state.cdf()?;
-        encode_symbol(&mut enc, cdf, tokens[pos])?;
-        state.advance(tokens[pos])?;
+        encode_symbol(&mut enc, cdf, symbol)?;
+        if det_token::Tokenizer::codec_symbol_is_token(symbol, vocab_len) {
+            context_tokens.push(symbol);
+            state.advance(symbol)?;
+        }
     }
     Ok(enc.finish())
 }
@@ -530,18 +542,23 @@ fn decode_tokens_with_model(
         det_coder::RangeDecoder::new(payload).map_err(|e| format!("range decoder error: {e:?}"))?;
     let mut tokens = Vec::with_capacity(token_len);
     let mut state = WindowedModelState::new(model, n_ctx)?;
-    for pos in 0..token_len {
-        state.sync(pos, &tokens, overlap)?;
+    let vocab_len = model.output.rows();
+    while tokens.len() < token_len {
+        state.sync(tokens.len(), &tokens, overlap)?;
         let cdf = state.cdf()?;
-        tokens.push(decode_symbol(&mut dec, cdf)?);
-        state.advance(*tokens.last().expect("decoded token was just pushed"))?;
+        let symbol = decode_symbol(&mut dec, cdf)?;
+        if !det_token::Tokenizer::codec_symbol_is_token(symbol, vocab_len) {
+            return Err(format!("decoded byte escape {symbol} in token-only stream"));
+        }
+        tokens.push(symbol);
+        state.advance(symbol)?;
     }
     Ok(tokens)
 }
 
 struct DecodedBytes {
     bytes: Vec<u8>,
-    tokens: Vec<usize>,
+    symbols: Vec<usize>,
 }
 
 fn decode_bytes_with_model(
@@ -555,27 +572,29 @@ fn decode_bytes_with_model(
     validate_window(n_ctx, overlap, model.config.context_length)?;
     let mut dec =
         det_coder::RangeDecoder::new(payload).map_err(|e| format!("range decoder error: {e:?}"))?;
-    let mut tokens = Vec::new();
+    let mut context_tokens = Vec::new();
+    let mut symbols = Vec::new();
     let mut bytes = Vec::with_capacity(byte_len.min(8192));
     let mut state = WindowedModelState::new(model, n_ctx)?;
+    let vocab_len = model.output.rows();
     while bytes.len() < byte_len {
-        let pos = tokens.len();
-        state.sync(pos, &tokens, overlap)?;
+        state.sync(context_tokens.len(), &context_tokens, overlap)?;
         let cdf = state.cdf()?;
-        let token = decode_symbol(&mut dec, cdf)?;
-        let token_u32 =
-            u32::try_from(token).map_err(|_| format!("decoded token too large: {token}"))?;
+        let symbol = decode_symbol(&mut dec, cdf)?;
         let piece = tokenizer
-            .detokenize_bytes(&[token_u32])
+            .decode_codec_symbol(symbol, vocab_len)
             .map_err(|e| format!("detokenize error: {e:?}"))?;
         if piece.is_empty() {
-            return Err(format!("decoded token {token} produced no bytes"));
+            return Err(format!("decoded symbol {symbol} produced no bytes"));
         }
         bytes.extend_from_slice(&piece);
-        tokens.push(token);
-        state.advance(token)?;
+        symbols.push(symbol);
+        if det_token::Tokenizer::codec_symbol_is_token(symbol, vocab_len) {
+            context_tokens.push(symbol);
+            state.advance(symbol)?;
+        }
     }
-    Ok(DecodedBytes { bytes, tokens })
+    Ok(DecodedBytes { bytes, symbols })
 }
 
 struct WindowedModelState<'a> {
@@ -600,7 +619,7 @@ impl<'a> WindowedModelState<'a> {
         let workspace = model
             .forward_workspace(n_ctx)
             .map_err(|e| format!("workspace error: {e:?}"))?;
-        let uniform_cdf = det_coder::uniform_cdf(model.output.rows())
+        let uniform_cdf = det_coder::uniform_cdf_with_byte_escapes(model.output.rows())
             .map_err(|e| format!("uniform CDF error: {e:?}"))?;
         Ok(Self {
             model,
@@ -643,7 +662,7 @@ impl<'a> WindowedModelState<'a> {
         if self.context_len == 0 {
             Ok(&self.uniform_cdf)
         } else {
-            det_coder::logits_to_cdf_with_scratch(&self.logits, &mut self.cdf_scratch)
+            det_coder::logits_to_cdf_with_byte_escapes(&self.logits, &mut self.cdf_scratch)
                 .map_err(|e| format!("CDF error: {e:?}"))
         }
     }
@@ -686,7 +705,8 @@ fn cdf_for_context(
     }
     let vocab = model.output.rows();
     if context.is_empty() {
-        return det_coder::uniform_cdf(vocab).map_err(|e| format!("uniform CDF error: {e:?}"));
+        return det_coder::uniform_cdf_with_byte_escapes(vocab)
+            .map_err(|e| format!("uniform CDF error: {e:?}"));
     }
     let rope = det_model::RopeTables::llama(model.config, context.len())
         .map_err(|e| format!("rope error: {e:?}"))?;
@@ -698,7 +718,10 @@ fn cdf_for_context(
             .forward_one(token, pos, &rope, &mut cache, &mut logits)
             .map_err(|e| format!("forward error: {e:?}"))?;
     }
-    det_coder::logits_to_cdf(&logits).map_err(|e| format!("CDF error: {e:?}"))
+    let mut scratch = det_coder::CdfScratch::default();
+    det_coder::logits_to_cdf_with_byte_escapes(&logits, &mut scratch)
+        .cloned()
+        .map_err(|e| format!("CDF error: {e:?}"))
 }
 
 fn validate_window(n_ctx: usize, overlap: usize, model_ctx: usize) -> Result<(), String> {
@@ -830,7 +853,6 @@ impl LoadedModel {
         let model_sha256 = hasher.finalize();
         let gguf = det_gguf::parse(&bytes).map_err(|e| format!("GGUF parse error: {e:?}"))?;
         let tokenizer_vocab_len = gguf_token_vocab_len(&gguf)?;
-        validate_codec_byte_coverage(&gguf)?;
         let tokenizer =
             det_token::Tokenizer::from_gguf(&gguf).map_err(|e| format!("tokenizer error: {e}"))?;
         let model = det_model::F32Llama::from_gguf(&gguf, &bytes)
@@ -888,18 +910,17 @@ fn gguf_model_vocab_len(gguf: &det_gguf::Gguf) -> Result<usize, String> {
 }
 
 fn validate_codec_vocab_len(vocab_len: usize) -> Result<(), String> {
-    if vocab_len > det_coder::MAX_SYMBOLS {
+    let symbol_count = vocab_len
+        .checked_add(det_coder::BYTE_ESCAPE_SYMBOLS)
+        .ok_or_else(|| "codec symbol count overflow".to_owned())?;
+    if symbol_count > det_coder::MAX_SYMBOLS {
         return Err(format!(
-            "model vocabulary {vocab_len} exceeds codec symbol limit {}",
+            "model vocabulary {vocab_len} plus {} byte escapes exceeds codec symbol limit {}",
+            det_coder::BYTE_ESCAPE_SYMBOLS,
             det_coder::MAX_SYMBOLS
         ));
     }
     Ok(())
-}
-
-fn validate_codec_byte_coverage(gguf: &det_gguf::Gguf) -> Result<(), String> {
-    det_token::require_complete_byte_coverage_from_gguf(gguf)
-        .map_err(|e| format!("tokenizer byte coverage error: {e}"))
 }
 
 fn tokenize(args: Vec<String>) -> Result<(), String> {
@@ -1370,25 +1391,51 @@ mod tests {
     }
 
     #[test]
-    fn loaded_model_rejects_tokenizer_without_complete_byte_fallback() {
+    fn codec_uses_byte_escape_for_partial_bpe_missing_bytes() {
         let dir = unique_tmp_dir();
         fs::create_dir_all(&dir).expect("mkdir");
         let model_path = dir.join("model.gguf");
+        let input_path = dir.join("input.bin");
+        let compressed_path = dir.join("out.dtlz");
+        let restored_path = dir.join("restored.bin");
 
         fs::write(
             &model_path,
             synthetic_bpe_gguf_bytes_missing_byte_fallback(),
         )
         .expect("write model");
+        let input = b"ab\xffba";
+        fs::write(&input_path, input).expect("write input");
 
-        let err = match LoadedModel::load(model_path.to_str().expect("model path")) {
-            Ok(_) => panic!("non-lossless tokenizer should be rejected"),
-            Err(err) => err,
-        };
-        assert!(
-            err.contains("tokenizer byte coverage error: IncompleteByteFallback(missing=ff)"),
-            "{err}"
-        );
+        let loaded = LoadedModel::load(model_path.to_str().expect("model path")).expect("load");
+        let symbols = loaded
+            .tokenizer
+            .codec_symbols(input, loaded.model.output.rows())
+            .expect("symbols");
+        assert!(symbols.contains(&(loaded.model.output.rows() + 0xff)));
+
+        compress(vec![
+            "-m".to_owned(),
+            model_path.to_string_lossy().into_owned(),
+            "-i".to_owned(),
+            input_path.to_string_lossy().into_owned(),
+            "-o".to_owned(),
+            compressed_path.to_string_lossy().into_owned(),
+            "--n-ctx".to_owned(),
+            "8".to_owned(),
+        ])
+        .expect("compress");
+        decompress(vec![
+            "-m".to_owned(),
+            model_path.to_string_lossy().into_owned(),
+            "-i".to_owned(),
+            compressed_path.to_string_lossy().into_owned(),
+            "-o".to_owned(),
+            restored_path.to_string_lossy().into_owned(),
+        ])
+        .expect("decompress");
+
+        assert_eq!(fs::read(restored_path).expect("restored"), input);
 
         let _ = fs::remove_dir_all(dir);
     }
@@ -1418,11 +1465,15 @@ mod tests {
 
     #[test]
     fn codec_vocab_limit_matches_cdf_design_limit() {
-        validate_codec_vocab_len(det_coder::MAX_SYMBOLS).expect("design maximum is accepted");
-        let err = validate_codec_vocab_len(det_coder::MAX_SYMBOLS + 1)
-            .expect_err("larger vocabularies should be rejected for codec use");
+        validate_codec_vocab_len(det_coder::MAX_SYMBOLS - det_coder::BYTE_ESCAPE_SYMBOLS)
+            .expect("design maximum is accepted");
+        let err =
+            validate_codec_vocab_len(det_coder::MAX_SYMBOLS - det_coder::BYTE_ESCAPE_SYMBOLS + 1)
+                .expect_err("larger vocabularies should be rejected for codec use");
         assert!(
-            err.contains("model vocabulary 262145 exceeds codec symbol limit 262144"),
+            err.contains(
+                "model vocabulary 261889 plus 256 byte escapes exceeds codec symbol limit 262144"
+            ),
             "{err}"
         );
     }
