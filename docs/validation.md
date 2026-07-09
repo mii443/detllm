@@ -853,6 +853,24 @@ reference_logits_llamacpp rows=3 vocab=32000 values=96000
 compare-logits values=96000 cosine=0.999815074 max_abs_diff=0.364835739 rms_diff=0.057082669 rows=3 row_size=32000 min_row_cosine=0.999729601
 ```
 
+TinyLlama Q8_0 longer 8-token text raw-logits reference command:
+
+```sh
+cargo run --release -p det-cli -- tokenize -m /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf -p "Hello world from detllm validation."
+cargo run --release -p det-cli -- logits -m /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf --tokens 10994,3186,515,1439,645,112,8845,49 --dump /tmp/detllm-tiny-hello-validation-8.rawlogits.bin --hash --threads 8
+/tmp/reference_logits_llamacpp --model /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf --tokens 10994,3186,515,1439,645,112,8845,49 --out /tmp/llamacpp-tiny-hello-validation-8.rawlogits.bin --threads 8 --ctx-size 16 --batch-size 16 --expected-vocab 32000 --expected-rows 8 --quiet
+cargo run -p xtask -- compare-logits --actual /tmp/detllm-tiny-hello-validation-8.rawlogits.bin --reference /tmp/llamacpp-tiny-hello-validation-8.rawlogits.bin --row-size 32000 --rows 8 --min-cosine 0.999
+```
+
+Observed output:
+
+```text
+tokens("Hello world from detllm validation.") = 10994,3186,515,1439,645,112,8845,49
+d8788e1c61337805f246908b0ccefbbd7ce98d41bb6d0a5efbd98fa6f10f7c12
+reference_logits_llamacpp rows=8 vocab=32000 values=256000
+compare-logits values=256000 cosine=0.999917601 max_abs_diff=0.386859894 rms_diff=0.057615436 rows=8 row_size=32000 min_row_cosine=0.999801524
+```
+
 llama.cpp `llama-perplexity --save-all-logits` does not write the same raw f32
 logits matrix as `detllm logits --dump`; the file starts with `_logits_` and
 stores the evaluated token log-probability distributions in the quantized
@@ -888,6 +906,24 @@ Observed output:
 
 ```text
 compare-llamacpp-logprobs chunks=2 n_ctx=8 vocab=151936 rows=6 values=911616 add_bos=false bos_token=151643 max_abs_diff=9.236663818 rms_diff=1.138672226 max_target_abs_diff=0.084975481
+```
+
+Qwen2.5 Q8_0 longer 8-token text raw-logits reference command:
+
+```sh
+cargo run --release -p det-cli -- tokenize -m /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf -p "Hello world from detllm validation."
+cargo run --release -p det-cli -- logits -m /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --tokens 9707,1879,504,3392,654,76,10519,13 --dump /tmp/detllm-qwen-hello-validation-8.rawlogits.bin --hash --threads 8
+/tmp/reference_logits_llamacpp --model /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --tokens 9707,1879,504,3392,654,76,10519,13 --out /tmp/llamacpp-qwen-hello-validation-8.rawlogits.bin --threads 8 --ctx-size 16 --batch-size 16 --expected-vocab 151936 --expected-rows 8 --quiet
+cargo run -p xtask -- compare-logits --actual /tmp/detllm-qwen-hello-validation-8.rawlogits.bin --reference /tmp/llamacpp-qwen-hello-validation-8.rawlogits.bin --row-size 151936 --rows 8 --min-cosine 0.999
+```
+
+Observed output:
+
+```text
+tokens("Hello world from detllm validation.") = 9707,1879,504,3392,654,76,10519,13
+398b5cc327456c4c97bb515a3048a5db67777bb5266f0cdc48be3cb5c745bf41
+reference_logits_llamacpp rows=8 vocab=151936 values=1215488
+compare-logits values=1215488 cosine=0.999761492 max_abs_diff=0.622567177 rms_diff=0.075747794 rows=8 row_size=151936 min_row_cosine=0.999562474
 ```
 
 SmolLM2 Q8_0 llama.cpp reference command:

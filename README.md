@@ -83,8 +83,9 @@ the following acceptance evidence is still missing:
 
 - SmolLM2 full codec validation with a tokenizer/model source that covers all
   256 input bytes; the tested Unsloth Q8_0 GGUF has 21 missing byte tokens.
-- Broader TinyLlama / Qwen2.5 / SmolLM2 reference-quality checks beyond the
-  current minimal smoke.
+- Further SmolLM2 reference-quality checks, plus broader target-model checks
+  beyond the current TinyLlama/Qwen2.5 8-token raw-logits and log-probability
+  smoke evidence.
 - Target-model enwik8 first-1MB compression-rate measurement with
   `xtask bench-file`; the bundled tiny fixture has input-scale enwik8 evidence.
 - Criterion or equivalent full benchmark results on real target hardware.
