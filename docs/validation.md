@@ -402,6 +402,10 @@ must be followed by exactly one `advance` using the same total before another
 frequency can be decoded. `decoder_enforces_decode_advance_pairs` covers
 double-decode, advance-without-decode, and mismatched-total misuse returning
 `InvalidFrequency` instead of corrupting decoder state.
+The integration test `range_coder_round_trips_large_lcg_stream` covers the
+`detllm-design.md` §8.1 large-stream acceptance path with a deterministic LCG
+frequency table and 1,000,000 encoded symbols, then decodes the whole stream
+symbol-for-symbol through the public range-coder API.
 The stream-level test `token_stream_rejects_corrupted_payload_frequency` checks
 that the same corrupted-payload condition is surfaced through
 `decode_token_stream` as `StreamError::Range`.
