@@ -731,6 +731,27 @@ Observed smoke output on the bundled token text fixture:
 | `testdata/tiny-f32.gguf` | `ce2aa01900a63585a409ef995a2827dcac81e1678e38a1ab0733302ba82ce79b` | `bfdf7888835d22d01ce148aa49e1e766f11e3fbe8631f08215e1c9173270dbd8` | 12 | 12 | 19 | 75 | 12.666667 | 50.000000 | 6.250000 |
 | `testdata/tiny-qmix.gguf` | `4adbef1f9806fb17050d4520135bf8c8b4308840637b2e27589887f7fc03338f` | `bfdf7888835d22d01ce148aa49e1e766f11e3fbe8631f08215e1c9173270dbd8` | 12 | 12 | 19 | 75 | 12.666667 | 50.000000 | 6.250000 |
 
+Observed enwik8 first-1MB fixture measurement:
+
+```sh
+curl -L --fail --retry 3 -o /tmp/enwik8.zip http://mattmahoney.net/dc/enwik8.zip
+unzip -o /tmp/enwik8.zip -d /tmp
+sha256sum /tmp/enwik8.zip /tmp/enwik8
+cargo run --release -p xtask -- bench-file --model testdata/tiny-f32.gguf --input /tmp/enwik8 --limit-bytes 1048576 --n-ctx 8 --iters 1
+```
+
+```text
+547994d9980ebed1288380d652999f38a14fe291a6247c157c3d33d4932534bc  /tmp/enwik8.zip
+2b49720ec4d78c3c9fabaee6e4179a5e997302b3a70029f30f2d582218c024a8  /tmp/enwik8
+bench-file model=testdata/tiny-f32.gguf input=/tmp/enwik8 limit_bytes=1048576 iters=1 n_ctx=8 overlap=2 model_sha256=ce2aa01900a63585a409ef995a2827dcac81e1678e38a1ab0733302ba82ce79b input_sha256=4fb5efa9f35df431737731bf3c8f38a467b69731940ff82a4ee0e218aae58834
+bench-file: source_input_bytes=100000000 measured_input_bytes=1048576 total_input_bytes=1048576 tokens=1048576 total_tokens=1048576 payload_bytes=1048535 dtlz_bytes=1048591 payload_bits_per_byte=7.999687 dtlz_bits_per_byte=8.000114 compression_ratio=1.000014 elapsed_ms=51811.324 input_bytes_per_s=20238.356 tokens_per_s=20238.356
+```
+
+This is input-scale and round-trip evidence for the `bench-file`
+implementation on the canonical enwik8 byte stream, not a meaningful language
+model compression-quality result. The tiny fixture has byte tokens and a tiny
+context, so it is expected to produce near-raw 8 bpb output.
+
 `bench-file` tokenizes the input, encodes the token stream, decodes it, and
 detokenizes back to bytes on every iteration. It reports payload size and DTLZ
 size, including the 56-byte file header. It also reports model and measured
@@ -738,9 +759,9 @@ input SHA-256 values, source and measured input byte counts, one-iteration and
 total token counts, payload-only bpb, DTLZ bpb, compression ratio, elapsed
 time, bytes/s, and tokens/s. `--limit-bytes N` truncates the input to at most
 the first `N` bytes before tokenization, so the enwik8 first-1MB measurement
-can use `--limit-bytes 1048576` without creating a separate file. This is the
-harness to use for the enwik8 first-1MB measurement once the dataset and a
-real target model are available; the bundled fixtures are only smoke inputs.
+can use `--limit-bytes 1048576` without creating a separate file. This is also
+the harness to use for target-model enwik8 first-1MB measurements; the bundled
+fixtures remain smoke and input-scale checks.
 The harness applies the same tokenizer/model vocabulary equality check and
 `2^18` codec vocabulary bound as the CLI compression path before accepting a
 model for measurement.

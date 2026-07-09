@@ -87,5 +87,6 @@ the following acceptance evidence is still missing:
 - SmolLM2 perplexity-path log-probability sanity check; all three target model
   families now have llama.cpp raw-logits checks, and TinyLlama / Qwen2.5 also
   have perplexity-path log-probability sanity checks.
-- enwik8 first-1MB compression-rate measurement with `xtask bench-file`.
+- Target-model enwik8 first-1MB compression-rate measurement with
+  `xtask bench-file`; the bundled tiny fixture has input-scale enwik8 evidence.
 - Criterion or equivalent full benchmark results on real target hardware.
