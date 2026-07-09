@@ -123,7 +123,7 @@ fn real_main() -> Result<(), String> {
         Some("check-ci-workflow") => check_ci_workflow(),
         Some("check-determinism") => check_determinism(),
         _ => Err(
-            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf [--metadata-prefix]|bench-file --model model.gguf --input file [--limit-bytes N] [--limit-tokens N] [--n-ctx N] [--iters N] [--threads N] [--progress-every N] [--progress-summary PATH] [--summary PATH] [--no-warmup] [--encode-only] [--show-phases] [--estimate-full-run]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N] [--worst-rows N] [--top-diffs N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
+            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf [--metadata-prefix]|bench-file --model model.gguf --input file [--limit-bytes N] [--limit-tokens N] [--n-ctx N] [--iters N] [--threads N] [--progress-every N] [--progress-summary PATH] [--summary PATH] [--output-dtlz PATH] [--no-warmup] [--encode-only] [--show-phases] [--estimate-full-run]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N] [--worst-rows N] [--top-diffs N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
                 .to_owned(),
         ),
     }
@@ -337,6 +337,7 @@ struct BenchFileOpts {
     progress_every: Option<usize>,
     progress_summary_path: Option<String>,
     summary_path: Option<String>,
+    output_dtlz_path: Option<String>,
     warmup: bool,
     encode_only: bool,
     show_phases: bool,
@@ -942,6 +943,7 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
     let mut progress_every = None;
     let mut progress_summary_path = None;
     let mut summary_path = None;
+    let mut output_dtlz_path = None;
     let mut warmup = true;
     let mut encode_only = false;
     let mut show_phases = false;
@@ -1034,6 +1036,16 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
                 }
                 summary_path = Some(raw.clone());
             }
+            "--output-dtlz" => {
+                i += 1;
+                let raw = args
+                    .get(i)
+                    .ok_or("bench-file: missing value for --output-dtlz")?;
+                if raw.is_empty() {
+                    return Err("bench-file: --output-dtlz must not be empty".to_owned());
+                }
+                output_dtlz_path = Some(raw.clone());
+            }
             "--progress-summary" => {
                 i += 1;
                 let raw = args
@@ -1063,6 +1075,9 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
     if iters == 0 {
         return Err("bench-file: --iters must be greater than zero".to_owned());
     }
+    if output_dtlz_path.is_some() && iters != 1 {
+        return Err("bench-file: --output-dtlz requires --iters 1".to_owned());
+    }
     Ok(BenchFileOpts {
         model: model.ok_or("bench-file: missing --model")?,
         input: input.ok_or("bench-file: missing --input")?,
@@ -1074,6 +1089,7 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
         progress_every,
         progress_summary_path,
         summary_path,
+        output_dtlz_path,
         warmup,
         encode_only,
         show_phases,
@@ -1107,7 +1123,8 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
     let phase_start = Instant::now();
     let model_bytes = fs::read(&opts.model).map_err(|e| format!("{}: {e}", opts.model))?;
     let model_read_ms = phase_start.elapsed().as_secs_f64() * 1000.0;
-    let model_sha256 = sha256_hex(&model_bytes);
+    let model_sha256_digest = sha256_digest(&model_bytes);
+    let model_sha256 = hex(&model_sha256_digest);
     let phase_start = Instant::now();
     let gguf = det_gguf::parse(&model_bytes)
         .map_err(|e| format!("{}: GGUF parse error: {e:?}", opts.model))?;
@@ -1168,11 +1185,15 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
 
     let start = Instant::now();
     let mut payload_bytes = 0usize;
+    let mut output_payload = None;
     for _ in 0..opts.iters {
         if opts.encode_only {
             let payload =
                 encode_symbols_with_model_progress(&model, &symbols, n_ctx, overlap, &progress)?;
             payload_bytes += payload.len();
+            if opts.output_dtlz_path.is_some() {
+                output_payload = Some(payload);
+            }
         } else {
             let (payload, restored) =
                 codec_round_trip(&model, &tokenizer, &symbols, n_ctx, overlap, &progress)?;
@@ -1180,6 +1201,9 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
                 return Err("bench-file: benchmark iteration did not round-trip".to_owned());
             }
             payload_bytes += payload.len();
+            if opts.output_dtlz_path.is_some() {
+                output_payload = Some(payload);
+            }
         }
     }
     let elapsed = start.elapsed();
@@ -1264,6 +1288,23 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
             total_start.elapsed().as_secs_f64() * 1000.0
         ));
     }
+    if let Some(path) = &opts.output_dtlz_path {
+        let payload = output_payload
+            .as_deref()
+            .ok_or("bench-file: no measured payload available for --output-dtlz")?;
+        let header = det_coder::DtlzHeader {
+            flags: det_coder::FLAG_BYTE_ESCAPES,
+            model_sha256: model_sha256_digest,
+            n_ctx: u32::try_from(n_ctx).map_err(|_| "bench-file: n_ctx does not fit u32")?,
+            overlap: u32::try_from(overlap).map_err(|_| "bench-file: overlap does not fit u32")?,
+            orig_len: input.len() as u64,
+        };
+        let output = write_bench_file_dtlz(path, header, payload)?;
+        summary_lines.push(format!(
+            "bench-file-output-dtlz path={} bytes={} sha256={}",
+            path, output.bytes, output.sha256
+        ));
+    }
     for line in &summary_lines {
         println!("{line}");
     }
@@ -1327,6 +1368,45 @@ fn write_bench_file_summary(path: &str, lines: &[String]) -> Result<(), String> 
         return Err(format!("{}: {e}", path.display()));
     }
     Ok(())
+}
+
+#[derive(Debug)]
+struct BenchFileDtlzOutput {
+    bytes: usize,
+    sha256: String,
+}
+
+fn write_bench_file_dtlz(
+    path: &str,
+    header: det_coder::DtlzHeader,
+    payload: &[u8],
+) -> Result<BenchFileDtlzOutput, String> {
+    let path = Path::new(path);
+    if path.as_os_str().is_empty() {
+        return Err("bench-file: --output-dtlz must not be empty".to_owned());
+    }
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("bench-file: invalid --output-dtlz path: {}", path.display()))?;
+    let tmp = parent.join(format!(".{file_name}.{}.tmp", std::process::id()));
+    let header = header
+        .encode_checked()
+        .map_err(|e| format!("bench-file: DTLZ header error: {e:?}"))?;
+    let mut body = Vec::with_capacity(header.len() + payload.len());
+    body.extend_from_slice(&header);
+    body.extend_from_slice(payload);
+    let output = BenchFileDtlzOutput {
+        bytes: body.len(),
+        sha256: sha256_hex(&body),
+    };
+    fs::write(&tmp, body).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    if let Err(e) = fs::rename(&tmp, path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("{}: {e}", path.display()));
+    }
+    Ok(output)
 }
 
 #[derive(Debug)]
@@ -3394,9 +3474,13 @@ fn push_u64(out: &mut Vec<u8>, value: u64) {
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
+    hex(&sha256_digest(bytes))
+}
+
+fn sha256_digest(bytes: &[u8]) -> [u8; 32] {
     let mut h = det_num::Sha256::new();
     h.update(bytes);
-    hex(&h.finalize())
+    h.finalize()
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -3576,7 +3660,7 @@ mod tests {
             "--n-ctx".to_owned(),
             "2048".to_owned(),
             "--iters".to_owned(),
-            "2".to_owned(),
+            "1".to_owned(),
             "--threads".to_owned(),
             "8".to_owned(),
             "--progress-every".to_owned(),
@@ -3585,6 +3669,8 @@ mod tests {
             "/tmp/bench.progress".to_owned(),
             "--summary".to_owned(),
             "/tmp/bench.summary".to_owned(),
+            "--output-dtlz".to_owned(),
+            "/tmp/bench.dtlz".to_owned(),
             "--no-warmup".to_owned(),
             "--encode-only".to_owned(),
             "--show-phases".to_owned(),
@@ -3596,7 +3682,7 @@ mod tests {
         assert_eq!(opts.limit_bytes, Some(1_048_576));
         assert_eq!(opts.limit_tokens, Some(512));
         assert_eq!(opts.n_ctx, Some(2048));
-        assert_eq!(opts.iters, 2);
+        assert_eq!(opts.iters, 1);
         assert_eq!(opts.threads, Some(8));
         assert_eq!(opts.progress_every, Some(100));
         assert_eq!(
@@ -3604,6 +3690,7 @@ mod tests {
             Some("/tmp/bench.progress")
         );
         assert_eq!(opts.summary_path.as_deref(), Some("/tmp/bench.summary"));
+        assert_eq!(opts.output_dtlz_path.as_deref(), Some("/tmp/bench.dtlz"));
         assert!(!opts.warmup);
         assert!(opts.encode_only);
         assert!(opts.show_phases);
@@ -3675,6 +3762,29 @@ mod tests {
         ])
         .expect_err("summary missing value must be rejected");
         assert_eq!(err, "bench-file: missing value for --summary");
+
+        let err = parse_bench_file_opts(vec![
+            "--model".to_owned(),
+            "model.gguf".to_owned(),
+            "--input".to_owned(),
+            "enwik8".to_owned(),
+            "--output-dtlz".to_owned(),
+        ])
+        .expect_err("output DTLZ missing value must be rejected");
+        assert_eq!(err, "bench-file: missing value for --output-dtlz");
+
+        let err = parse_bench_file_opts(vec![
+            "--model".to_owned(),
+            "model.gguf".to_owned(),
+            "--input".to_owned(),
+            "enwik8".to_owned(),
+            "--iters".to_owned(),
+            "2".to_owned(),
+            "--output-dtlz".to_owned(),
+            "/tmp/bench.dtlz".to_owned(),
+        ])
+        .expect_err("output DTLZ with multiple iterations must be rejected");
+        assert_eq!(err, "bench-file: --output-dtlz requires --iters 1");
     }
 
     #[test]
@@ -3751,6 +3861,43 @@ mod tests {
             fs::read_to_string(&path).expect("summary"),
             "bench-file model=x\nbench-file: tokens=1\n"
         );
+        let leftovers = fs::read_dir(&dir)
+            .expect("read dir")
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.ends_with(".tmp"))
+            })
+            .count();
+        assert_eq!(leftovers, 0);
+        fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
+    fn bench_file_dtlz_writer_replaces_file() {
+        let dir = unique_tmp_dir();
+        fs::create_dir_all(&dir).expect("mkdir");
+        let path = dir.join("bench.dtlz");
+        fs::write(&path, "old\n").expect("old dtlz");
+
+        let header = det_coder::DtlzHeader {
+            flags: det_coder::FLAG_BYTE_ESCAPES,
+            model_sha256: [7u8; 32],
+            n_ctx: 8,
+            overlap: 2,
+            orig_len: 3,
+        };
+        let output =
+            write_bench_file_dtlz(path.to_str().expect("utf8 path"), header, &[1, 2, 3, 4])
+                .expect("write dtlz");
+
+        let body = fs::read(&path).expect("dtlz");
+        assert_eq!(output.bytes, det_coder::file::HEADER_LEN + 4);
+        assert_eq!(output.sha256, sha256_hex(&body));
+        assert_eq!(det_coder::DtlzHeader::decode(&body), Ok(header));
+        assert_eq!(&body[det_coder::file::HEADER_LEN..], &[1, 2, 3, 4]);
         let leftovers = fs::read_dir(&dir)
             .expect("read dir")
             .filter_map(|entry| entry.ok())

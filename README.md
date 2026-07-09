@@ -118,8 +118,8 @@ without paying for the mirrored decode pass; the default mode still verifies
 round-trip byte equality. Prefix preflights can add `--estimate-full-run` to
 scale the measured token throughput to the full tokenized first-1MB prefix.
 `scripts/run-target-full-bench.sh` wraps the final target-model first-1MB
-measurement shape and writes both a combined progress log and a stable
-`bench-file` summary under `/tmp/detllm-target-bench` by default. It also
+measurement shape and writes a stable `bench-file` summary, a DTLZ output, and
+a combined progress log under `/tmp/detllm-target-bench` by default. It also
 writes a `<name>.progress` file with the latest atomically replaced progress
 row while the benchmark is running.
 GitHub Actions also includes a `nightly-tinyllama` job that is skipped on
