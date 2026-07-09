@@ -258,7 +258,7 @@ cargo run -p det-cli -- quant-kernel-hash
 Observed hash:
 
 ```text
-7c70ec844f5cba8f140f6e8439c4ce2bf40caa2bb72d70f8a93ce11a2cfa810e
+00e322328d3715795f4dddd8a658e60f9955d1356d5e4da7c65c2c7bfae5cdd8
 ```
 
 `det-quant` rejects non-finite Q8A activation inputs before quantization.
@@ -281,7 +281,9 @@ quantized dot path.
 The CLI startup runtime canary also hashes a fixed set of Q8_0/Q4_0 block-dot
 outputs before executing normal commands, so a broken selected quantized dot
 backend is caught by `selftest` and by ordinary CLI entry points, not only by
-the separate `quant-kernel-hash` diagnostic command.
+the separate `quant-kernel-hash` diagnostic command. `quant-kernel-hash`
+itself covers 1,000,000 deterministic Q8_0/Q4_0 block cases, and local scalar
+and AVX2 SIMD runs produced the same hash shown above.
 The `shared_q8a_path_matches_standalone_quantized_gemv` test fixes the
 `detllm-design.md` §5.2 quantization timing rule: one Q8A activation buffer is
 created for mixed F32/quantized projection groups when any matrix needs it,
@@ -1176,7 +1178,7 @@ Observed wasm hashes:
 |---|---|
 | `tiny-f32` logits | `92a0280149c6b1505c84dce0d19486a2093f93b7978b579c220000d12e4ef7e7` |
 | `tiny-qmix` logits | `8a34d3c4a05e9a30b90aadcdca7b6bac91655e6ab67980ccdb6726565d35f3e4` |
-| quant kernel | `7c70ec844f5cba8f140f6e8439c4ce2bf40caa2bb72d70f8a93ce11a2cfa810e` |
+| quant kernel | `00e322328d3715795f4dddd8a658e60f9955d1356d5e4da7c65c2c7bfae5cdd8` |
 
 The same local run also compressed and decompressed `testdata/tiny.tokens.txt`
 through wasmtime for both bundled fixtures and verified byte equality with
