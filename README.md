@@ -102,10 +102,11 @@ rollover; repeated forward calls also reuse `ForwardWorkspace` scratch buffers
 instead of allocating the large model temporaries or quantized activation
 buffers per token, and codec encode computes only the selected symbol's
 range-coder interval instead of materializing a full frequency/cumulative CDF
-per token. Decode still reuses frequency/cumulative buffers across tokens and
-skips the full validation scan for CDFs built by the codec path. The hot forward path
-uses layout checks for already-loaded models instead of re-scanning all weight
-tensors on every token and GEMV. With the `parallel` feature, row-parallel
+per token. Decode builds a frequency-only distribution for the range decoder
+and scans it for the decoded value, avoiding the full cumulative CDF materialization
+on the codec path. The hot forward path uses layout checks for already-loaded
+models instead of re-scanning all weight tensors on every token and GEMV. With
+the `parallel` feature, row-parallel
 GEMV reuses fixed-size Rayon worker pools keyed by `--threads` instead of
 spawning OS threads per matrix multiply; attention uses per-head score/prob
 scratch so larger attention windows can run independent heads in parallel
@@ -204,6 +205,14 @@ prefix:
 This extends the target-model compression-rate preflight to a complete 2048
 token context window, but it is still encode-only prefix evidence rather than
 the final full-token round-trip M4 acceptance measurement.
+
+After the decode-side frequency-only CDF path, a Qwen2.5 Q8_0 64-token
+round-trip smoke produced the same 71-byte DTLZ size and restored the 190-byte
+token prefix through the public `decompress` command:
+DTLZ SHA-256
+`eab211252eb7c9af0d50ed29e0f14e5876a8de69b167505ae0807ae217a25b43`,
+restored SHA-256
+`b4997b129849e53a0cb6265f2561d8e57ad57003ffbcc1c7357b03918e79b03b`.
 
 Target-model raw-logits reference smoke, using
 `scripts/run-target-logits-broad-matrix.sh`, checks the same four external GGUFs

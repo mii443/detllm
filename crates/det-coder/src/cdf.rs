@@ -26,6 +26,7 @@ pub struct Cdf {
 #[derive(Debug, Default)]
 pub struct CdfScratch {
     exp: Vec<f32>,
+    decoder_freq: Vec<u32>,
     cdf: Cdf,
 }
 
@@ -34,6 +35,13 @@ pub struct SymbolRange {
     pub cum: u64,
     pub freq: u32,
     pub total: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct DecoderDistribution<'a> {
+    freq: &'a [u32],
+    tail_symbols: usize,
+    total: u64,
 }
 
 pub fn logits_to_cdf(logits: &[f32]) -> Result<Cdf, CdfError> {
@@ -95,6 +103,20 @@ pub fn logits_to_cdf_with_byte_escapes<'a>(
     logits_to_cdf_with_scratch(logits, scratch)?;
     append_uniform_tail(&mut scratch.cdf, BYTE_ESCAPE_SYMBOLS, 1)?;
     Ok(&scratch.cdf)
+}
+
+pub fn logits_to_decoder_distribution_with_scratch<'a>(
+    logits: &[f32],
+    scratch: &'a mut CdfScratch,
+) -> Result<DecoderDistribution<'a>, CdfError> {
+    logits_to_decoder_distribution_impl(logits, 0, scratch)
+}
+
+pub fn logits_to_decoder_distribution_with_byte_escapes<'a>(
+    logits: &[f32],
+    scratch: &'a mut CdfScratch,
+) -> Result<DecoderDistribution<'a>, CdfError> {
+    logits_to_decoder_distribution_impl(logits, BYTE_ESCAPE_SYMBOLS, scratch)
 }
 
 pub fn logits_to_symbol_range_with_scratch(
@@ -174,6 +196,52 @@ fn logits_to_symbol_range_impl(
     let mut range = range.ok_or(CdfError::SymbolOutOfRange)?;
     range.total = total;
     Ok(range)
+}
+
+fn logits_to_decoder_distribution_impl<'a>(
+    logits: &[f32],
+    tail_symbols: usize,
+    scratch: &'a mut CdfScratch,
+) -> Result<DecoderDistribution<'a>, CdfError> {
+    if logits.is_empty() {
+        return Err(CdfError::Empty);
+    }
+    if logits.len().saturating_add(tail_symbols) > MAX_SYMBOLS {
+        return Err(CdfError::TooManySymbols);
+    }
+    let mut max = f32::NEG_INFINITY;
+    for &x in logits {
+        if !x.is_finite() {
+            return Err(CdfError::NonFiniteLogit);
+        }
+        if x > max {
+            max = x;
+        }
+    }
+
+    fill_exp_scratch(logits, max, &mut scratch.exp);
+    let z = sum_f32_ref(&scratch.exp);
+
+    scratch.decoder_freq.clear();
+    scratch.decoder_freq.reserve(logits.len());
+    let mut total = 0u64;
+    for &ei in &scratch.exp {
+        let p = ei / z;
+        let f = ((p * M) as u32) + 1;
+        scratch.decoder_freq.push(f);
+        total = total.checked_add(f as u64).ok_or(CdfError::TotalTooLarge)?;
+    }
+    total = total
+        .checked_add(tail_symbols as u64)
+        .ok_or(CdfError::TotalTooLarge)?;
+    if total >= (1u64 << 31) {
+        return Err(CdfError::TotalTooLarge);
+    }
+    Ok(DecoderDistribution {
+        freq: &scratch.decoder_freq,
+        tail_symbols,
+        total,
+    })
 }
 
 pub fn uniform_cdf_with_byte_escapes(vocab_len: usize) -> Result<Cdf, CdfError> {
@@ -316,6 +384,47 @@ impl Cdf {
     }
 }
 
+impl DecoderDistribution<'_> {
+    pub fn total(&self) -> u64 {
+        self.total
+    }
+
+    pub fn symbol_range(&self, value: u64) -> Option<(usize, SymbolRange)> {
+        if value >= self.total {
+            return None;
+        }
+        let mut cum = 0u64;
+        for (idx, &freq) in self.freq.iter().enumerate() {
+            let next = cum.checked_add(freq as u64)?;
+            if value < next {
+                return Some((
+                    idx,
+                    SymbolRange {
+                        cum,
+                        freq,
+                        total: self.total,
+                    },
+                ));
+            }
+            cum = next;
+        }
+        let tail_offset = value.checked_sub(cum)? as usize;
+        if tail_offset < self.tail_symbols {
+            let symbol = self.freq.len() + tail_offset;
+            Some((
+                symbol,
+                SymbolRange {
+                    cum: value,
+                    freq: 1,
+                    total: self.total,
+                },
+            ))
+        } else {
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -406,6 +515,48 @@ mod tests {
             }
         );
         assert_eq!(uniform_symbol_range(5, 5), Err(CdfError::SymbolOutOfRange));
+    }
+
+    #[test]
+    fn decoder_distribution_matches_full_cdf() {
+        let logits = [1.0, 0.25, -2.0, 3.5];
+        let mut scratch = CdfScratch::default();
+        let cdf = logits_to_cdf_with_byte_escapes(&logits, &mut scratch)
+            .expect("escape cdf")
+            .clone();
+        let dist = logits_to_decoder_distribution_with_byte_escapes(&logits, &mut scratch)
+            .expect("decoder distribution");
+        assert_eq!(dist.total(), cdf.total);
+
+        for symbol in 0..cdf.freq.len() {
+            for value in [
+                cdf.cum[symbol],
+                cdf.cum[symbol] + cdf.freq[symbol] as u64 - 1,
+            ] {
+                let (got_symbol, range) = dist.symbol_range(value).expect("symbol range");
+                assert_eq!(got_symbol, symbol);
+                assert_eq!(range.cum, cdf.cum[symbol]);
+                assert_eq!(range.freq, cdf.freq[symbol]);
+                assert_eq!(range.total, cdf.total);
+            }
+        }
+        assert!(dist.symbol_range(cdf.total).is_none());
+
+        let cdf = logits_to_cdf_with_scratch(&logits, &mut scratch)
+            .expect("base cdf")
+            .clone();
+        let dist = logits_to_decoder_distribution_with_scratch(&logits, &mut scratch)
+            .expect("base decoder distribution");
+        assert_eq!(dist.total(), cdf.total);
+        for symbol in 0..cdf.freq.len() {
+            let (got_symbol, range) = dist
+                .symbol_range(cdf.cum[symbol])
+                .expect("base symbol range");
+            assert_eq!(got_symbol, symbol);
+            assert_eq!(range.cum, cdf.cum[symbol]);
+            assert_eq!(range.freq, cdf.freq[symbol]);
+            assert_eq!(range.total, cdf.total);
+        }
     }
 
     #[test]

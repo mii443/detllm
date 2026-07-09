@@ -567,8 +567,7 @@ fn decode_tokens_with_model(
     let vocab_len = model.output.rows();
     while tokens.len() < token_len {
         state.sync(tokens.len(), &tokens, overlap)?;
-        let cdf = state.cdf()?;
-        let symbol = decode_symbol(&mut dec, cdf)?;
+        let symbol = state.decode_symbol(&mut dec)?;
         if !det_token::Tokenizer::codec_symbol_is_token(symbol, vocab_len) {
             return Err(format!("decoded byte escape {symbol} in token-only stream"));
         }
@@ -602,8 +601,7 @@ fn decode_bytes_with_model(
     let vocab_len = model.output.rows();
     while bytes.len() < byte_len {
         state.sync(context_tokens.len(), &context_tokens, overlap)?;
-        let cdf = state.cdf()?;
-        let symbol = decode_symbol(&mut dec, cdf)?;
+        let symbol = state.decode_symbol(&mut dec)?;
         let piece = if use_byte_escapes {
             tokenizer
                 .decode_codec_symbol(symbol, vocab_len)
@@ -702,18 +700,6 @@ impl<'a> WindowedModelState<'a> {
         Ok(())
     }
 
-    fn cdf(&mut self) -> Result<&det_coder::Cdf, String> {
-        if self.context_len == 0 {
-            Ok(&self.uniform_cdf)
-        } else if self.use_byte_escapes {
-            det_coder::logits_to_cdf_with_byte_escapes(&self.logits, &mut self.cdf_scratch)
-                .map_err(|e| format!("CDF error: {e:?}"))
-        } else {
-            det_coder::logits_to_cdf_with_scratch(&self.logits, &mut self.cdf_scratch)
-                .map_err(|e| format!("CDF error: {e:?}"))
-        }
-    }
-
     fn symbol_range(&mut self, symbol: usize) -> Result<det_coder::SymbolRange, String> {
         if self.context_len == 0 {
             return det_coder::uniform_symbol_range(symbol, self.uniform_cdf.freq.len())
@@ -733,6 +719,35 @@ impl<'a> WindowedModelState<'a> {
             )
         }
         .map_err(|e| format!("CDF symbol range error: {e:?}"))
+    }
+
+    fn decode_symbol(&mut self, dec: &mut det_coder::RangeDecoder<'_>) -> Result<usize, String> {
+        if self.context_len == 0 {
+            let cdf = &self.uniform_cdf;
+            return decode_symbol(dec, cdf);
+        }
+
+        let dist = if self.use_byte_escapes {
+            det_coder::logits_to_decoder_distribution_with_byte_escapes(
+                &self.logits,
+                &mut self.cdf_scratch,
+            )
+        } else {
+            det_coder::logits_to_decoder_distribution_with_scratch(
+                &self.logits,
+                &mut self.cdf_scratch,
+            )
+        }
+        .map_err(|e| format!("CDF decode distribution error: {e:?}"))?;
+        let value = dec
+            .decode_freq(dist.total())
+            .map_err(|e| format!("range decode error: {e:?}"))?;
+        let (symbol, range) = dist
+            .symbol_range(value)
+            .ok_or_else(|| format!("CDF lookup failed for value {value}"))?;
+        dec.advance(range.cum, range.freq as u64, range.total)
+            .map_err(|e| format!("range advance error: {e:?}"))?;
+        Ok(symbol)
     }
 
     fn advance(&mut self, token: usize) -> Result<(), String> {

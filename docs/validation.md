@@ -1543,10 +1543,11 @@ KV-cache prefix slices directly instead of copying per-head key/value windows.
 Codec encode computes only the selected symbol's range-coder interval from the
 logits and no longer materializes full frequency/cumulative CDF vectors per
 token; tests verify this symbol-range API matches the full CDF exactly,
-including byte-escape tails. Decode still materializes the CDF, reuses the exp,
-frequency, and cumulative buffers across tokens, and uses the validated CDF
-lookup for CDFs built by this codec path, avoiding a full CDF validation scan
-on every decoded token while leaving the public validating `symbol_for` helper
+including byte-escape tails. Decode uses a frequency-only distribution: it
+computes the exact range-coder total without building the cumulative vector,
+then scans the frequency slice for the decoded value. Tests verify this decoder
+distribution returns the same symbol ranges as the full CDF, including
+byte-escape tails, while the public validating `symbol_for` helper remains
 available for untrusted tables. The tests also verify the scratch API is
 bit-for-bit equivalent to the owned `logits_to_cdf` API and that streaming
 codec payloads still match the direct replay rule. With the `parallel` feature,
@@ -1561,6 +1562,35 @@ bundled fixtures remain smoke and input-scale checks.
 The harness applies the same tokenizer/model vocabulary equality check and
 `2^18` codec vocabulary bound as the CLI compression path before accepting a
 model for measurement.
+After the decode-side frequency-only CDF path, the following target-model smoke
+validated the saved DTLZ output with the public decompressor:
+
+```sh
+scripts/run-target-full-bench.sh \
+  --model /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf \
+  --input /tmp/enwik8 \
+  --name qwen25-q8-cdf-decode-smoke \
+  --limit-tokens 64 \
+  --n-ctx 128 \
+  --progress-every 16
+cargo run --release -p det-cli --features parallel,simd -- decompress \
+  -m /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf \
+  -i /tmp/detllm-target-bench/qwen25-q8-cdf-decode-smoke.dtlz \
+  -o /tmp/detllm-target-bench/qwen25-q8-cdf-decode-smoke.restored \
+  --threads 8
+sha256sum /tmp/detllm-target-bench/qwen25-q8-cdf-decode-smoke.dtlz \
+  /tmp/detllm-target-bench/qwen25-q8-cdf-decode-smoke.restored
+```
+
+Observed output:
+
+```text
+bench-file: source_input_bytes=100000000 measured_input_bytes=190 total_input_bytes=190 tokenized_tokens=279472 tokens=64 total_tokens=64 payload_bytes=15 dtlz_bytes=71 payload_bits_per_byte=0.631579 dtlz_bits_per_byte=2.989474 compression_ratio=0.373684 elapsed_ms=24599.368 input_bytes_per_s=7.724 tokens_per_s=2.602
+bench-file-output-dtlz path=/tmp/detllm-target-bench/qwen25-q8-cdf-decode-smoke.dtlz bytes=71 sha256=eab211252eb7c9af0d50ed29e0f14e5876a8de69b167505ae0807ae217a25b43
+eab211252eb7c9af0d50ed29e0f14e5876a8de69b167505ae0807ae217a25b43  /tmp/detllm-target-bench/qwen25-q8-cdf-decode-smoke.dtlz
+b4997b129849e53a0cb6265f2561d8e57ad57003ffbcc1c7357b03918e79b03b  /tmp/detllm-target-bench/qwen25-q8-cdf-decode-smoke.restored
+```
+
 The unit test `xtask_codec_helpers_reject_invalid_windows` also covers the
 lower-level bench codec helpers directly: their encode/decode paths reject
 zero `n_ctx`, `overlap >= n_ctx`, and `n_ctx` larger than the model context
