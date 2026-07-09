@@ -163,6 +163,10 @@ CLI compression, and `xtask bench-file` use the workspace path. The unit test
 `forward_one_workspace_matches_default_forward` verifies that the reusable
 workspace path produces the same logits bits as the default wrapper across a
 multi-token KV-cache run.
+Attention now reads contiguous KV-cache prefixes directly instead of copying
+the key/value window into scratch buffers for every layer/head. The unit test
+`kv_cache_prefix_slices_are_contiguous_and_bounds_checked` covers the direct
+prefix-slice layout and rejects malformed prefix requests.
 Size arithmetic for RoPE tables and logits dumps is checked before allocation.
 Overflowing table lengths, matrix lengths, or logits byte lengths return
 `ModelError::Shape` instead of panicking. KV-cache allocation and public
@@ -838,8 +842,8 @@ cargo run --release -p xtask --features parallel,simd -- bench-file --model /tmp
 
 ```text
 bench-file model=/tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=16 iters=1 warmup=false threads=8 n_ctx=64 overlap=16 model_sha256=d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8 input_sha256=4fe5a21798e43c8258edcf9f3a98fac2df77613b4d2add15a2a3082eedc7b0b2
-bench-file: source_input_bytes=100000000 measured_input_bytes=53 total_input_bytes=53 tokens=16 total_tokens=16 payload_bytes=14 dtlz_bytes=70 payload_bits_per_byte=2.113208 dtlz_bits_per_byte=10.566038 compression_ratio=1.320755 elapsed_ms=6171.580 input_bytes_per_s=8.588 tokens_per_s=2.593
-bench-file-phases: model_read_ms=2672.433 gguf_parse_ms=22.779 model_load_ms=1828.234 tokenizer_setup_ms=251.874 input_read_ms=184.334 tokenize_ms=794.129 token_prefix_ms=9.782 warmup_ms=0.000 measured_ms=6171.580 total_ms=17272.357
+bench-file: source_input_bytes=100000000 measured_input_bytes=53 total_input_bytes=53 tokens=16 total_tokens=16 payload_bytes=14 dtlz_bytes=70 payload_bits_per_byte=2.113208 dtlz_bits_per_byte=10.566038 compression_ratio=1.320755 elapsed_ms=6211.226 input_bytes_per_s=8.533 tokens_per_s=2.576
+bench-file-phases: model_read_ms=1650.526 gguf_parse_ms=24.538 model_load_ms=1902.620 tokenizer_setup_ms=320.611 input_read_ms=190.950 tokenize_ms=1192.960 token_prefix_ms=9.697 warmup_ms=0.000 measured_ms=6211.226 total_ms=17001.341
 ```
 
 This is input-scale and round-trip evidence for the `bench-file`
@@ -879,7 +883,9 @@ and total wall time. The Qwen2.5 prefix run above shows 1MB ByteBPE tokenization
 is below one second; after streaming KV-cache reuse, the 16-token measured
 encode/decode loop is roughly 6.2 seconds. The model forward path also reuses
 `ForwardWorkspace` scratch buffers across tokens, avoiding per-token allocation
-of the large hidden-state, projection, attention, and feed-forward vectors.
+of the large hidden-state, projection, attention, and feed-forward vectors, and
+attention reads KV-cache prefix slices directly instead of copying per-head
+key/value windows.
 This is the harness to use for target-model enwik8 first-1MB measurements; the
 bundled fixtures remain smoke and input-scale checks.
 The harness applies the same tokenizer/model vocabulary equality check and

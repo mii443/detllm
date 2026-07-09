@@ -130,8 +130,6 @@ pub struct ForwardWorkspace {
     attn: Vec<f32>,
     scores: Vec<f32>,
     probs: Vec<f32>,
-    key_window: Vec<f32>,
-    value_window: Vec<f32>,
     tmp_d: Vec<f32>,
     gate: Vec<f32>,
     up: Vec<f32>,
@@ -624,6 +622,40 @@ impl KvCache {
         let end = offset.checked_add(self.head_dim).ok_or(ModelError::Shape)?;
         self.v.get(offset..end).ok_or(ModelError::Shape)
     }
+
+    pub fn key_prefix(
+        &self,
+        layer: usize,
+        kv_head: usize,
+        len: usize,
+    ) -> Result<&[f32], ModelError> {
+        self.prefix(&self.k, layer, kv_head, len)
+    }
+
+    pub fn value_prefix(
+        &self,
+        layer: usize,
+        kv_head: usize,
+        len: usize,
+    ) -> Result<&[f32], ModelError> {
+        self.prefix(&self.v, layer, kv_head, len)
+    }
+
+    fn prefix<'a>(
+        &self,
+        values: &'a [f32],
+        layer: usize,
+        kv_head: usize,
+        len: usize,
+    ) -> Result<&'a [f32], ModelError> {
+        if len == 0 || len > self.config.context_length {
+            return Err(ModelError::Shape);
+        }
+        let start = self.offset(layer, kv_head, 0)?;
+        let elems = len.checked_mul(self.head_dim).ok_or(ModelError::Shape)?;
+        let end = start.checked_add(elems).ok_or(ModelError::Shape)?;
+        values.get(start..end).ok_or(ModelError::Shape)
+    }
 }
 
 impl ForwardWorkspace {
@@ -641,7 +673,6 @@ impl ForwardWorkspace {
         let head_dim = config.head_dim()?;
         let q_len = checked_len(config.head_count, head_dim)?;
         let kv_len = checked_len(config.head_count_kv, head_dim)?;
-        let window_len = checked_len(max_context, head_dim)?;
         Ok(Self {
             config,
             max_context,
@@ -654,8 +685,6 @@ impl ForwardWorkspace {
             attn: vec![0.0; q_len],
             scores: vec![0.0; max_context],
             probs: vec![0.0; max_context],
-            key_window: vec![0.0; window_len],
-            value_window: vec![0.0; window_len],
             tmp_d: vec![0.0; d],
             gate: vec![0.0; d_ff],
             up: vec![0.0; d_ff],
@@ -674,7 +703,6 @@ impl ForwardWorkspace {
         let head_dim = config.head_dim()?;
         let q_len = checked_len(config.head_count, head_dim)?;
         let kv_len = checked_len(config.head_count_kv, head_dim)?;
-        let window_len = checked_len(self.max_context, head_dim)?;
         if self.config != config
             || self.head_dim != head_dim
             || output_vocab == 0
@@ -687,8 +715,6 @@ impl ForwardWorkspace {
             || self.attn.len() != q_len
             || self.scores.len() != self.max_context
             || self.probs.len() != self.max_context
-            || self.key_window.len() != window_len
-            || self.value_window.len() != window_len
             || self.tmp_d.len() != d
             || self.gate.len() != d_ff
             || self.up.len() != d_ff
@@ -966,16 +992,8 @@ impl F32Llama {
                 let kv_head = head / (self.config.head_count / self.config.head_count_kv);
                 let qh = &workspace.q[head * head_dim..(head + 1) * head_dim];
                 let score_len = pos + 1;
-                let window_len = score_len.checked_mul(head_dim).ok_or(ModelError::Shape)?;
-                let key_window = &mut workspace.key_window[..window_len];
-                let value_window = &mut workspace.value_window[..window_len];
-                for j in 0..=pos {
-                    let dst = j * head_dim;
-                    key_window[dst..dst + head_dim]
-                        .copy_from_slice(cache.key(layer_idx, kv_head, j)?);
-                    value_window[dst..dst + head_dim]
-                        .copy_from_slice(cache.value(layer_idx, kv_head, j)?);
-                }
+                let key_window = cache.key_prefix(layer_idx, kv_head, score_len)?;
+                let value_window = cache.value_prefix(layer_idx, kv_head, score_len)?;
                 attention_scores_one_head_scaled(
                     qh,
                     key_window,
@@ -2080,6 +2098,43 @@ mod tests {
         assert_eq!(cache.value(1, 0, 0), Err(ModelError::Shape));
         assert_eq!(cache.value(0, 1, 0), Err(ModelError::Shape));
         assert_eq!(cache.value(0, 0, 2), Err(ModelError::Shape));
+    }
+
+    #[test]
+    fn kv_cache_prefix_slices_are_contiguous_and_bounds_checked() {
+        let cfg = LlamaConfig {
+            block_count: 1,
+            embedding_length: 2,
+            feed_forward_length: 2,
+            head_count: 1,
+            head_count_kv: 1,
+            rms_epsilon: 1e-5,
+            attention_scale: default_attention_scale(2),
+            rope_freq_base: 10_000.0,
+            rope_dimension_count: 2,
+            rope_pairing: RopePairing::Adjacent,
+            context_length: 3,
+        };
+        let mut cache = KvCache::new(cfg).expect("cache");
+        cache
+            .store(0, 0, &[0.1, 0.2], &[1.1, 1.2])
+            .expect("store pos0");
+        cache
+            .store(0, 1, &[0.3, 0.4], &[1.3, 1.4])
+            .expect("store pos1");
+
+        assert_eq!(
+            cache.key_prefix(0, 0, 2).expect("key prefix"),
+            [0.1, 0.2, 0.3, 0.4]
+        );
+        assert_eq!(
+            cache.value_prefix(0, 0, 2).expect("value prefix"),
+            [1.1, 1.2, 1.3, 1.4]
+        );
+        assert_eq!(cache.key_prefix(0, 0, 0), Err(ModelError::Shape));
+        assert_eq!(cache.value_prefix(0, 0, 4), Err(ModelError::Shape));
+        assert_eq!(cache.key_prefix(1, 0, 1), Err(ModelError::Shape));
+        assert_eq!(cache.value_prefix(0, 1, 1), Err(ModelError::Shape));
     }
 
     #[test]
