@@ -949,7 +949,7 @@ Command:
 ```sh
 cargo run --release -p xtask -- bench-file --model testdata/tiny-f32.gguf --input testdata/tiny.tokens.txt --n-ctx 8 --iters 1
 cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 4096 --limit-tokens 512 --n-ctx 2048 --threads 8 --iters 1 --no-warmup
-cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --threads 8 --iters 1 --no-warmup --show-phases
+cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --threads 8 --iters 1 --no-warmup --show-phases --progress-every 100
 ```
 
 Build `xtask` with `--features parallel,simd` for target-model benchmark
@@ -1007,13 +1007,17 @@ Observed Qwen2.5 Q8_0 target-model token-prefix smoke on the canonical enwik8
 stream:
 
 ```sh
-cargo run --release -p xtask --features parallel,simd -- bench-file --model /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --input /tmp/enwik8 --limit-bytes 1048576 --limit-tokens 16 --n-ctx 64 --threads 8 --iters 1 --no-warmup --show-phases
+cargo run --release -p xtask --features parallel,simd -- bench-file --model /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --input /tmp/enwik8 --limit-bytes 1048576 --limit-tokens 16 --n-ctx 64 --threads 8 --iters 1 --no-warmup --show-phases --progress-every 8
 ```
 
 ```text
+bench-file-progress phase=encode tokens_done=8 tokens_total=16 elapsed_ms=1536.689 tokens_per_s=5.206
+bench-file-progress phase=encode tokens_done=16 tokens_total=16 elapsed_ms=3099.098 tokens_per_s=5.163
+bench-file-progress phase=decode tokens_done=8 tokens_total=16 elapsed_ms=1529.939 tokens_per_s=5.229
+bench-file-progress phase=decode tokens_done=16 tokens_total=16 elapsed_ms=3086.035 tokens_per_s=5.185
 bench-file model=/tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=16 iters=1 warmup=false threads=8 n_ctx=64 overlap=16 model_sha256=d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8 input_sha256=4fe5a21798e43c8258edcf9f3a98fac2df77613b4d2add15a2a3082eedc7b0b2
-bench-file: source_input_bytes=100000000 measured_input_bytes=53 total_input_bytes=53 tokens=16 total_tokens=16 payload_bytes=14 dtlz_bytes=70 payload_bits_per_byte=2.113208 dtlz_bits_per_byte=10.566038 compression_ratio=1.320755 elapsed_ms=6211.226 input_bytes_per_s=8.533 tokens_per_s=2.576
-bench-file-phases: model_read_ms=1650.526 gguf_parse_ms=24.538 model_load_ms=1902.620 tokenizer_setup_ms=320.611 input_read_ms=190.950 tokenize_ms=1192.960 token_prefix_ms=9.697 warmup_ms=0.000 measured_ms=6211.226 total_ms=17001.341
+bench-file: source_input_bytes=100000000 measured_input_bytes=53 total_input_bytes=53 tokens=16 total_tokens=16 payload_bytes=14 dtlz_bytes=70 payload_bits_per_byte=2.113208 dtlz_bits_per_byte=10.566038 compression_ratio=1.320755 elapsed_ms=6293.584 input_bytes_per_s=8.421 tokens_per_s=2.542
+bench-file-phases: model_read_ms=2730.935 gguf_parse_ms=20.793 model_load_ms=1956.152 tokenizer_setup_ms=267.905 input_read_ms=191.948 tokenize_ms=941.857 token_prefix_ms=9.582 warmup_ms=0.000 measured_ms=6293.584 total_ms=17843.156
 ```
 
 This is input-scale and round-trip evidence for the `bench-file`
@@ -1049,13 +1053,15 @@ pre-measurement round-trip for long target-model measurements; the measured
 iteration still verifies encode/decode byte round-trip. `--show-phases` adds
 an opt-in `bench-file-phases` line for model read/parse/load, tokenizer setup,
 input read, tokenization, token-prefix detokenization, warmup, measured loop,
-and total wall time. The Qwen2.5 prefix run above shows 1MB ByteBPE tokenization
-is below one second; after streaming KV-cache reuse, the 16-token measured
-encode/decode loop is roughly 6.2 seconds. The model forward path also reuses
-`ForwardWorkspace` scratch buffers across tokens, avoiding per-token allocation
-of the large hidden-state, projection, attention, and feed-forward vectors, and
-attention reads KV-cache prefix slices directly instead of copying per-head
-key/value windows.
+and total wall time. `--progress-every N` emits `bench-file-progress` lines on
+stderr every N encode/decode tokens and at phase completion; the stdout summary
+lines remain stable for copying into this file. The Qwen2.5 prefix run above
+shows 1MB ByteBPE tokenization is below one second; after streaming KV-cache
+reuse, the 16-token measured encode/decode loop is roughly 6.2 seconds. The
+model forward path also reuses `ForwardWorkspace` scratch buffers across
+tokens, avoiding per-token allocation of the large hidden-state, projection,
+attention, and feed-forward vectors, and attention reads KV-cache prefix slices
+directly instead of copying per-head key/value windows.
 This is the harness to use for target-model enwik8 first-1MB measurements; the
 bundled fixtures remain smoke and input-scale checks.
 The harness applies the same tokenizer/model vocabulary equality check and

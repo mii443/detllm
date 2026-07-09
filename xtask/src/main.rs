@@ -116,7 +116,7 @@ fn real_main() -> Result<(), String> {
         Some("check-ci-workflow") => check_ci_workflow(),
         Some("check-determinism") => check_determinism(),
         _ => Err(
-            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf [--metadata-prefix]|bench-file --model model.gguf --input file [--limit-bytes N] [--limit-tokens N] [--n-ctx N] [--iters N] [--threads N] [--no-warmup] [--show-phases]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
+            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf [--metadata-prefix]|bench-file --model model.gguf --input file [--limit-bytes N] [--limit-tokens N] [--n-ctx N] [--iters N] [--threads N] [--progress-every N] [--no-warmup] [--show-phases]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
                 .to_owned(),
         ),
     }
@@ -327,6 +327,7 @@ struct BenchFileOpts {
     n_ctx: Option<usize>,
     iters: usize,
     threads: Option<usize>,
+    progress_every: Option<usize>,
     warmup: bool,
     show_phases: bool,
 }
@@ -919,6 +920,7 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
     let mut n_ctx = None;
     let mut iters = 1usize;
     let mut threads = None;
+    let mut progress_every = None;
     let mut warmup = true;
     let mut show_phases = false;
     let mut i = 0usize;
@@ -986,6 +988,19 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
                 }
                 threads = Some(value);
             }
+            "--progress-every" => {
+                i += 1;
+                let raw = args
+                    .get(i)
+                    .ok_or("bench-file: missing value for --progress-every")?;
+                let value = raw
+                    .parse::<usize>()
+                    .map_err(|e| format!("bench-file: invalid --progress-every value: {e}"))?;
+                if value == 0 {
+                    return Err("bench-file: --progress-every must be greater than zero".to_owned());
+                }
+                progress_every = Some(value);
+            }
             "--no-warmup" => {
                 warmup = false;
             }
@@ -1007,6 +1022,7 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
         n_ctx,
         iters,
         threads,
+        progress_every,
         warmup,
         show_phases,
     })
@@ -1072,7 +1088,7 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
 
     let phase_start = Instant::now();
     if opts.warmup {
-        let (_, restored) = codec_round_trip(&model, &tokenizer, &token_ids, n_ctx, overlap)?;
+        let (_, restored) = codec_round_trip(&model, &tokenizer, &token_ids, n_ctx, overlap, None)?;
         if restored != input {
             return Err("bench-file: warmup did not round-trip".to_owned());
         }
@@ -1082,7 +1098,14 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
     let start = Instant::now();
     let mut payload_bytes = 0usize;
     for _ in 0..opts.iters {
-        let (payload, restored) = codec_round_trip(&model, &tokenizer, &token_ids, n_ctx, overlap)?;
+        let (payload, restored) = codec_round_trip(
+            &model,
+            &tokenizer,
+            &token_ids,
+            n_ctx,
+            overlap,
+            opts.progress_every,
+        )?;
         if restored != input {
             return Err("bench-file: benchmark iteration did not round-trip".to_owned());
         }
@@ -2120,9 +2143,18 @@ fn codec_round_trip(
     token_ids: &[usize],
     n_ctx: usize,
     overlap: usize,
+    progress_every: Option<usize>,
 ) -> Result<(Vec<u8>, Vec<u8>), String> {
-    let payload = encode_tokens_with_model(model, token_ids, n_ctx, overlap)?;
-    let decoded = decode_tokens_with_model(model, &payload, token_ids.len(), n_ctx, overlap)?;
+    let payload =
+        encode_tokens_with_model_progress(model, token_ids, n_ctx, overlap, progress_every)?;
+    let decoded = decode_tokens_with_model_progress(
+        model,
+        &payload,
+        token_ids.len(),
+        n_ctx,
+        overlap,
+        progress_every,
+    )?;
     let decoded_u32 = decoded
         .into_iter()
         .map(|token| u32::try_from(token).map_err(|_| format!("decoded token too large: {token}")))
@@ -2214,9 +2246,20 @@ fn encode_tokens_with_model(
     n_ctx: usize,
     overlap: usize,
 ) -> Result<Vec<u8>, String> {
+    encode_tokens_with_model_progress(model, tokens, n_ctx, overlap, None)
+}
+
+fn encode_tokens_with_model_progress(
+    model: &det_model::F32Llama,
+    tokens: &[usize],
+    n_ctx: usize,
+    overlap: usize,
+    progress_every: Option<usize>,
+) -> Result<Vec<u8>, String> {
     validate_window(n_ctx, overlap, model.config.context_length)?;
     let mut enc = det_coder::RangeEncoder::new();
     let mut state = WindowedModelState::new(model, n_ctx)?;
+    let start = Instant::now();
     for pos in 0..tokens.len() {
         state.sync(pos, &tokens[..pos], overlap)?;
         let cdf = state.cdf()?;
@@ -2228,6 +2271,7 @@ fn encode_tokens_with_model(
         enc.encode(cum, freq as u64, cdf.total)
             .map_err(|e| format!("range encode error: {e:?}"))?;
         state.advance(tokens[pos])?;
+        report_bench_file_progress("encode", pos + 1, tokens.len(), progress_every, start);
     }
     Ok(enc.finish())
 }
@@ -2239,11 +2283,23 @@ fn decode_tokens_with_model(
     n_ctx: usize,
     overlap: usize,
 ) -> Result<Vec<usize>, String> {
+    decode_tokens_with_model_progress(model, payload, token_len, n_ctx, overlap, None)
+}
+
+fn decode_tokens_with_model_progress(
+    model: &det_model::F32Llama,
+    payload: &[u8],
+    token_len: usize,
+    n_ctx: usize,
+    overlap: usize,
+    progress_every: Option<usize>,
+) -> Result<Vec<usize>, String> {
     validate_window(n_ctx, overlap, model.config.context_length)?;
     let mut dec =
         det_coder::RangeDecoder::new(payload).map_err(|e| format!("range decoder error: {e:?}"))?;
     let mut tokens = Vec::with_capacity(token_len);
     let mut state = WindowedModelState::new(model, n_ctx)?;
+    let start = Instant::now();
     for pos in 0..token_len {
         state.sync(pos, &tokens, overlap)?;
         let cdf = state.cdf()?;
@@ -2257,8 +2313,30 @@ fn decode_tokens_with_model(
             .map_err(|e| format!("range advance error: {e:?}"))?;
         tokens.push(token);
         state.advance(token)?;
+        report_bench_file_progress("decode", pos + 1, token_len, progress_every, start);
     }
     Ok(tokens)
+}
+
+fn report_bench_file_progress(
+    phase: &str,
+    done: usize,
+    total: usize,
+    progress_every: Option<usize>,
+    start: Instant,
+) {
+    let Some(progress_every) = progress_every else {
+        return;
+    };
+    if done != total && done % progress_every != 0 {
+        return;
+    }
+    let elapsed = start.elapsed();
+    eprintln!(
+        "bench-file-progress phase={phase} tokens_done={done} tokens_total={total} elapsed_ms={:.3} tokens_per_s={:.3}",
+        elapsed.as_secs_f64() * 1000.0,
+        done as f64 / elapsed.as_secs_f64()
+    );
 }
 
 struct WindowedModelState<'a> {
@@ -2945,6 +3023,8 @@ mod tests {
             "2".to_owned(),
             "--threads".to_owned(),
             "8".to_owned(),
+            "--progress-every".to_owned(),
+            "100".to_owned(),
             "--no-warmup".to_owned(),
             "--show-phases".to_owned(),
         ])
@@ -2956,6 +3036,7 @@ mod tests {
         assert_eq!(opts.n_ctx, Some(2048));
         assert_eq!(opts.iters, 2);
         assert_eq!(opts.threads, Some(8));
+        assert_eq!(opts.progress_every, Some(100));
         assert!(!opts.warmup);
         assert!(opts.show_phases);
 
@@ -2991,6 +3072,20 @@ mod tests {
         ])
         .expect_err("zero threads must be rejected");
         assert_eq!(err, "bench-file: --threads must be greater than zero");
+
+        let err = parse_bench_file_opts(vec![
+            "--model".to_owned(),
+            "model.gguf".to_owned(),
+            "--input".to_owned(),
+            "enwik8".to_owned(),
+            "--progress-every".to_owned(),
+            "0".to_owned(),
+        ])
+        .expect_err("zero progress interval must be rejected");
+        assert_eq!(
+            err,
+            "bench-file: --progress-every must be greater than zero"
+        );
     }
 
     #[test]

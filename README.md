@@ -47,7 +47,7 @@ cargo run -p xtask -- model-info --model model-prefix.gguf --metadata-prefix
 cargo run --release -p xtask -- bench-testdata --iters 100
 cargo run --release -p xtask -- bench-file --model testdata/tiny-f32.gguf --input testdata/tiny.tokens.txt --n-ctx 8 --iters 2
 cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 4096 --limit-tokens 512 --n-ctx 2048 --threads 8 --iters 1 --no-warmup
-cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --threads 8 --iters 1 --no-warmup --show-phases
+cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --threads 8 --iters 1 --no-warmup --show-phases --progress-every 100
 cargo run -p det-cli -- tokenize -m model.gguf -p "prompt text"
 scripts/reference_logits_transformers.py --model-id TinyLlama/TinyLlama-1.1B-Chat-v1.0 --tokens 1,2,3 --out hf.logits.bin --expected-rows 3 --expected-vocab 32000
 c++ -std=c++17 -O2 -I/usr/local/include scripts/reference_logits_llamacpp.cpp -L/usr/local/lib -Wl,-rpath,/usr/local/lib -lllama -lggml -lggml-cpu -lggml-base -o /tmp/reference_logits_llamacpp
@@ -73,8 +73,10 @@ is not a meaningful compression-ratio benchmark. `bench-file` records model and
 input SHA-256 values, measured byte/token counts, payload and DTLZ bpb,
 compression ratio, throughput, optional token-prefix limit, warmup mode, and
 thread override so real enwik8 measurements can be copied directly into the
-validation notes. The codec benchmark path reuses a streaming KV cache inside
-each fixed context window and only replays the configured overlap after window
+validation notes. Long target-model measurements can use `--progress-every N`
+to emit encode/decode token progress on stderr without changing the stdout
+result lines. The codec benchmark path reuses a streaming KV cache inside each
+fixed context window and only replays the configured overlap after window
 rollover; repeated forward calls also reuse `ForwardWorkspace` scratch buffers
 instead of allocating the large model temporaries per token. `model-info`
 records a lightweight GGUF
