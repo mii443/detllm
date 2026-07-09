@@ -48,6 +48,7 @@ cargo run --release -p xtask -- bench-testdata --iters 100
 cargo run --release -p xtask -- bench-file --model testdata/tiny-f32.gguf --input testdata/tiny.tokens.txt --n-ctx 8 --iters 2
 cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 4096 --limit-tokens 512 --n-ctx 2048 --threads 8 --iters 1 --no-warmup
 cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --threads 8 --iters 1 --no-warmup --encode-only --show-phases --summary bench-file.summary --progress-every 100
+scripts/run-target-full-bench.sh --model qwen25-q8.gguf --input /tmp/enwik8 --name qwen25-q8-first1m
 scripts/run-target-bench-smoke.sh --input /tmp/enwik8 --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
 scripts/run-target-determinism-matrix.sh --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
 scripts/run-target-codec-determinism-matrix.sh --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
@@ -109,6 +110,9 @@ codec correctness, `bench-file --encode-only` measures payload generation
 without paying for the mirrored decode pass; the default mode still verifies
 round-trip byte equality. Prefix preflights can add `--estimate-full-run` to
 scale the measured token throughput to the full tokenized first-1MB prefix.
+`scripts/run-target-full-bench.sh` wraps the final target-model first-1MB
+measurement shape and writes both a combined progress log and a stable
+`bench-file` summary under `/tmp/detllm-target-bench` by default.
 `model-info` records a
 lightweight GGUF
 intake summary without loading all weights, including model SHA-256, parsed

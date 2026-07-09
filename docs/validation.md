@@ -1390,6 +1390,19 @@ detokenization, warmup, measured loop, and total wall time.
 `--summary PATH` writes the final stdout summary lines to a file through a
 same-directory temporary file and rename, which is useful for long target-model
 runs where progress output is noisy or the terminal history is transient.
+For the final target-model first-1MB run, use:
+
+```sh
+scripts/run-target-full-bench.sh --model /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --input /tmp/enwik8 --name qwen25-q8-first1m
+```
+
+The wrapper keeps the acceptance defaults explicit: `--limit-bytes 1048576`,
+no `--limit-tokens`, round-trip mode, `--no-warmup`, `--show-phases`,
+`--threads 8`, `--n-ctx 2048`, and `--progress-every 1000`. It records the
+combined progress log and the stable `bench-file --summary` output in
+`/tmp/detllm-target-bench` unless `--out DIR` is provided. Use
+`--limit-tokens N --encode-only --estimate-full-run` with the same wrapper only
+for preflight estimates; omit those flags for the acceptance measurement.
 `--estimate-full-run` adds an opt-in `bench-file-estimate` line for
 `--limit-tokens` preflights, reporting the full tokenized prefix, full input
 byte count, scale factor, measured token throughput, and estimated measured
