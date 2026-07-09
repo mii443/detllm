@@ -1672,7 +1672,7 @@ fn parse_llamacpp_logprob_dump(bytes: &[u8], label: &str) -> Result<LlamaCppLogP
         return Err(format!("{label}: no evaluated rows in llama.cpp dump"));
     }
     let nv_u16 = 2usize
-        .checked_mul((n_vocab + 1) / 2)
+        .checked_mul(n_vocab.div_ceil(2))
         .and_then(|v| v.checked_add(4))
         .ok_or_else(|| format!("{label}: row width overflow"))?;
     let row_bytes = nv_u16
