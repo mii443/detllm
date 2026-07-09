@@ -116,7 +116,7 @@ fn real_main() -> Result<(), String> {
         Some("check-ci-workflow") => check_ci_workflow(),
         Some("check-determinism") => check_determinism(),
         _ => Err(
-            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf [--metadata-prefix]|bench-file --model model.gguf --input file [--limit-bytes N] [--limit-tokens N] [--n-ctx N] [--iters N] [--threads N] [--no-warmup]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
+            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf [--metadata-prefix]|bench-file --model model.gguf --input file [--limit-bytes N] [--limit-tokens N] [--n-ctx N] [--iters N] [--threads N] [--no-warmup] [--show-phases]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
                 .to_owned(),
         ),
     }
@@ -328,6 +328,7 @@ struct BenchFileOpts {
     iters: usize,
     threads: Option<usize>,
     warmup: bool,
+    show_phases: bool,
 }
 
 #[derive(Debug)]
@@ -918,6 +919,7 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
     let mut iters = 1usize;
     let mut threads = None;
     let mut warmup = true;
+    let mut show_phases = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
@@ -986,6 +988,9 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
             "--no-warmup" => {
                 warmup = false;
             }
+            "--show-phases" => {
+                show_phases = true;
+            }
             other => return Err(format!("unknown bench-file argument: {other}")),
         }
         i += 1;
@@ -1002,32 +1007,47 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
         iters,
         threads,
         warmup,
+        show_phases,
     })
 }
 
 fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
+    let total_start = Instant::now();
     det_model::set_thread_count(opts.threads)
         .map_err(|e| format!("bench-file: thread configuration error: {e:?}"))?;
+    let phase_start = Instant::now();
     let model_bytes = fs::read(&opts.model).map_err(|e| format!("{}: {e}", opts.model))?;
+    let model_read_ms = phase_start.elapsed().as_secs_f64() * 1000.0;
     let model_sha256 = sha256_hex(&model_bytes);
+    let phase_start = Instant::now();
     let gguf = det_gguf::parse(&model_bytes)
         .map_err(|e| format!("{}: GGUF parse error: {e:?}", opts.model))?;
+    let gguf_parse_ms = phase_start.elapsed().as_secs_f64() * 1000.0;
+    let phase_start = Instant::now();
     let model = det_model::F32Llama::from_gguf(&gguf, &model_bytes)
         .map_err(|e| format!("{}: model load error: {e:?}", opts.model))?;
+    let model_load_ms = phase_start.elapsed().as_secs_f64() * 1000.0;
+    let phase_start = Instant::now();
     validate_tokenizer_and_codec_vocab(&gguf, &model)?;
     let tokenizer = det_token::Tokenizer::from_gguf(&gguf)
         .map_err(|e| format!("{}: tokenizer error: {e:?}", opts.model))?;
+    let tokenizer_setup_ms = phase_start.elapsed().as_secs_f64() * 1000.0;
+    let phase_start = Instant::now();
     let mut input = fs::read(&opts.input).map_err(|e| format!("{}: {e}", opts.input))?;
+    let input_read_ms = phase_start.elapsed().as_secs_f64() * 1000.0;
     let source_input_bytes = input.len();
     if let Some(limit_bytes) = opts.limit_bytes {
         input.truncate(limit_bytes);
     }
+    let phase_start = Instant::now();
     let mut token_ids: Vec<usize> = tokenizer
         .tokenize_bytes(&input)
         .map_err(|e| format!("{}: tokenize error: {e:?}", opts.input))?
         .into_iter()
         .map(|token| token as usize)
         .collect();
+    let tokenize_ms = phase_start.elapsed().as_secs_f64() * 1000.0;
+    let phase_start = Instant::now();
     if let Some(limit_tokens) = opts.limit_tokens {
         token_ids.truncate(limit_tokens);
         let truncated_tokens = token_ids
@@ -1041,6 +1061,7 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
             .detokenize_bytes(&truncated_tokens)
             .map_err(|e| format!("{}: token-prefix detokenize error: {e:?}", opts.input))?;
     }
+    let token_prefix_ms = phase_start.elapsed().as_secs_f64() * 1000.0;
     let measured_input_bytes = input.len();
     let input_sha256 = sha256_hex(&input);
 
@@ -1048,12 +1069,14 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
     let overlap = n_ctx / 4;
     validate_window(n_ctx, overlap, model.config.context_length)?;
 
+    let phase_start = Instant::now();
     if opts.warmup {
         let (_, restored) = codec_round_trip(&model, &tokenizer, &token_ids, n_ctx, overlap)?;
         if restored != input {
             return Err("bench-file: warmup did not round-trip".to_owned());
         }
     }
+    let warmup_ms = phase_start.elapsed().as_secs_f64() * 1000.0;
 
     let start = Instant::now();
     let mut payload_bytes = 0usize;
@@ -1119,6 +1142,21 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
         input_bytes as f64 / elapsed.as_secs_f64(),
         (token_ids.len() * opts.iters) as f64 / elapsed.as_secs_f64()
     );
+    if opts.show_phases {
+        println!(
+            "bench-file-phases: model_read_ms={:.3} gguf_parse_ms={:.3} model_load_ms={:.3} tokenizer_setup_ms={:.3} input_read_ms={:.3} tokenize_ms={:.3} token_prefix_ms={:.3} warmup_ms={:.3} measured_ms={:.3} total_ms={:.3}",
+            model_read_ms,
+            gguf_parse_ms,
+            model_load_ms,
+            tokenizer_setup_ms,
+            input_read_ms,
+            tokenize_ms,
+            token_prefix_ms,
+            warmup_ms,
+            elapsed.as_secs_f64() * 1000.0,
+            total_start.elapsed().as_secs_f64() * 1000.0
+        );
+    }
     Ok(())
 }
 
@@ -2821,6 +2859,7 @@ mod tests {
             "--threads".to_owned(),
             "8".to_owned(),
             "--no-warmup".to_owned(),
+            "--show-phases".to_owned(),
         ])
         .expect("bench-file options");
         assert_eq!(opts.model, "model.gguf");
@@ -2831,6 +2870,7 @@ mod tests {
         assert_eq!(opts.iters, 2);
         assert_eq!(opts.threads, Some(8));
         assert!(!opts.warmup);
+        assert!(opts.show_phases);
 
         let err = parse_bench_file_opts(vec![
             "--model".to_owned(),

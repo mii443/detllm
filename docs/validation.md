@@ -767,7 +767,7 @@ Command:
 ```sh
 cargo run --release -p xtask -- bench-file --model testdata/tiny-f32.gguf --input testdata/tiny.tokens.txt --n-ctx 8 --iters 1
 cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 4096 --limit-tokens 512 --n-ctx 2048 --threads 8 --iters 1 --no-warmup
-cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --threads 8 --iters 1 --no-warmup
+cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --threads 8 --iters 1 --no-warmup --show-phases
 ```
 
 Build `xtask` with `--features parallel,simd` for target-model benchmark
@@ -825,12 +825,13 @@ Observed Qwen2.5 Q8_0 target-model token-prefix smoke on the canonical enwik8
 stream:
 
 ```sh
-cargo run --release -p xtask --features parallel,simd -- bench-file --model /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --input /tmp/enwik8 --limit-bytes 1048576 --limit-tokens 16 --n-ctx 64 --threads 8 --iters 1 --no-warmup
+cargo run --release -p xtask --features parallel,simd -- bench-file --model /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --input /tmp/enwik8 --limit-bytes 1048576 --limit-tokens 16 --n-ctx 64 --threads 8 --iters 1 --no-warmup --show-phases
 ```
 
 ```text
 bench-file model=/tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=16 iters=1 warmup=false threads=8 n_ctx=64 overlap=16 model_sha256=d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8 input_sha256=4fe5a21798e43c8258edcf9f3a98fac2df77613b4d2add15a2a3082eedc7b0b2
-bench-file: source_input_bytes=100000000 measured_input_bytes=53 total_input_bytes=53 tokens=16 total_tokens=16 payload_bytes=14 dtlz_bytes=70 payload_bits_per_byte=2.113208 dtlz_bits_per_byte=10.566038 compression_ratio=1.320755 elapsed_ms=46230.631 input_bytes_per_s=1.146 tokens_per_s=0.346
+bench-file: source_input_bytes=100000000 measured_input_bytes=53 total_input_bytes=53 tokens=16 total_tokens=16 payload_bytes=14 dtlz_bytes=70 payload_bits_per_byte=2.113208 dtlz_bits_per_byte=10.566038 compression_ratio=1.320755 elapsed_ms=46264.744 input_bytes_per_s=1.146 tokens_per_s=0.346
+bench-file-phases: model_read_ms=2735.876 gguf_parse_ms=24.779 model_load_ms=1878.211 tokenizer_setup_ms=237.637 input_read_ms=189.615 tokenize_ms=791.689 token_prefix_ms=10.121 warmup_ms=0.000 measured_ms=46264.744 total_ms=57526.226
 ```
 
 This is input-scale and round-trip evidence for the `bench-file`
@@ -858,9 +859,13 @@ only when an even faster smoke is needed. Omit `--limit-tokens` for the final
 first-1MB acceptance measurement. `--threads N` fixes the model parallelism for
 reproducible benchmark notes, and `--no-warmup` skips the extra
 pre-measurement round-trip for long target-model measurements; the measured
-iteration still verifies encode/decode byte round-trip. This is the harness to
-use for target-model enwik8 first-1MB measurements; the bundled fixtures
-remain smoke and input-scale checks.
+iteration still verifies encode/decode byte round-trip. `--show-phases` adds
+an opt-in `bench-file-phases` line for model read/parse/load, tokenizer setup,
+input read, tokenization, token-prefix detokenization, warmup, measured loop,
+and total wall time. The Qwen2.5 prefix run above shows 1MB ByteBPE tokenization
+is below one second and the measured inference/codec loop is the dominant cost.
+This is the harness to use for target-model enwik8 first-1MB measurements; the
+bundled fixtures remain smoke and input-scale checks.
 The harness applies the same tokenizer/model vocabulary equality check and
 `2^18` codec vocabulary bound as the CLI compression path before accepting a
 model for measurement.
