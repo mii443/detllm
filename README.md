@@ -45,7 +45,7 @@ cargo run -p xtask -- model-info --model testdata/tiny-f32.gguf
 cargo run -p xtask -- model-info --model model.gguf
 cargo run --release -p xtask -- bench-testdata --iters 100
 cargo run --release -p xtask -- bench-file --model testdata/tiny-f32.gguf --input testdata/tiny.tokens.txt --n-ctx 8 --iters 2
-cargo run --release -p xtask -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --iters 1
+cargo run --release -p xtask -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --threads 8 --iters 1 --no-warmup
 cargo run -p det-cli -- tokenize -m model.gguf -p "prompt text"
 scripts/reference_logits_transformers.py --model-id TinyLlama/TinyLlama-1.1B-Chat-v1.0 --tokens 1,2,3 --out hf.logits.bin --expected-rows 3 --expected-vocab 32000
 c++ -std=c++17 -O2 -I/usr/local/include scripts/reference_logits_llamacpp.cpp -L/usr/local/lib -Wl,-rpath,/usr/local/lib -lllama -lggml -lggml-cpu -lggml-base -o /tmp/reference_logits_llamacpp
@@ -69,8 +69,9 @@ The current smoke validation is recorded in
 the tiny F32 fixture and verifies byte-for-byte round-trip on a small input; it
 is not a meaningful compression-ratio benchmark. `bench-file` records model and
 input SHA-256 values, measured byte/token counts, payload and DTLZ bpb,
-compression ratio, and throughput so real enwik8 measurements can be copied
-directly into the validation notes. `model-info` records a lightweight GGUF
+compression ratio, throughput, warmup mode, and thread override so real enwik8
+measurements can be copied directly into the validation notes. `model-info`
+records a lightweight GGUF
 intake summary without loading all weights, including model SHA-256, parsed
 config, tokenizer kind, byte coverage, vocabulary/codec compatibility, tensor
 inventory, and required tensor shape/type status.

@@ -116,7 +116,7 @@ fn real_main() -> Result<(), String> {
         Some("check-ci-workflow") => check_ci_workflow(),
         Some("check-determinism") => check_determinism(),
         _ => Err(
-            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf|bench-file --model model.gguf --input file [--limit-bytes N] [--n-ctx N] [--iters N]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
+            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf|bench-file --model model.gguf --input file [--limit-bytes N] [--n-ctx N] [--iters N] [--threads N] [--no-warmup]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
                 .to_owned(),
         ),
     }
@@ -325,6 +325,8 @@ struct BenchFileOpts {
     limit_bytes: Option<usize>,
     n_ctx: Option<usize>,
     iters: usize,
+    threads: Option<usize>,
+    warmup: bool,
 }
 
 #[derive(Debug)]
@@ -897,6 +899,8 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
     let mut limit_bytes = None;
     let mut n_ctx = None;
     let mut iters = 1usize;
+    let mut threads = None;
+    let mut warmup = true;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
@@ -936,6 +940,22 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
                     .parse::<usize>()
                     .map_err(|e| format!("bench-file: invalid --iters value: {e}"))?;
             }
+            "--threads" => {
+                i += 1;
+                let raw = args
+                    .get(i)
+                    .ok_or("bench-file: missing value for --threads")?;
+                let value = raw
+                    .parse::<usize>()
+                    .map_err(|e| format!("bench-file: invalid --threads value: {e}"))?;
+                if value == 0 {
+                    return Err("bench-file: --threads must be greater than zero".to_owned());
+                }
+                threads = Some(value);
+            }
+            "--no-warmup" => {
+                warmup = false;
+            }
             other => return Err(format!("unknown bench-file argument: {other}")),
         }
         i += 1;
@@ -949,10 +969,14 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
         limit_bytes,
         n_ctx,
         iters,
+        threads,
+        warmup,
     })
 }
 
 fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
+    det_model::set_thread_count(opts.threads)
+        .map_err(|e| format!("bench-file: thread configuration error: {e:?}"))?;
     let model_bytes = fs::read(&opts.model).map_err(|e| format!("{}: {e}", opts.model))?;
     let model_sha256 = sha256_hex(&model_bytes);
     let gguf = det_gguf::parse(&model_bytes)
@@ -980,9 +1004,11 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
     let overlap = n_ctx / 4;
     validate_window(n_ctx, overlap, model.config.context_length)?;
 
-    let (_, restored) = codec_round_trip(&model, &tokenizer, &token_ids, n_ctx, overlap)?;
-    if restored != input {
-        return Err("bench-file: warmup did not round-trip".to_owned());
+    if opts.warmup {
+        let (_, restored) = codec_round_trip(&model, &tokenizer, &token_ids, n_ctx, overlap)?;
+        if restored != input {
+            return Err("bench-file: warmup did not round-trip".to_owned());
+        }
     }
 
     let start = Instant::now();
@@ -1016,8 +1042,18 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
         .limit_bytes
         .map_or_else(|| "all".to_owned(), |limit_bytes| limit_bytes.to_string());
     println!(
-        "bench-file model={} input={} limit_bytes={} iters={} n_ctx={} overlap={} model_sha256={} input_sha256={}",
-        opts.model, opts.input, limit_label, opts.iters, n_ctx, overlap, model_sha256, input_sha256
+        "bench-file model={} input={} limit_bytes={} iters={} warmup={} threads={} n_ctx={} overlap={} model_sha256={} input_sha256={}",
+        opts.model,
+        opts.input,
+        limit_label,
+        opts.iters,
+        opts.warmup,
+        opts.threads
+            .map_or_else(|| "default".to_owned(), |threads| threads.to_string()),
+        n_ctx,
+        overlap,
+        model_sha256,
+        input_sha256
     );
     println!(
         "bench-file: source_input_bytes={} measured_input_bytes={} total_input_bytes={} tokens={} total_tokens={} payload_bytes={} dtlz_bytes={} payload_bits_per_byte={:.6} dtlz_bits_per_byte={:.6} compression_ratio={:.6} elapsed_ms={:.3} input_bytes_per_s={:.3} tokens_per_s={:.3}",
@@ -2732,6 +2768,9 @@ mod tests {
             "2048".to_owned(),
             "--iters".to_owned(),
             "2".to_owned(),
+            "--threads".to_owned(),
+            "8".to_owned(),
+            "--no-warmup".to_owned(),
         ])
         .expect("bench-file options");
         assert_eq!(opts.model, "model.gguf");
@@ -2739,6 +2778,8 @@ mod tests {
         assert_eq!(opts.limit_bytes, Some(1_048_576));
         assert_eq!(opts.n_ctx, Some(2048));
         assert_eq!(opts.iters, 2);
+        assert_eq!(opts.threads, Some(8));
+        assert!(!opts.warmup);
 
         let err = parse_bench_file_opts(vec![
             "--model".to_owned(),
@@ -2750,6 +2791,17 @@ mod tests {
         ])
         .expect_err("zero limit must be rejected");
         assert_eq!(err, "bench-file: --limit-bytes must be greater than zero");
+
+        let err = parse_bench_file_opts(vec![
+            "--model".to_owned(),
+            "model.gguf".to_owned(),
+            "--input".to_owned(),
+            "enwik8".to_owned(),
+            "--threads".to_owned(),
+            "0".to_owned(),
+        ])
+        .expect_err("zero threads must be rejected");
+        assert_eq!(err, "bench-file: --threads must be greater than zero");
     }
 
     #[test]
