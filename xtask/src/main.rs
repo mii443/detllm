@@ -1623,9 +1623,26 @@ fn check_ci_workflow() -> Result<(), String> {
 }
 
 fn validate_ci_workflow_text(text: &str) -> Result<(), String> {
+    for old_action in [
+        "uses: actions/checkout@v4",
+        "uses: actions/upload-artifact@v4",
+        "uses: actions/download-artifact@v4",
+    ] {
+        if text.contains(old_action) {
+            return Err(format!(
+                "ci workflow must not use Node.js 20 action: {old_action}"
+            ));
+        }
+    }
+
     let required = [
         ("hygiene job", "  hygiene:"),
         ("manual workflow dispatch trigger", "  workflow_dispatch:"),
+        ("node24 checkout action", "uses: actions/checkout@v5"),
+        (
+            "node24 artifact download action",
+            "uses: actions/download-artifact@v7",
+        ),
         ("test job", "  test:"),
         ("logits-hash-match job", "  logits-hash-match:"),
         ("msrv job", "  msrv:"),
@@ -1651,6 +1668,10 @@ fn validate_ci_workflow_text(text: &str) -> Result<(), String> {
             "name: logits-hashes-toolchain-${{ matrix.toolchain }}",
         ),
         ("wasm artifact upload", "name: logits-hashes-wasm32-wasip1"),
+        (
+            "node24 artifact upload action",
+            "uses: actions/upload-artifact@v6",
+        ),
         ("stable toolchain skew entry", "toolchain: [stable,"),
         (
             "wasm target build",
@@ -1691,7 +1712,7 @@ fn validate_ci_workflow_text(text: &str) -> Result<(), String> {
         }
     }
 
-    let artifact_uploads = text.matches("uses: actions/upload-artifact@v4").count();
+    let artifact_uploads = text.matches("uses: actions/upload-artifact@v6").count();
     if artifact_uploads != 3 {
         return Err(format!(
             "ci workflow must upload exactly three logits artifact groups, found {artifact_uploads}"
@@ -3648,7 +3669,7 @@ floating_table = { version = "2.0" }
         let err = validate_ci_workflow_text(&missing_wasm).expect_err("missing wasm logits");
         assert!(err.contains("wasm logits execution"), "{err}");
 
-        let missing_artifact = valid.replacen("uses: actions/upload-artifact@v4", "", 1);
+        let missing_artifact = valid.replacen("uses: actions/upload-artifact@v6", "", 1);
         let err = validate_ci_workflow_text(&missing_artifact).expect_err("missing upload");
         assert!(
             err.contains("must upload exactly three logits artifact groups"),
@@ -3671,6 +3692,10 @@ floating_table = { version = "2.0" }
         );
         let err = validate_ci_workflow_text(&missing_retry).expect_err("missing retry");
         assert!(err.contains("wasmtime download retry"), "{err}");
+
+        let old_checkout = valid.replace("actions/checkout@v5", "actions/checkout@v4");
+        let err = validate_ci_workflow_text(&old_checkout).expect_err("old checkout");
+        assert!(err.contains("Node.js 20 action"), "{err}");
     }
 
     fn valid_ci_workflow_text() -> &'static str {
@@ -3680,6 +3705,7 @@ on:
 jobs:
   hygiene:
     steps:
+      - uses: actions/checkout@v5
       - run: cargo run -p xtask -- check-ci-workflow
   test:
     strategy:
@@ -3690,12 +3716,13 @@ jobs:
           - name: aarch64-linux
     steps:
       - run: cargo run -p det-cli -- logits -m testdata/tiny-f32.gguf --tokens "$(cat testdata/tiny.tokens.txt)" --hash --chunk-size 3
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: logits-hashes-${{ matrix.name }}
   logits-hash-match:
     needs: [test, toolchain-skew, wasm]
     steps:
+      - uses: actions/download-artifact@v7
       - run: cargo run -p xtask -- verify-logits-hashes --dir logits-hashes --expected-count 6
   msrv:
     steps: []
@@ -3705,7 +3732,7 @@ jobs:
         toolchain: [stable, "1.94.0"]
     steps:
       - run: cargo run -p det-cli -- logits -m testdata/tiny-f32.gguf --tokens "$(cat testdata/tiny.tokens.txt)" --hash --chunk-size 3
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: logits-hashes-toolchain-${{ matrix.toolchain }}
   wasm:
@@ -3720,7 +3747,7 @@ jobs:
       - run: wasmtime --dir . target/wasm32-wasip1/debug/detllm.wasm compress -m testdata/tiny-f32.gguf -i testdata/tiny.tokens.txt -o wasm-codec-smoke/tiny-f32.dtlz --n-ctx 8
       - run: wasmtime --dir . target/wasm32-wasip1/debug/detllm.wasm decompress -m testdata/tiny-f32.gguf -i wasm-codec-smoke/tiny-f32.dtlz -o wasm-codec-smoke/tiny-f32.restored
       - run: cmp native-quant-kernel-hash.txt wasm-quant-kernel-hash.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: logits-hashes-wasm32-wasip1
 "#
