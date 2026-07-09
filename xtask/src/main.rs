@@ -2459,7 +2459,9 @@ fn validate_tokenizer_and_codec_vocab(
 ) -> Result<(), String> {
     let tokenizer_vocab_len = gguf_token_vocab_len(gguf)?;
     let model_vocab_len = model.output.rows();
-    validate_vocab_lengths(tokenizer_vocab_len, model_vocab_len)
+    validate_vocab_lengths(tokenizer_vocab_len, model_vocab_len)?;
+    det_token::require_complete_byte_coverage_from_gguf(gguf)
+        .map_err(|e| format!("tokenizer byte coverage error: {e}"))
 }
 
 fn validate_vocab_lengths(

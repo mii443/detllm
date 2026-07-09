@@ -121,9 +121,11 @@ the following acceptance evidence is still missing:
 
 - SmolLM2 full codec validation with a tokenizer/model source that covers all
   256 input bytes; tested Unsloth, bartowski, and HuggingFaceTB GGUFs expose
-  21 missing byte tokens, now reported explicitly in tokenizer errors.
-  HuggingFaceTB Q4_K_M tensor types pass `model-info --metadata-prefix`;
-  byte coverage remains the blocker.
+  21 missing byte tokens. The tokenizer can be constructed for ordinary text
+  whose bytes are present, but codec paths now check complete byte coverage and
+  reject these GGUFs for arbitrary-byte losslessness. HuggingFaceTB Q4_K_M
+  tensor types pass `model-info --metadata-prefix`; byte coverage remains the
+  blocker.
 - Further SmolLM2 reference-quality work remains: three-token raw-logits
   evidence passes the 0.999 cosine threshold, and 8-token log-probability target
   checks pass, but the current 8-token raw-logits comparison is below the 0.999

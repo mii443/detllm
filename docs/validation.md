@@ -731,7 +731,7 @@ model-info metadata key=tokenizer.ggml.eos_token_id u32=2
 model-info metadata key=tokenizer.ggml.tokens array<string>[49152]
 model-info metadata key=tokenizer.ggml.merges array<string>[48900]
 model-info metadata key=tokenizer.ggml.token_type array<i32>[49152]
-model-info tokenizer status=error error=IncompleteByteFallback(missing=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,fb,fc,fd,fe,ff)
+model-info tokenizer status=ok kind=byte_bpe
 model-info byte-coverage tokens=49152 single_byte=235 emittable_single_byte=235 missing=21 missing_emittable=21 missing_first=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,... missing_emittable_first=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,...
 model-info config status=ok block_count=24 embedding_length=2048 feed_forward_length=8192 head_count=32 head_count_kv=32 context_length=8192 rope_dimension_count=64 rope_pairing=Adjacent rope_freq_base=130000.0 rms_epsilon=1e-5 attention_scale=0.125
 model-info tensor-inventory total=218 encoded_bytes=1818632192 encoded_len_errors=0 F32=49 Q8_0=169
@@ -754,7 +754,7 @@ Observed bartowski Q8_0 prefix result:
 ```text
 model-info path=/tmp/smollm2-bartowski-prefix.gguf bytes=4194304 sha256=a82b6f909a52c435a6a19ebd907eb8919dd5160008ed1d24e456331de1102b2b metadata_prefix=true gguf_version=3 metadata=38 tensors=218 data_offset=1782752
 model-info metadata key=general.name string=Smollm2 1.7B 8k Mix7 Ep2 v2
-model-info tokenizer status=error error=IncompleteByteFallback(missing=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,fb,fc,fd,fe,ff)
+model-info tokenizer status=ok kind=byte_bpe
 model-info byte-coverage tokens=49152 single_byte=235 emittable_single_byte=235 missing=21 missing_emittable=21 missing_first=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,... missing_emittable_first=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,...
 model-info tensor-inventory total=218 encoded_bytes=1818632192 encoded_len_errors=0 F32=49 Q8_0=169
 model-info required-tensors status=ok checked=218 missing=0 shape_mismatch=0 unsupported_type=0 tied_output=true
@@ -774,7 +774,7 @@ model-info metadata key=tokenizer.ggml.eos_token_id u32=2
 model-info metadata key=tokenizer.ggml.tokens array<string>[49152]
 model-info metadata key=tokenizer.ggml.merges array<string>[48900]
 model-info metadata key=tokenizer.ggml.token_type array<i32>[49152]
-model-info tokenizer status=error error=IncompleteByteFallback(missing=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,fb,fc,fd,fe,ff)
+model-info tokenizer status=ok kind=byte_bpe
 model-info byte-coverage tokens=49152 single_byte=235 emittable_single_byte=235 missing=21 missing_emittable=21 missing_first=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,... missing_emittable_first=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,...
 model-info config status=ok block_count=24 embedding_length=2048 feed_forward_length=8192 head_count=32 head_count_kv=32 context_length=8192 rope_dimension_count=64 rope_pairing=Adjacent rope_freq_base=130000.0 rms_epsilon=1e-5 attention_scale=0.125
 model-info tensor-inventory total=218 encoded_bytes=1053827072 encoded_len_errors=0 F32=49 Q4_K=144 Q6_K=25
@@ -838,7 +838,8 @@ per-row cosine target:
 xtask: compare-logits: min row cosine 0.998830694 is below threshold 0.999000000
 ```
 
-Tokenizer-backed CLI paths correctly reject this GGUF for v1 codec use:
+Tokenizer-backed text paths can use bytes that are present in the partial BPE
+seed table:
 
 ```sh
 cargo run --release -p det-cli -- tokenize -m /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf -p "Hello"
@@ -847,17 +848,31 @@ cargo run --release -p det-cli -- tokenize -m /tmp/detllm-external/SmolLM2-1.7B-
 Observed output:
 
 ```text
-detllm: tokenizer error: IncompleteByteFallback(missing=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,fb,fc,fd,fe,ff)
+19556
+```
+
+Codec paths still reject this GGUF for v1 arbitrary-byte losslessness before
+running a measurement:
+
+```sh
+cargo run --release -p xtask -- bench-file --model /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf --input /tmp/detllm-external/hello.txt --n-ctx 16 --iters 1 --no-warmup
+```
+
+Observed output:
+
+```text
+xtask: tokenizer byte coverage error: IncompleteByteFallback(missing=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,fb,fc,fd,fe,ff)
 ```
 
 This is real SmolLM2 GGUF evidence for model config parsing, required tensor
 compatibility on Q8_0, single-token forward, chunk-size-invariant logits
 hashing on a three-token stream, a three-token llama.cpp raw-logits cosine
 check that passes the 0.999 target, and an 8-token raw-logits check that passes
-at 0.998 but not 0.999. It also records the blocking codec issue: the tested
-full GGUF and the two metadata-prefix-screened public candidates expose only
-235 of the 256 byte values as single-byte BPE seed tokens, so they cannot
-satisfy `detllm-design.md` §7's arbitrary-byte losslessness requirement. Full
+at 0.998 but not 0.999. It also records that partial GPT-2 BPE tokenizer
+construction is usable for present-byte text, while the tested full GGUF and
+the two metadata-prefix-screened public candidates expose only 235 of the 256
+byte values as single-byte BPE seed tokens. Codec paths therefore reject them
+for `detllm-design.md` §7's arbitrary-byte losslessness requirement. Full
 SmolLM2 codec validation needs a compatible GGUF/tokenizer source or a
 deterministic tokenizer strategy that can represent all byte values without
 changing the model vocabulary.

@@ -830,6 +830,7 @@ impl LoadedModel {
         let model_sha256 = hasher.finalize();
         let gguf = det_gguf::parse(&bytes).map_err(|e| format!("GGUF parse error: {e:?}"))?;
         let tokenizer_vocab_len = gguf_token_vocab_len(&gguf)?;
+        validate_codec_byte_coverage(&gguf)?;
         let tokenizer =
             det_token::Tokenizer::from_gguf(&gguf).map_err(|e| format!("tokenizer error: {e}"))?;
         let model = det_model::F32Llama::from_gguf(&gguf, &bytes)
@@ -894,6 +895,11 @@ fn validate_codec_vocab_len(vocab_len: usize) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+fn validate_codec_byte_coverage(gguf: &det_gguf::Gguf) -> Result<(), String> {
+    det_token::require_complete_byte_coverage_from_gguf(gguf)
+        .map_err(|e| format!("tokenizer byte coverage error: {e}"))
 }
 
 fn tokenize(args: Vec<String>) -> Result<(), String> {
@@ -1369,16 +1375,43 @@ mod tests {
         fs::create_dir_all(&dir).expect("mkdir");
         let model_path = dir.join("model.gguf");
 
-        fs::write(&model_path, synthetic_gguf_bytes_missing_byte_fallback()).expect("write model");
+        fs::write(
+            &model_path,
+            synthetic_bpe_gguf_bytes_missing_byte_fallback(),
+        )
+        .expect("write model");
 
         let err = match LoadedModel::load(model_path.to_str().expect("model path")) {
             Ok(_) => panic!("non-lossless tokenizer should be rejected"),
             Err(err) => err,
         };
         assert!(
-            err.contains("tokenizer error: IncompleteByteFallback(missing=ff)"),
+            err.contains("tokenizer byte coverage error: IncompleteByteFallback(missing=ff)"),
             "{err}"
         );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn tokenize_allows_partial_bpe_when_input_bytes_are_present() {
+        let dir = unique_tmp_dir();
+        fs::create_dir_all(&dir).expect("mkdir");
+        let model_path = dir.join("model.gguf");
+
+        fs::write(
+            &model_path,
+            synthetic_bpe_gguf_bytes_missing_byte_fallback(),
+        )
+        .expect("write model");
+
+        tokenize(vec![
+            "-m".to_owned(),
+            model_path.to_string_lossy().into_owned(),
+            "-p".to_owned(),
+            "ab".to_owned(),
+        ])
+        .expect("tokenize");
 
         let _ = fs::remove_dir_all(dir);
     }
@@ -1700,8 +1733,8 @@ mod tests {
         synthetic_gguf_bytes_with_vocab(257, true)
     }
 
-    fn synthetic_gguf_bytes_missing_byte_fallback() -> Vec<u8> {
-        synthetic_gguf_bytes_with_vocab_and_token_override(256, false, Some((255, "not-a-byte")))
+    fn synthetic_bpe_gguf_bytes_missing_byte_fallback() -> Vec<u8> {
+        synthetic_gguf_bytes_with_vocab_and_token_override(257, true, Some((255, "not-a-byte")))
     }
 
     fn synthetic_gguf_bytes_with_vocab(vocab_size: usize, include_bpe: bool) -> Vec<u8> {

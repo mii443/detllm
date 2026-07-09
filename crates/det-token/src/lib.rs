@@ -147,6 +147,17 @@ pub fn byte_coverage_from_gguf(gguf: &det_gguf::Gguf) -> Result<ByteCoverage, To
     Ok(byte_coverage_from_tokens(tokens, emit_mask.as_deref()))
 }
 
+pub fn require_complete_byte_coverage_from_gguf(gguf: &det_gguf::Gguf) -> Result<(), TokenError> {
+    let coverage = byte_coverage_from_gguf(gguf)?;
+    if coverage.missing_emittable_bytes.is_empty() {
+        Ok(())
+    } else {
+        Err(TokenError::IncompleteByteFallback {
+            missing: coverage.missing_emittable_bytes,
+        })
+    }
+}
+
 impl ByteFallbackTokenizer {
     pub fn new(pairs: &[(u8, u32)]) -> Result<Self, TokenError> {
         let mut byte_to_token = [None; 256];
@@ -252,11 +263,6 @@ impl ByteBpeTokenizer {
                 }
             }
             token_to_bytes.insert(id, bytes);
-        }
-
-        let missing = missing_byte_tokens(&byte_to_token);
-        if !missing.is_empty() {
-            return Err(TokenError::IncompleteByteFallback { missing });
         }
 
         let mut merge_ranks = BTreeMap::new();
@@ -1058,6 +1064,57 @@ mod tests {
         let input = b"\x00hello \xff\nhello ";
         let ids = tok.tokenize_bytes(input).expect("tokenize");
         assert_eq!(tok.detokenize_bytes(&ids).expect("detok"), input);
+    }
+
+    #[test]
+    fn byte_bpe_allows_partial_byte_seed_for_non_codec_use() {
+        let mut tokens: Vec<String> = (0..=254)
+            .map(|b| String::from_utf8(gpt2_byte_unicode_token_bytes(b)).expect("utf8"))
+            .collect();
+        let hi = tokens.len() as u32;
+        tokens.push("hi".to_owned());
+        let merges = vec!["h i".to_owned()];
+        let tok = ByteBpeTokenizer::from_tokens_and_merges(&tokens, &merges).expect("bpe");
+
+        assert_eq!(tok.tokenize_bytes(b"hi").expect("tokens"), [hi]);
+        assert_eq!(tok.detokenize_bytes(&[hi]).expect("detok"), b"hi");
+        assert_eq!(
+            tok.tokenize_bytes(&[0xff]),
+            Err(TokenError::MissingByteFallback(0xff))
+        );
+    }
+
+    #[test]
+    fn codec_byte_coverage_rejects_partial_byte_seed() {
+        let mut tokens: Vec<String> = (0..=254)
+            .map(|b| String::from_utf8(gpt2_byte_unicode_token_bytes(b)).expect("utf8"))
+            .collect();
+        tokens.push("hi".to_owned());
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            "tokenizer.ggml.tokens".to_owned(),
+            det_gguf::MetadataValue::ArrayString(tokens),
+        );
+        metadata.insert(
+            "tokenizer.ggml.model".to_owned(),
+            det_gguf::MetadataValue::String("gpt2".to_owned()),
+        );
+        metadata.insert(
+            "tokenizer.ggml.merges".to_owned(),
+            det_gguf::MetadataValue::ArrayString(vec!["h i".to_owned()]),
+        );
+        let gguf = det_gguf::Gguf::from_parts(3, metadata, Vec::new(), 0, 0);
+
+        assert!(matches!(
+            Tokenizer::from_gguf(&gguf),
+            Ok(Tokenizer::ByteBpe(_))
+        ));
+        assert_eq!(
+            require_complete_byte_coverage_from_gguf(&gguf),
+            Err(TokenError::IncompleteByteFallback {
+                missing: vec![0xff]
+            })
+        );
     }
 
     #[test]
