@@ -1056,7 +1056,7 @@ Command:
 ```sh
 cargo run --release -p xtask -- bench-file --model testdata/tiny-f32.gguf --input testdata/tiny.tokens.txt --n-ctx 8 --iters 1
 cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 4096 --limit-tokens 512 --n-ctx 2048 --threads 8 --iters 1 --no-warmup
-cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --threads 8 --iters 1 --no-warmup --show-phases --progress-every 100
+cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --threads 8 --iters 1 --no-warmup --encode-only --show-phases --progress-every 100
 ```
 
 Build `xtask` with `--features parallel,simd` for target-model benchmark
@@ -1067,6 +1067,10 @@ For tokenizers with incomplete byte coverage, `bench-file` counts byte escapes
 as codec symbols in the `tokenized_tokens`, `tokens`, and `total_tokens`
 fields; for complete byte-coverage tokenizers these remain ordinary tokenizer
 token counts.
+Long target-model compression-rate preflights can use `--encode-only` after a
+separate round-trip smoke has established codec correctness. This mode measures
+payload generation and compression ratio without paying for the mirrored decode
+pass. The default remains `mode=round-trip` and verifies decoded bytes.
 
 Observed smoke output on the bundled token text fixture:
 
@@ -1153,6 +1157,25 @@ bench-file: source_input_bytes=100000000 measured_input_bytes=190 total_input_by
 bench-file-phases: model_read_ms=2326.019 gguf_parse_ms=33.568 model_load_ms=2536.310 tokenizer_setup_ms=436.087 input_read_ms=45.359 tokenize_ms=1412.359 token_prefix_ms=0.134 warmup_ms=0.000 measured_ms=23201.015 total_ms=36310.746
 ```
 
+Current-format Qwen2.5 encode-only preflight on the same 64-token prefix:
+
+```sh
+cargo run --release -p xtask --features parallel,simd -- bench-file --model /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --input /tmp/enwik8 --limit-bytes 1048576 --limit-tokens 64 --n-ctx 128 --threads 8 --iters 1 --no-warmup --encode-only --show-phases --progress-every 16
+```
+
+```text
+bench-file-progress phase=encode tokens_done=16 tokens_total=64 elapsed_ms=2758.847 tokens_per_s=5.800
+bench-file-progress phase=encode tokens_done=32 tokens_total=64 elapsed_ms=5764.774 tokens_per_s=5.551
+bench-file-progress phase=encode tokens_done=48 tokens_total=64 elapsed_ms=8821.398 tokens_per_s=5.441
+bench-file-progress phase=encode tokens_done=64 tokens_total=64 elapsed_ms=11889.978 tokens_per_s=5.383
+bench-file model=/tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=64 iters=1 warmup=false mode=encode-only threads=8 n_ctx=128 overlap=32 model_sha256=d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8 input_sha256=b4997b129849e53a0cb6265f2561d8e57ad57003ffbcc1c7357b03918e79b03b
+bench-file: source_input_bytes=100000000 measured_input_bytes=190 total_input_bytes=190 tokenized_tokens=279472 tokens=64 total_tokens=64 payload_bytes=15 dtlz_bytes=71 payload_bits_per_byte=0.631579 dtlz_bits_per_byte=2.989474 compression_ratio=0.373684 elapsed_ms=11978.087 input_bytes_per_s=15.862 tokens_per_s=5.343
+bench-file-phases: model_read_ms=2357.780 gguf_parse_ms=26.854 model_load_ms=2618.833 tokenizer_setup_ms=454.859 input_read_ms=30.442 tokenize_ms=1544.375 token_prefix_ms=0.163 warmup_ms=0.000 measured_ms=11978.087 total_ms=25361.387
+```
+
+This preserves the same measured byte prefix and payload size as the previous
+round-trip run while removing the decode phase from the measured loop.
+
 Current-format Qwen2.5 preflight with a one-token measured prefix records the
 full first-1MB tokenization size:
 
@@ -1171,19 +1194,22 @@ implementation on the canonical enwik8 byte stream, not a meaningful language
 model compression-quality result. The tiny fixture has byte tokens and a tiny
 context, so it is expected to produce near-raw 8 bpb output.
 
-`bench-file` tokenizes the input, encodes the token stream, decodes it, and
-detokenizes back to bytes on every measured iteration. The codec path keeps a
-streaming KV cache within each fixed window and replays only the configured
-overlap when a window rolls over; it does not rebuild the full prefix CDF for
-every token. The tests `streaming_codec_matches_replay_cdf_payload` and
+`bench-file` tokenizes the input and encodes the token stream on every
+measured iteration. In the default round-trip mode it also decodes and
+detokenizes back to bytes on every measured iteration; in `--encode-only` mode
+it stops after payload generation. The codec path keeps a streaming KV cache
+within each fixed window and replays only the configured overlap when a window
+rolls over; it does not rebuild the full prefix CDF for every token. The tests
+`streaming_codec_matches_replay_cdf_payload` and
 `xtask_streaming_codec_matches_replay_cdf_payload` compare the streaming
 payload against the direct replay rule byte-for-byte. The harness reports
 payload size and DTLZ size, including the 56-byte file header. It also reports
 model and measured input SHA-256 values, source and measured input byte counts,
 the tokenized token count before `--limit-tokens`, one-iteration and total
 measured token counts, payload-only bpb, DTLZ bpb, compression ratio, elapsed
-time, bytes/s, tokens/s, whether a pre-measurement warmup round-trip was run,
-and the thread override used for model kernels.
+time, bytes/s, tokens/s, whether a pre-measurement warmup round-trip or
+encode-only warmup was run, the measurement mode, and the thread override used
+for model kernels.
 `--limit-bytes N` truncates the input to at most the first `N` bytes before
 tokenization, and the harness reads only that prefix while retaining the full
 source file size in `source_input_bytes`. The enwik8 first-1MB measurement can
@@ -1198,16 +1224,18 @@ are usable for Qwen2.5 prefix preflights; use smaller `--limit-bytes` values
 only when an even faster smoke is needed. Omit `--limit-tokens` for the final
 first-1MB acceptance measurement. `--threads N` fixes the model parallelism for
 reproducible benchmark notes, and `--no-warmup` skips the extra
-pre-measurement round-trip for long target-model measurements; the measured
-iteration still verifies encode/decode byte round-trip. `--show-phases` adds
-an opt-in `bench-file-phases` line for model read/parse/load, tokenizer setup,
-input read, tokenization, token-prefix detokenization, warmup, measured loop,
-and total wall time. `--progress-every N` emits `bench-file-progress` lines on
-stderr every N encode/decode tokens and at phase completion; the stdout summary
-lines remain stable for copying into this file. The Qwen2.5 prefix run above
-shows 1MB ByteBPE tokenization is below one second; after streaming KV-cache
-reuse and validated-model hot-path checks, the 16-token measured encode/decode
-loop is roughly 4.2 seconds. The model forward path also reuses
+pre-measurement pass for long target-model measurements. In round-trip mode,
+the measured iteration still verifies encode/decode byte round-trip; in
+encode-only mode, use a separate short round-trip smoke for codec correctness.
+`--show-phases` adds an opt-in `bench-file-phases` line for model
+read/parse/load, tokenizer setup, input read, tokenization, token-prefix
+detokenization, warmup, measured loop, and total wall time.
+`--progress-every N` emits `bench-file-progress` lines on stderr every N encode
+or decode tokens and at phase completion; the stdout summary lines remain
+stable for copying into this file. The Qwen2.5 prefix run above shows 1MB
+ByteBPE tokenization is about 1.5 seconds on this host; after streaming
+KV-cache reuse and validated-model hot-path checks, the current 64-token
+encode-only measured loop is roughly 12 seconds. The model forward path also reuses
 `ForwardWorkspace` scratch buffers across tokens, avoiding per-token allocation
 of the large hidden-state, projection, attention, and feed-forward vectors, and
 uses layout checks for already-loaded models instead of re-scanning all weight
