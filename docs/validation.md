@@ -775,6 +775,38 @@ lower-level bench codec helpers directly: their encode/decode paths reject
 zero `n_ctx`, `overlap >= n_ctx`, and `n_ctx` larger than the model context
 before any benchmark token stream is processed.
 
+## Fixture Benchmark Snapshot
+
+Command:
+
+```sh
+cargo run --release -p xtask -- bench-testdata --iters 100
+```
+
+Environment:
+
+```text
+Linux main-win 6.6.87.2-microsoft-standard-WSL2 #1 SMP PREEMPT_DYNAMIC Thu Jun 5 18:30:46 UTC 2025 x86_64
+CPU: AMD Ryzen 9 7950X3D 16-Core Processor, 32 logical CPUs
+rustc 1.95.0 (59807616e 2026-04-14)
+```
+
+Observed output:
+
+```text
+bench-testdata iters=100
+logits tiny-f32: hash=92a0280149c6b1505c84dce0d19486a2093f93b7978b579c220000d12e4ef7e7 tokens=600 elapsed_ms=5.654 tokens_per_s=106111.003
+logits tiny-qmix: hash=8a34d3c4a05e9a30b90aadcdca7b6bac91655e6ab67980ccdb6726565d35f3e4 tokens=600 elapsed_ms=6.065 tokens_per_s=98925.928
+codec tiny-f32: input_bytes=3900 payload_bytes=4600 elapsed_ms=175.157 input_bytes_per_s=22265.754
+codec tiny-qmix: input_bytes=3900 payload_bytes=4600 elapsed_ms=193.805 input_bytes_per_s=20123.346
+```
+
+`bench-testdata` verifies that the fixture logits hash does not change during
+the measured loop, and each codec benchmark decodes the measured payload and
+checks byte equality. This is an equivalent harness result for the bundled
+fixtures only; target-model and broader hardware benchmark results remain
+separate acceptance evidence.
+
 ## Logits Cosine Compare Harness
 
 Command:

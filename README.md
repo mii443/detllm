@@ -76,6 +76,25 @@ intake summary without loading all weights, including model SHA-256, parsed
 config, tokenizer kind, byte coverage, vocabulary/codec compatibility, tensor
 inventory, and required tensor shape/type status.
 
+## Fixture Benchmark Snapshot
+
+Local release benchmark on `x86_64` WSL2, AMD Ryzen 9 7950X3D, rustc
+`1.95.0`, using:
+
+```sh
+cargo run --release -p xtask -- bench-testdata --iters 100
+```
+
+| check | throughput | note |
+|---|---:|---|
+| `tiny-f32` logits | 106111 tokens/s | 600 fixture tokens, hash stable |
+| `tiny-qmix` logits | 98926 tokens/s | 600 fixture tokens, hash stable |
+| `tiny-f32` codec | 22266 input bytes/s | 3900 bytes, round-trip verified |
+| `tiny-qmix` codec | 20123 input bytes/s | 3900 bytes, round-trip verified |
+
+These numbers are fixture-scale smoke benchmarks, not target-model compression
+quality measurements.
+
 ## Remaining Work
 
 The implementation is not yet complete against the full design. In particular,
@@ -88,4 +107,5 @@ the following acceptance evidence is still missing:
   smoke evidence.
 - Target-model enwik8 first-1MB compression-rate measurement with
   `xtask bench-file`; the bundled tiny fixture has input-scale enwik8 evidence.
-- Criterion or equivalent full benchmark results on real target hardware.
+- Broader benchmark results on real target hardware beyond the current bundled
+  fixture `xtask bench-testdata` snapshot.
