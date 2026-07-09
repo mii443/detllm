@@ -641,6 +641,7 @@ mod tests {
     fn quantized_dot_rejects_empty_block_lists() {
         assert_eq!(dot_q8_0_q8a(&[], &[]), Err(QuantError::InvalidBlockLength));
         assert_eq!(dot_q4_0_q8a(&[], &[]), Err(QuantError::InvalidBlockLength));
+        assert_eq!(dot_q4_k_q8a(&[], &[]), Err(QuantError::InvalidBlockLength));
         assert_eq!(dot_q6_k_q8a(&[], &[]), Err(QuantError::InvalidBlockLength));
     }
 
@@ -658,6 +659,7 @@ mod tests {
             d: 0.5,
             qs: [0x88; 16],
         };
+        let q4k = q4k_block_with(0.5, 0.25, 1, 0, 0);
         let q6 = q6_block_with(0.5, 0, 1);
 
         let mut bad_a = a;
@@ -668,6 +670,10 @@ mod tests {
         );
         assert_eq!(
             dot_q4_0_q8a(&[q4], &[bad_a]),
+            Err(QuantError::NonFiniteScale)
+        );
+        assert_eq!(
+            dot_q4_k_q8a(&[q4k], &[bad_a; Q4K_BLOCK / BLOCK]),
             Err(QuantError::NonFiniteScale)
         );
         assert_eq!(
@@ -686,6 +692,20 @@ mod tests {
         bad_q4.d = f32::NEG_INFINITY;
         assert_eq!(
             dot_q4_0_q8a(&[bad_q4], &[a]),
+            Err(QuantError::NonFiniteScale)
+        );
+
+        let mut bad_q4k = q4k;
+        bad_q4k.d = f32::INFINITY;
+        assert_eq!(
+            dot_q4_k_q8a(&[bad_q4k], &[a; Q4K_BLOCK / BLOCK]),
+            Err(QuantError::NonFiniteScale)
+        );
+
+        let mut bad_q4k = q4k;
+        bad_q4k.dmin = f32::NAN;
+        assert_eq!(
+            dot_q4_k_q8a(&[bad_q4k], &[a; Q4K_BLOCK / BLOCK]),
             Err(QuantError::NonFiniteScale)
         );
 
@@ -711,6 +731,7 @@ mod tests {
             d: 2.0,
             qs: [0xff; 16],
         };
+        let q4k = q4k_block_with(2.0, 0.0, 63, 0, 0xff);
         let q6 = q6_block_with(2.0, 63, 127);
 
         assert_eq!(
@@ -719,6 +740,10 @@ mod tests {
         );
         assert_eq!(
             dot_q4_0_q8a(&[q4], &[huge_a]),
+            Err(QuantError::NonFiniteOutput)
+        );
+        assert_eq!(
+            dot_q4_k_q8a(&[q4k], &[huge_a; Q4K_BLOCK / BLOCK]),
             Err(QuantError::NonFiniteOutput)
         );
         assert_eq!(
@@ -894,6 +919,29 @@ mod tests {
             }
         }
         Q6KBlock { d, ql, qh, scales }
+    }
+
+    fn q4k_block_with(d: f32, dmin: f32, scale: u8, min: u8, q: u8) -> Q4KBlock {
+        let scale = scale & 0x3f;
+        let min = min & 0x3f;
+        let mut scales = [0u8; 12];
+        for i in 0..8 {
+            if i < 4 {
+                scales[i] = scale;
+                scales[i + 4] = min;
+            } else {
+                scales[i + 4] |= scale & 0x0f;
+                scales[i - 4] |= (scale >> 4) << 6;
+                scales[i + 4] |= (min & 0x0f) << 4;
+                scales[i] |= (min >> 4) << 6;
+            }
+        }
+        Q4KBlock {
+            d,
+            dmin,
+            scales,
+            qs: [q; 128],
+        }
     }
 
     #[cfg(any(
