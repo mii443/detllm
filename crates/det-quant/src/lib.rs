@@ -342,17 +342,15 @@ pub fn dot_q6_k_q8k(blocks_w: &[Q6KBlock], blocks_a: &[Q8KBlock]) -> Result<f32,
         if !w.d.is_finite() || !a.d.is_finite() {
             return Err(QuantError::NonFiniteScale);
         }
-        let mut q6 = [0i8; Q6K_BLOCK];
-        for (i, dst) in q6.iter_mut().enumerate() {
-            *dst = q6_k_quant(*w, i);
-        }
         let mut aux32 = [0i32; 8];
         let mut offset = 0usize;
         for &scale in &w.scales {
             let scale = scale as i32;
             for _ in 0..2 {
                 for lane in 0..8 {
-                    aux32[lane] += scale * (a.q[offset + lane] as i32) * (q6[offset + lane] as i32);
+                    aux32[lane] += scale
+                        * (a.q[offset + lane] as i32)
+                        * (q6_k_quant(*w, offset + lane) as i32);
                 }
                 offset += 8;
             }
