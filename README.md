@@ -47,7 +47,7 @@ cargo run -p xtask -- model-info --model model-prefix.gguf --metadata-prefix
 cargo run --release -p xtask -- bench-testdata --iters 100
 cargo run --release -p xtask -- bench-file --model testdata/tiny-f32.gguf --input testdata/tiny.tokens.txt --n-ctx 8 --iters 2
 cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 4096 --limit-tokens 512 --n-ctx 2048 --threads 8 --iters 1 --no-warmup
-cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --threads 8 --iters 1 --no-warmup --encode-only --show-phases --summary bench-file.summary --progress-every 100
+cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --threads 8 --iters 1 --no-warmup --encode-only --show-phases --summary bench-file.summary --progress-every 100 --progress-summary bench-file.progress
 scripts/run-target-full-bench.sh --model qwen25-q8.gguf --input /tmp/enwik8 --name qwen25-q8-first1m
 scripts/run-target-bench-smoke.sh --input /tmp/enwik8 --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
 scripts/run-target-logits-broad-matrix.sh --reference /tmp/reference_logits_llamacpp --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
@@ -92,8 +92,10 @@ Long target-model measurements can use
 `--progress-every N` to emit encode/decode token progress on stderr without
 changing the stdout result lines; progress rows include elapsed time,
 throughput, remaining seconds, and estimated total seconds for the current
-encode/decode phase. `--summary PATH` also writes the final stdout summary
-lines to a file via same-directory rename. The codec benchmark path reuses a
+encode/decode phase. `--progress-summary PATH` atomically writes the latest
+progress row to a file, which is useful for long runs where terminal output is
+transient. `--summary PATH` also writes the final stdout summary lines to a
+file via same-directory rename. The codec benchmark path reuses a
 streaming KV cache inside each
 fixed context window and only replays the configured overlap after window
 rollover; repeated forward calls also reuse `ForwardWorkspace` scratch buffers
@@ -117,7 +119,9 @@ round-trip byte equality. Prefix preflights can add `--estimate-full-run` to
 scale the measured token throughput to the full tokenized first-1MB prefix.
 `scripts/run-target-full-bench.sh` wraps the final target-model first-1MB
 measurement shape and writes both a combined progress log and a stable
-`bench-file` summary under `/tmp/detllm-target-bench` by default.
+`bench-file` summary under `/tmp/detllm-target-bench` by default. It also
+writes a `<name>.progress` file with the latest atomically replaced progress
+row while the benchmark is running.
 GitHub Actions also includes a `nightly-tinyllama` job that is skipped on
 ordinary push/PR runs and runs only on the scheduled workflow or when
 `workflow_dispatch` is started with `run_nightly_tinyllama=true`; it downloads

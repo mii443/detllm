@@ -8,7 +8,8 @@ usage: scripts/run-target-full-bench.sh --model PATH --input /tmp/enwik8 [--out 
 Runs a single target-model bench-file measurement with durable output files.
 By default this is the final enwik8 first-1MB acceptance shape: no token limit,
 round-trip verification, no warmup, phase output, progress output, and a
-bench-file summary written through xtask's --summary path.
+bench-file summary written through xtask's --summary path. A progress summary
+file is atomically updated while the benchmark is running.
 USAGE
 }
 
@@ -112,6 +113,7 @@ fi
 
 mkdir -p "$out_dir"
 summary_path="$out_dir/$name.summary"
+progress_summary_path="$out_dir/$name.progress"
 log_path="$out_dir/$name.log"
 
 cmd=(
@@ -125,6 +127,7 @@ cmd=(
   --show-phases
   --summary "$summary_path"
   --progress-every "$progress_every"
+  --progress-summary "$progress_summary_path"
 )
 
 if [[ -n "$limit_tokens" ]]; then
@@ -144,6 +147,7 @@ if [[ "$estimate_full_run" == "true" ]]; then
 fi
 
 echo "summary: $summary_path"
+echo "progress-summary: $progress_summary_path"
 echo "log: $log_path"
 printf 'command:'
 printf ' %q' "${cmd[@]}"

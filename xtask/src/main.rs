@@ -117,7 +117,7 @@ fn real_main() -> Result<(), String> {
         Some("check-ci-workflow") => check_ci_workflow(),
         Some("check-determinism") => check_determinism(),
         _ => Err(
-            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf [--metadata-prefix]|bench-file --model model.gguf --input file [--limit-bytes N] [--limit-tokens N] [--n-ctx N] [--iters N] [--threads N] [--progress-every N] [--summary PATH] [--no-warmup] [--encode-only] [--show-phases] [--estimate-full-run]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N] [--worst-rows N] [--top-diffs N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
+            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf [--metadata-prefix]|bench-file --model model.gguf --input file [--limit-bytes N] [--limit-tokens N] [--n-ctx N] [--iters N] [--threads N] [--progress-every N] [--progress-summary PATH] [--summary PATH] [--no-warmup] [--encode-only] [--show-phases] [--estimate-full-run]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N] [--worst-rows N] [--top-diffs N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
                 .to_owned(),
         ),
     }
@@ -329,11 +329,18 @@ struct BenchFileOpts {
     iters: usize,
     threads: Option<usize>,
     progress_every: Option<usize>,
+    progress_summary_path: Option<String>,
     summary_path: Option<String>,
     warmup: bool,
     encode_only: bool,
     show_phases: bool,
     estimate_full_run: bool,
+}
+
+#[derive(Debug, Default)]
+struct BenchFileProgress {
+    every: Option<usize>,
+    summary_path: Option<String>,
 }
 
 #[derive(Debug)]
@@ -927,6 +934,7 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
     let mut iters = 1usize;
     let mut threads = None;
     let mut progress_every = None;
+    let mut progress_summary_path = None;
     let mut summary_path = None;
     let mut warmup = true;
     let mut encode_only = false;
@@ -1020,6 +1028,16 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
                 }
                 summary_path = Some(raw.clone());
             }
+            "--progress-summary" => {
+                i += 1;
+                let raw = args
+                    .get(i)
+                    .ok_or("bench-file: missing value for --progress-summary")?;
+                if raw.is_empty() {
+                    return Err("bench-file: --progress-summary must not be empty".to_owned());
+                }
+                progress_summary_path = Some(raw.clone());
+            }
             "--no-warmup" => {
                 warmup = false;
             }
@@ -1048,6 +1066,7 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
         iters,
         threads,
         progress_every,
+        progress_summary_path,
         summary_path,
         warmup,
         encode_only,
@@ -1122,13 +1141,18 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
     validate_window(n_ctx, overlap, model.config.context_length)?;
 
     let phase_start = Instant::now();
+    let no_progress = BenchFileProgress::default();
+    let progress = BenchFileProgress {
+        every: opts.progress_every,
+        summary_path: opts.progress_summary_path.clone(),
+    };
     if opts.warmup {
         if opts.encode_only {
             let _payload =
-                encode_symbols_with_model_progress(&model, &symbols, n_ctx, overlap, None)?;
+                encode_symbols_with_model_progress(&model, &symbols, n_ctx, overlap, &no_progress)?;
         } else {
             let (_, restored) =
-                codec_round_trip(&model, &tokenizer, &symbols, n_ctx, overlap, None)?;
+                codec_round_trip(&model, &tokenizer, &symbols, n_ctx, overlap, &no_progress)?;
             if restored != input {
                 return Err("bench-file: warmup did not round-trip".to_owned());
             }
@@ -1140,23 +1164,12 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
     let mut payload_bytes = 0usize;
     for _ in 0..opts.iters {
         if opts.encode_only {
-            let payload = encode_symbols_with_model_progress(
-                &model,
-                &symbols,
-                n_ctx,
-                overlap,
-                opts.progress_every,
-            )?;
+            let payload =
+                encode_symbols_with_model_progress(&model, &symbols, n_ctx, overlap, &progress)?;
             payload_bytes += payload.len();
         } else {
-            let (payload, restored) = codec_round_trip(
-                &model,
-                &tokenizer,
-                &symbols,
-                n_ctx,
-                overlap,
-                opts.progress_every,
-            )?;
+            let (payload, restored) =
+                codec_round_trip(&model, &tokenizer, &symbols, n_ctx, overlap, &progress)?;
             if restored != input {
                 return Err("bench-file: benchmark iteration did not round-trip".to_owned());
             }
@@ -2541,17 +2554,16 @@ fn codec_round_trip(
     symbols: &[usize],
     n_ctx: usize,
     overlap: usize,
-    progress_every: Option<usize>,
+    progress: &BenchFileProgress,
 ) -> Result<(Vec<u8>, Vec<u8>), String> {
-    let payload =
-        encode_symbols_with_model_progress(model, symbols, n_ctx, overlap, progress_every)?;
+    let payload = encode_symbols_with_model_progress(model, symbols, n_ctx, overlap, progress)?;
     let decoded = decode_symbols_with_model_progress(
         model,
         &payload,
         symbols.len(),
         n_ctx,
         overlap,
-        progress_every,
+        progress,
     )?;
     let restored = detokenize_codec_symbols(tokenizer, &decoded, model.output.rows())
         .map_err(|e| format!("detokenize error: {e:?}"))?;
@@ -2651,7 +2663,7 @@ fn encode_tokens_with_model(
     n_ctx: usize,
     overlap: usize,
 ) -> Result<Vec<u8>, String> {
-    encode_symbols_with_model_progress(model, tokens, n_ctx, overlap, None)
+    encode_symbols_with_model_progress(model, tokens, n_ctx, overlap, &BenchFileProgress::default())
 }
 
 fn encode_symbols_with_model_progress(
@@ -2659,7 +2671,7 @@ fn encode_symbols_with_model_progress(
     symbols: &[usize],
     n_ctx: usize,
     overlap: usize,
-    progress_every: Option<usize>,
+    progress: &BenchFileProgress,
 ) -> Result<Vec<u8>, String> {
     validate_window(n_ctx, overlap, model.config.context_length)?;
     let mut enc = det_coder::RangeEncoder::new();
@@ -2676,7 +2688,7 @@ fn encode_symbols_with_model_progress(
             context_tokens.push(symbol);
             state.advance(symbol)?;
         }
-        report_bench_file_progress("encode", pos + 1, symbols.len(), progress_every, start);
+        report_bench_file_progress("encode", pos + 1, symbols.len(), progress, start)?;
     }
     Ok(enc.finish())
 }
@@ -2688,8 +2700,14 @@ fn decode_tokens_with_model(
     n_ctx: usize,
     overlap: usize,
 ) -> Result<Vec<usize>, String> {
-    let symbols =
-        decode_symbols_with_model_progress(model, payload, token_len, n_ctx, overlap, None)?;
+    let symbols = decode_symbols_with_model_progress(
+        model,
+        payload,
+        token_len,
+        n_ctx,
+        overlap,
+        &BenchFileProgress::default(),
+    )?;
     let vocab_len = model.output.rows();
     if let Some(&symbol) = symbols
         .iter()
@@ -2706,7 +2724,7 @@ fn decode_symbols_with_model_progress(
     symbol_len: usize,
     n_ctx: usize,
     overlap: usize,
-    progress_every: Option<usize>,
+    progress: &BenchFileProgress,
 ) -> Result<Vec<usize>, String> {
     validate_window(n_ctx, overlap, model.config.context_length)?;
     let mut dec =
@@ -2732,7 +2750,7 @@ fn decode_symbols_with_model_progress(
             context_tokens.push(symbol);
             state.advance(symbol)?;
         }
-        report_bench_file_progress("decode", pos + 1, symbol_len, progress_every, start);
+        report_bench_file_progress("decode", pos + 1, symbol_len, progress, start)?;
     }
     Ok(symbols)
 }
@@ -2741,37 +2759,48 @@ fn report_bench_file_progress(
     phase: &str,
     done: usize,
     total: usize,
-    progress_every: Option<usize>,
+    progress: &BenchFileProgress,
     start: Instant,
-) {
-    let Some(progress_every) = progress_every else {
-        return;
+) -> Result<(), String> {
+    let should_report = match progress.every {
+        Some(every) => done == total || done % every == 0,
+        None => done == total && progress.summary_path.is_some(),
     };
-    if done != total && done % progress_every != 0 {
-        return;
+    if !should_report {
+        return Ok(());
     }
     let elapsed = start.elapsed();
     let elapsed_s = elapsed.as_secs_f64();
+    let line = bench_file_progress_line(phase, done, total, elapsed_s);
+    if progress.every.is_some() {
+        eprintln!("{line}");
+    }
+    if let Some(path) = &progress.summary_path {
+        write_bench_file_summary(path, &[line])?;
+    }
+    Ok(())
+}
+
+fn bench_file_progress_line(phase: &str, done: usize, total: usize, elapsed_s: f64) -> String {
     let Some(estimate) = bench_file_progress_estimate(done, total, elapsed_s) else {
         let tokens_per_s = if elapsed_s.is_finite() && elapsed_s > 0.0 {
             done as f64 / elapsed_s
         } else {
             0.0
         };
-        eprintln!(
+        return format!(
             "bench-file-progress phase={phase} tokens_done={done} tokens_total={total} elapsed_ms={:.3} tokens_per_s={:.3}",
             elapsed_s * 1000.0,
             tokens_per_s
         );
-        return;
     };
-    eprintln!(
+    format!(
         "bench-file-progress phase={phase} tokens_done={done} tokens_total={total} elapsed_ms={:.3} tokens_per_s={:.3} remaining_s={:.3} estimated_total_s={:.3}",
         elapsed_s * 1000.0,
         estimate.tokens_per_s,
         estimate.remaining_s,
         estimate.estimated_total_s
-    );
+    )
 }
 
 #[derive(Debug)]
@@ -3546,6 +3575,8 @@ mod tests {
             "8".to_owned(),
             "--progress-every".to_owned(),
             "100".to_owned(),
+            "--progress-summary".to_owned(),
+            "/tmp/bench.progress".to_owned(),
             "--summary".to_owned(),
             "/tmp/bench.summary".to_owned(),
             "--no-warmup".to_owned(),
@@ -3562,6 +3593,10 @@ mod tests {
         assert_eq!(opts.iters, 2);
         assert_eq!(opts.threads, Some(8));
         assert_eq!(opts.progress_every, Some(100));
+        assert_eq!(
+            opts.progress_summary_path.as_deref(),
+            Some("/tmp/bench.progress")
+        );
         assert_eq!(opts.summary_path.as_deref(), Some("/tmp/bench.summary"));
         assert!(!opts.warmup);
         assert!(opts.encode_only);
@@ -3620,6 +3655,16 @@ mod tests {
             "model.gguf".to_owned(),
             "--input".to_owned(),
             "enwik8".to_owned(),
+            "--progress-summary".to_owned(),
+        ])
+        .expect_err("progress summary missing value must be rejected");
+        assert_eq!(err, "bench-file: missing value for --progress-summary");
+
+        let err = parse_bench_file_opts(vec![
+            "--model".to_owned(),
+            "model.gguf".to_owned(),
+            "--input".to_owned(),
+            "enwik8".to_owned(),
             "--summary".to_owned(),
         ])
         .expect_err("summary missing value must be rejected");
@@ -3656,6 +3701,28 @@ mod tests {
         assert!(bench_file_progress_estimate(101, 100, 5.0).is_none());
         assert!(bench_file_progress_estimate(25, 100, 0.0).is_none());
         assert!(bench_file_progress_estimate(25, 100, f64::INFINITY).is_none());
+    }
+
+    #[test]
+    fn bench_file_progress_summary_writer_replaces_file() {
+        let dir = unique_tmp_dir();
+        fs::create_dir_all(&dir).expect("mkdir");
+        let path = dir.join("bench.progress");
+        fs::write(&path, "old\n").expect("old progress");
+
+        let progress = BenchFileProgress {
+            every: None,
+            summary_path: Some(path.to_str().expect("utf8 path").to_owned()),
+        };
+        report_bench_file_progress("encode", 10, 10, &progress, Instant::now())
+            .expect("write progress");
+
+        let body = fs::read_to_string(&path).expect("progress");
+        assert!(body.contains("bench-file-progress phase=encode"));
+        assert!(body.contains("tokens_done=10"));
+        assert!(body.contains("tokens_total=10"));
+        assert!(!body.contains("old"));
+        fs::remove_dir_all(dir).expect("cleanup");
     }
 
     #[test]

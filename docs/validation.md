@@ -1122,7 +1122,7 @@ Command:
 ```sh
 cargo run --release -p xtask -- bench-file --model testdata/tiny-f32.gguf --input testdata/tiny.tokens.txt --n-ctx 8 --iters 1
 cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 4096 --limit-tokens 512 --n-ctx 2048 --threads 8 --iters 1 --no-warmup
-cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --threads 8 --iters 1 --no-warmup --encode-only --show-phases --summary bench-file.summary --progress-every 100
+cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --threads 8 --iters 1 --no-warmup --encode-only --show-phases --summary bench-file.summary --progress-every 100 --progress-summary bench-file.progress
 ```
 
 Build `xtask` with `--features parallel,simd` for target-model benchmark
@@ -1137,6 +1137,9 @@ Long target-model compression-rate preflights can use `--encode-only` after a
 separate round-trip smoke has established codec correctness. This mode measures
 payload generation and compression ratio without paying for the mirrored decode
 pass. The default remains `mode=round-trip` and verifies decoded bytes.
+`--progress-summary PATH` atomically writes the latest `bench-file-progress`
+line to a file while the run is still active. This is separate from
+`--summary PATH`, which is written only after the measured loop finishes.
 When a token-prefix preflight uses `--limit-tokens`, `--estimate-full-run`
 adds a `bench-file-estimate` line that scales measured token throughput to the
 full tokenized input prefix. This is an ETA and planning aid, not acceptance
@@ -1451,7 +1454,8 @@ The wrapper keeps the acceptance defaults explicit: `--limit-bytes 1048576`,
 no `--limit-tokens`, round-trip mode, `--no-warmup`, `--show-phases`,
 `--threads 8`, `--n-ctx 2048`, and `--progress-every 1000`. It records the
 combined progress log and the stable `bench-file --summary` output in
-`/tmp/detllm-target-bench` unless `--out DIR` is provided. Use
+`/tmp/detllm-target-bench` unless `--out DIR` is provided, and it keeps a
+`<name>.progress` file updated with the latest progress row. Use
 `--limit-tokens N --encode-only --estimate-full-run` with the same wrapper only
 for preflight estimates; omit those flags for the acceptance measurement.
 `--estimate-full-run` adds an opt-in `bench-file-estimate` line for
