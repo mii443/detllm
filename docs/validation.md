@@ -1083,12 +1083,14 @@ one-iteration and total token counts, payload-only bpb, DTLZ bpb, compression
 ratio, elapsed time, bytes/s, tokens/s, whether a pre-measurement warmup
 round-trip was run, and the thread override used for model kernels.
 `--limit-bytes N` truncates the input to at most the first `N` bytes before
-tokenization, so the enwik8 first-1MB measurement can use
-`--limit-bytes 1048576` without creating a separate file. `--limit-tokens N`
-then truncates the tokenized stream and detokenizes that prefix back to bytes
-before measurement; this gives a reproducible target-model prefix smoke path
-for long runs while keeping the reported byte counts and SHA-256 tied to the
-actual bytes round-tripped. Tokenization still happens before token truncation.
+tokenization, and the harness reads only that prefix while retaining the full
+source file size in `source_input_bytes`. The enwik8 first-1MB measurement can
+therefore use `--limit-bytes 1048576` without creating a separate file or
+reading all 100MB into memory. `--limit-tokens N` then truncates the tokenized
+stream and detokenizes that prefix back to bytes before measurement; this gives
+a reproducible target-model prefix smoke path for long runs while keeping the
+reported byte counts and SHA-256 tied to the actual bytes round-tripped.
+Tokenization still happens before token truncation.
 The ByteBPE path uses a priority-queue merge implementation, so 1MB byte caps
 are usable for Qwen2.5 prefix preflights; use smaller `--limit-bytes` values
 only when an even faster smoke is needed. Omit `--limit-tokens` for the final

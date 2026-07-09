@@ -3,6 +3,7 @@ use std::{
     env,
     fmt::Write as _,
     fs,
+    io::Read as _,
     path::{Path, PathBuf},
     time::Instant,
 };
@@ -1028,6 +1029,25 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
     })
 }
 
+fn input_file_len(path: &str) -> Result<usize, String> {
+    let len = fs::metadata(path)
+        .map_err(|e| format!("{path}: {e}"))?
+        .len();
+    usize::try_from(len).map_err(|_| format!("{path}: input file is too large for this platform"))
+}
+
+fn read_limited_input(path: &str, limit_bytes: Option<usize>) -> Result<Vec<u8>, String> {
+    let Some(limit_bytes) = limit_bytes else {
+        return fs::read(path).map_err(|e| format!("{path}: {e}"));
+    };
+    let file = fs::File::open(path).map_err(|e| format!("{path}: {e}"))?;
+    let mut input = Vec::new();
+    file.take(limit_bytes as u64)
+        .read_to_end(&mut input)
+        .map_err(|e| format!("{path}: {e}"))?;
+    Ok(input)
+}
+
 fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
     let total_start = Instant::now();
     det_model::set_thread_count(opts.threads)
@@ -1050,12 +1070,9 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
         .map_err(|e| format!("{}: tokenizer error: {e}", opts.model))?;
     let tokenizer_setup_ms = phase_start.elapsed().as_secs_f64() * 1000.0;
     let phase_start = Instant::now();
-    let mut input = fs::read(&opts.input).map_err(|e| format!("{}: {e}", opts.input))?;
+    let source_input_bytes = input_file_len(&opts.input)?;
+    let mut input = read_limited_input(&opts.input, opts.limit_bytes)?;
     let input_read_ms = phase_start.elapsed().as_secs_f64() * 1000.0;
-    let source_input_bytes = input.len();
-    if let Some(limit_bytes) = opts.limit_bytes {
-        input.truncate(limit_bytes);
-    }
     let phase_start = Instant::now();
     let mut token_ids: Vec<usize> = tokenizer
         .tokenize_bytes(&input)
@@ -3094,6 +3111,31 @@ mod tests {
             err,
             "bench-file: --progress-every must be greater than zero"
         );
+    }
+
+    #[test]
+    fn bench_file_limited_input_reads_prefix_only() {
+        let dir = unique_tmp_dir();
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let path = dir.join("input.bin");
+        fs::write(&path, b"abcdef").expect("write input");
+        let path_str = path.to_str().expect("utf8 path");
+
+        assert_eq!(input_file_len(path_str).expect("input len"), 6);
+        assert_eq!(
+            read_limited_input(path_str, Some(3)).expect("limited input"),
+            b"abc"
+        );
+        assert_eq!(
+            read_limited_input(path_str, Some(99)).expect("oversized limit"),
+            b"abcdef"
+        );
+        assert_eq!(
+            read_limited_input(path_str, None).expect("full input"),
+            b"abcdef"
+        );
+
+        fs::remove_dir_all(dir).expect("remove temp dir");
     }
 
     #[test]
