@@ -286,7 +286,10 @@ settings per model:
 Target-model codec determinism smoke, using
 `scripts/run-target-codec-determinism-matrix.sh`, checks DTLZ payload hashes for
 the byte-escape `binary-mixed` input and the `context-spanning` input with
-`threads=1,2,7,16`. Every output also decompresses back to the original bytes:
+both the default scalar build and a `parallel,simd` build, using
+`threads=1,2,7,16`. All hashes matched bit-for-bit across all 8 settings per
+model/input pair, and every output also decompressed back to the original
+bytes:
 
 | check | binary-mixed DTLZ SHA-256 | context-spanning DTLZ SHA-256 |
 |---|---|---|

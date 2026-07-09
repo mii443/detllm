@@ -1047,16 +1047,23 @@ stress tests, but this matrix is the acceptance smoke for each target model.
 ### Target-Model Codec Determinism Matrix
 
 The target-model codec determinism matrix checks that public `compress` output
-is bit-identical across thread-count settings. It uses the byte-escape
-`binary-mixed` input and the `context-spanning` input from the round-trip
-matrix, with `--n-ctx 8` and `threads=1,2,7,16`. Every DTLZ file is
-decompressed and compared with the original input before the matrix accepts
-the row. This matches the thread-count set from `detllm-design.md` §9.2.
+is bit-identical across thread-count settings and binary builds. It uses the
+byte-escape `binary-mixed` input and the `context-spanning` input from the
+round-trip matrix, with `--n-ctx 8`, both the default scalar build and a
+`parallel,simd` build, and `threads=1,2,7,16`. Every DTLZ file is decompressed
+and compared with the original input before the matrix accepts the row. This
+matches the thread-count and backend build set from `detllm-design.md` §9.2.
 
 Command:
 
 ```sh
+cargo build --release -p det-cli
+cp target/release/detllm /tmp/detllm-scalar
+cargo build --release -p det-cli --features parallel,simd
+cp target/release/detllm /tmp/detllm-parallel-simd
 scripts/run-target-codec-determinism-matrix.sh \
+  --bin /tmp/detllm-scalar \
+  --extra-bin parallel-simd=/tmp/detllm-parallel-simd \
   --tinyllama-q8 /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf \
   --tinyllama-q4 /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf \
   --qwen25-q8 /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf \
@@ -1072,20 +1079,22 @@ Observed inputs:
 
 Observed output summary:
 
-| model | input | invariant thread settings | DTLZ bytes | DTLZ SHA-256 |
+| model | input | invariant settings | DTLZ bytes | DTLZ SHA-256 |
 |---|---|---:|---:|---|
-| TinyLlama Q8_0 | binary-mixed | 4 | 86 | `0c8551a3afa977fe51e802bc5a4810925b2707e720ed74e5cf9057f07c421092` |
-| TinyLlama Q8_0 | context-spanning | 4 | 73 | `d0a0b9cb671df18d6188c5bb53487a085e65869ceee07f94fe5a768a123337ee` |
-| TinyLlama Q4_0 | binary-mixed | 4 | 85 | `d2f89b70a1681bd5aaf28309e1bbc3d1f109c8ebba2c432875b7ef1b19229516` |
-| TinyLlama Q4_0 | context-spanning | 4 | 73 | `e79297e6e0da6e4449833057d0aaf6a6bb2b6cefe8764bc02bccb39f613f8395` |
-| Qwen2.5 Q8_0 | binary-mixed | 4 | 85 | `ea719f3444398e1e1352aee5a4ac6690ae40ce106dc1990a4a3c60a3cbe7a72c` |
-| Qwen2.5 Q8_0 | context-spanning | 4 | 69 | `7047a35e2c976cb35333e2ccc653552f94a58e77d1a884719a703d6f8b2b1fa5` |
-| SmolLM2 Q8_0 | binary-mixed | 4 | 87 | `2ac0d09372c2f16a57209a5e5bc585c8fb47913ff2bcb77588561101a61be4a4` |
-| SmolLM2 Q8_0 | context-spanning | 4 | 70 | `960025e02a6baa87218018b877266628e37800585e5839a72d7fde6671f0d1c0` |
+| TinyLlama Q8_0 | binary-mixed | 8 | 86 | `0c8551a3afa977fe51e802bc5a4810925b2707e720ed74e5cf9057f07c421092` |
+| TinyLlama Q8_0 | context-spanning | 8 | 73 | `d0a0b9cb671df18d6188c5bb53487a085e65869ceee07f94fe5a768a123337ee` |
+| TinyLlama Q4_0 | binary-mixed | 8 | 85 | `d2f89b70a1681bd5aaf28309e1bbc3d1f109c8ebba2c432875b7ef1b19229516` |
+| TinyLlama Q4_0 | context-spanning | 8 | 73 | `e79297e6e0da6e4449833057d0aaf6a6bb2b6cefe8764bc02bccb39f613f8395` |
+| Qwen2.5 Q8_0 | binary-mixed | 8 | 85 | `ea719f3444398e1e1352aee5a4ac6690ae40ce106dc1990a4a3c60a3cbe7a72c` |
+| Qwen2.5 Q8_0 | context-spanning | 8 | 69 | `7047a35e2c976cb35333e2ccc653552f94a58e77d1a884719a703d6f8b2b1fa5` |
+| SmolLM2 Q8_0 | binary-mixed | 8 | 87 | `2ac0d09372c2f16a57209a5e5bc585c8fb47913ff2bcb77588561101a61be4a4` |
+| SmolLM2 Q8_0 | context-spanning | 8 | 70 | `960025e02a6baa87218018b877266628e37800585e5839a72d7fde6671f0d1c0` |
 
 This reuses the DTLZ hashes from the target round-trip matrix and proves that
-the current target-model codec path emits the same payload with
-`threads=1,2,7,16` for byte-escape and context-rollover cases.
+the current target-model codec path emits the same payload across
+`2 binary builds * 4 thread counts` for byte-escape and context-rollover
+cases. This broadens the target-model codec evidence for M5, M6, and M8, but
+it is still not the final M4 full first-1MB target-model compression-rate run.
 
 ### Target-Model Determinism Matrix
 
