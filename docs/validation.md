@@ -537,6 +537,22 @@ tokens=1,2,3 chunk-size=1 hash = c4dfabb1dfbafb4dca04a24f63ee4e7f3be1f39e98c0c46
 tokens=1,2,3 chunk-size=3 hash = c4dfabb1dfbafb4dca04a24f63ee4e7f3be1f39e98c0c46bbe68d02c2ee173ca
 ```
 
+Q4_0 raw logits llama.cpp reference:
+
+```sh
+cargo run --release -p det-cli -- logits -m /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf --tokens 1,2,3 --dump /tmp/detllm-tinyllama-q4-123.rawlogits.bin --hash --threads 8
+/tmp/reference_logits_llamacpp --model /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf --tokens 1,2,3 --out /tmp/llamacpp-tinyllama-q4-123.rawlogits.bin --threads 8 --ctx-size 16 --batch-size 16 --expected-vocab 32000 --expected-rows 3 --quiet
+cargo run -p xtask -- compare-logits --actual /tmp/detllm-tinyllama-q4-123.rawlogits.bin --reference /tmp/llamacpp-tinyllama-q4-123.rawlogits.bin --row-size 32000 --rows 3 --min-cosine 0.999
+```
+
+Observed output:
+
+```text
+c4dfabb1dfbafb4dca04a24f63ee4e7f3be1f39e98c0c46bbe68d02c2ee173ca
+reference_logits_llamacpp rows=3 vocab=32000 values=96000
+compare-logits values=96000 cosine=0.999642502 max_abs_diff=0.399452567 rms_diff=0.064845670 rows=3 row_size=32000 min_row_cosine=0.999283806
+```
+
 Observed Unsloth Q8_0 intake result:
 
 ```text
