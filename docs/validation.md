@@ -389,9 +389,12 @@ cargo run -p xtask -- check-determinism
 The check scans implementation and CI files for `detllm-design.md` banned
 constructs such as platform transcendental calls, `mul_add`, randomized
 `HashMap`/`HashSet` usage, wasm `relaxed-simd`, and obvious parallel reduction
-patterns. It intentionally excludes prose docs and the design file itself to
-avoid flagging normative descriptions. The GitHub Actions `hygiene` job runs
-this check after stale-testdata validation.
+patterns. It covers both associated-function spellings such as `f64::exp` and
+method-call spellings such as `x.exp()`, so validation helpers cannot
+accidentally reintroduce platform libm through Rust's primitive float methods.
+It intentionally excludes prose docs and the design file itself to avoid
+flagging normative descriptions. The GitHub Actions `hygiene` job runs this
+check after stale-testdata validation.
 For `Cargo.toml` files, the same check also enforces dependency hygiene: path
 dependencies are accepted, while external dependencies must use exact
 `=x.y.z` versions. This keeps future third-party additions aligned with the

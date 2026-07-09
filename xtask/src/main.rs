@@ -29,6 +29,12 @@ const DETERMINISM_BANNED_PATTERNS: &[(&str, &str)] = &[
         "f32::tanh",
         "platform transcendental functions are forbidden",
     ), // determinism-allow
+    (".exp(", "use det_num deterministic exp routines"),           // determinism-allow
+    (".sin(", "use vendored deterministic libm routines"),         // determinism-allow
+    (".cos(", "use vendored deterministic libm routines"),         // determinism-allow
+    (".ln(", "use det_num deterministic ln routines"),             // determinism-allow
+    (".powf(", "platform transcendental functions are forbidden"), // determinism-allow
+    (".tanh(", "platform transcendental functions are forbidden"), // determinism-allow
     ("f64::exp", "use vendored deterministic libm routines"),      // determinism-allow
     ("f64::sin", "use vendored deterministic libm routines"),      // determinism-allow
     ("f64::cos", "use vendored deterministic libm routines"),      // determinism-allow
@@ -2511,12 +2517,12 @@ fn logits_to_log_probs(logits: &[f32]) -> Result<Vec<f32>, String> {
     }
     let mut sum_exp = 0.0f64;
     for &logit in logits {
-        sum_exp += (logit as f64 - max_logit).exp();
+        sum_exp += det_num::exp_f64(logit as f64 - max_logit);
     }
     if sum_exp == 0.0 || !sum_exp.is_finite() {
         return Err("compare-llamacpp-logprobs: invalid softmax denominator".to_owned());
     }
-    let log_sum_exp = sum_exp.ln();
+    let log_sum_exp = det_num::ln_f64(sum_exp);
     Ok(logits
         .iter()
         .map(|&logit| (logit as f64 - max_logit - log_sum_exp) as f32)
@@ -3940,11 +3946,16 @@ mod tests {
     fn determinism_scan_reports_banned_patterns_and_allows_marked_lines() {
         let mut violations = Vec::new();
         let banned = concat!("f32::", "exp");
-        let text = format!("let _ = {banned}(1.0);\nlet _ = {banned}(1.0); // determinism-allow\n");
+        let method_banned = concat!(".", "exp(");
+        let text = format!(
+            "let _ = {banned}(1.0);\nlet _ = {banned}(1.0); // determinism-allow\nlet _ = x{method_banned});\n"
+        );
         scan_determinism_text(Path::new("sample.rs"), &text, &mut violations);
-        assert_eq!(violations.len(), 1);
+        assert_eq!(violations.len(), 2);
         assert!(violations[0].contains("sample.rs:1"));
         assert!(violations[0].contains(banned));
+        assert!(violations[1].contains("sample.rs:3"));
+        assert!(violations[1].contains(method_banned));
     }
 
     #[test]
