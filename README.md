@@ -154,6 +154,16 @@ the same `bench-testdata` fixture benchmark on hosted `x86_64-linux`,
 `aarch64-linux`, and `aarch64-macos` runners without adding benchmark timing
 noise to normal CI.
 
+Manual hosted snapshot, run
+<https://github.com/mii443/detllm/actions/runs/29050786923> on commit
+`e6136d8c9c392f84d46b53d56310399cdf15c205`, rustc `1.97.0`, `iters=100`:
+
+| target | `tiny-f32` logits | `tiny-qmix` logits | `tiny-f32` codec | `tiny-qmix` codec |
+|---|---:|---:|---:|---:|
+| `x86_64-linux` | 82646 tokens/s | 80591 tokens/s | 55869 input bytes/s | 55616 input bytes/s |
+| `aarch64-linux` | 119452 tokens/s | 101792 tokens/s | 75762 input bytes/s | 67332 input bytes/s |
+| `aarch64-macos` | 132672 tokens/s | 105610 tokens/s | 167062 input bytes/s | 90900 input bytes/s |
+
 Target-model prefix smoke on the same host, using
 `scripts/run-target-bench-smoke.sh` with enwik8 first-1MB tokenization,
 `--limit-tokens 64`, `--encode-only`, `--threads 8`, and `--n-ctx 128`:
@@ -268,6 +278,6 @@ the following acceptance evidence is still missing:
   pending.
 - Target-model enwik8 first-1MB compression-rate measurement with
   `xtask bench-file`; the bundled tiny fixture has input-scale enwik8 evidence.
-- Broader benchmark results on real target hardware beyond the current bundled
-  fixture `xtask bench-testdata` snapshot and the current 64-token target-model
-  enwik8 prefix smoke matrix.
+- Broader benchmark results on real target-model hardware beyond the current
+  bundled fixture `xtask bench-testdata` local/hosted snapshots and the current
+  64-token target-model enwik8 prefix smoke matrix.

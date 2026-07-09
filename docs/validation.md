@@ -1502,8 +1502,8 @@ codec tiny-qmix: input_bytes=3900 payload_bytes=4600 elapsed_ms=75.818 input_byt
 `bench-testdata` verifies that the fixture logits hash does not change during
 the measured loop, and each codec benchmark decodes the measured payload and
 checks byte equality. This is an equivalent harness result for the bundled
-fixtures only; target-model and broader hardware benchmark results remain
-separate acceptance evidence.
+fixtures only; target-model benchmark results remain separate acceptance
+evidence.
 
 The manual GitHub Actions `benchmarks.yml` workflow collects the same
 `bench-testdata` fixture benchmark on hosted `x86_64-linux`, `aarch64-linux`,
@@ -1516,6 +1516,29 @@ gh workflow run benchmarks.yml --repo mii443/detllm --ref main -f iters=100
 
 Each matrix job writes runner OS/architecture, `uname -a`, `rustc --version`,
 the exact command, and the benchmark output to a `bench-testdata-*` artifact.
+
+Completed GitHub Actions benchmark evidence:
+
+- Repository: `mii443/detllm`
+- Commit: `e6136d8c9c392f84d46b53d56310399cdf15c205`
+  (`Add manual benchmark workflow`)
+- Run: <https://github.com/mii443/detllm/actions/runs/29050786923>
+- Result: passed
+- Command: `cargo run --release -p xtask -- bench-testdata --iters 100`
+- rustc: `rustc 1.97.0 (2d8144b78 2026-07-07)`
+
+Observed hosted matrix output:
+
+| target | runner | kernel | `tiny-f32` logits | `tiny-qmix` logits | `tiny-f32` codec | `tiny-qmix` codec |
+|---|---|---|---:|---:|---:|---:|
+| `x86_64-linux` | Linux X64 | Linux 6.17.0-1018-azure | 82645.971 tokens/s | 80591.466 tokens/s | 55868.648 input bytes/s | 55616.437 input bytes/s |
+| `aarch64-linux` | Linux ARM64 | Linux 6.17.0-1018-azure | 119452.311 tokens/s | 101791.963 tokens/s | 75761.730 input bytes/s | 67332.095 input bytes/s |
+| `aarch64-macos` | macOS ARM64 | Darwin 23.6.0 | 132672.418 tokens/s | 105609.799 tokens/s | 167062.304 input bytes/s | 90900.173 input bytes/s |
+
+All three artifacts reported the same fixture hashes:
+
+- `tiny-f32`: `92a0280149c6b1505c84dce0d19486a2093f93b7978b579c220000d12e4ef7e7`
+- `tiny-qmix`: `8a34d3c4a05e9a30b90aadcdca7b6bac91655e6ab67980ccdb6726565d35f3e4`
 
 ## Logits Cosine Compare Harness
 
