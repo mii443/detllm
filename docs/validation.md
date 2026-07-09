@@ -1011,13 +1011,13 @@ cargo run --release -p xtask --features parallel,simd -- bench-file --model /tmp
 ```
 
 ```text
-bench-file-progress phase=encode tokens_done=8 tokens_total=16 elapsed_ms=1565.472 tokens_per_s=5.110
-bench-file-progress phase=encode tokens_done=16 tokens_total=16 elapsed_ms=3277.147 tokens_per_s=4.882
-bench-file-progress phase=decode tokens_done=8 tokens_total=16 elapsed_ms=1683.305 tokens_per_s=4.753
-bench-file-progress phase=decode tokens_done=16 tokens_total=16 elapsed_ms=3246.662 tokens_per_s=4.928
+bench-file-progress phase=encode tokens_done=8 tokens_total=16 elapsed_ms=1030.885 tokens_per_s=7.760
+bench-file-progress phase=encode tokens_done=16 tokens_total=16 elapsed_ms=2048.368 tokens_per_s=7.811
+bench-file-progress phase=decode tokens_done=8 tokens_total=16 elapsed_ms=1011.406 tokens_per_s=7.910
+bench-file-progress phase=decode tokens_done=16 tokens_total=16 elapsed_ms=2027.190 tokens_per_s=7.893
 bench-file model=/tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=16 iters=1 warmup=false threads=8 n_ctx=64 overlap=16 model_sha256=d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8 input_sha256=4fe5a21798e43c8258edcf9f3a98fac2df77613b4d2add15a2a3082eedc7b0b2
-bench-file: source_input_bytes=100000000 measured_input_bytes=53 total_input_bytes=53 tokens=16 total_tokens=16 payload_bytes=14 dtlz_bytes=70 payload_bits_per_byte=2.113208 dtlz_bits_per_byte=10.566038 compression_ratio=1.320755 elapsed_ms=6641.245 input_bytes_per_s=7.980 tokens_per_s=2.409
-bench-file-phases: model_read_ms=2771.227 gguf_parse_ms=23.169 model_load_ms=2047.008 tokenizer_setup_ms=302.822 input_read_ms=194.561 tokenize_ms=935.297 token_prefix_ms=9.275 warmup_ms=0.000 measured_ms=6641.245 total_ms=18403.474
+bench-file: source_input_bytes=100000000 measured_input_bytes=53 total_input_bytes=53 tokens=16 total_tokens=16 payload_bytes=14 dtlz_bytes=70 payload_bits_per_byte=2.113208 dtlz_bits_per_byte=10.566038 compression_ratio=1.320755 elapsed_ms=4192.280 input_bytes_per_s=12.642 tokens_per_s=3.817
+bench-file-phases: model_read_ms=1975.629 gguf_parse_ms=23.768 model_load_ms=1947.239 tokenizer_setup_ms=252.702 input_read_ms=109.353 tokenize_ms=932.701 token_prefix_ms=9.603 warmup_ms=0.001 measured_ms=4192.280 total_ms=15103.638
 ```
 
 This is input-scale and round-trip evidence for the `bench-file`
@@ -1057,10 +1057,12 @@ and total wall time. `--progress-every N` emits `bench-file-progress` lines on
 stderr every N encode/decode tokens and at phase completion; the stdout summary
 lines remain stable for copying into this file. The Qwen2.5 prefix run above
 shows 1MB ByteBPE tokenization is below one second; after streaming KV-cache
-reuse, the 16-token measured encode/decode loop is roughly 6.2 seconds. The
-model forward path also reuses `ForwardWorkspace` scratch buffers across
-tokens, avoiding per-token allocation of the large hidden-state, projection,
-attention, and feed-forward vectors, and attention reads KV-cache prefix slices
+reuse and validated-model hot-path checks, the 16-token measured encode/decode
+loop is roughly 4.2 seconds. The model forward path also reuses
+`ForwardWorkspace` scratch buffers across tokens, avoiding per-token allocation
+of the large hidden-state, projection, attention, and feed-forward vectors, and
+uses layout checks for already-loaded models instead of re-scanning all weight
+tensors on every token and GEMV. Attention reads KV-cache prefix slices
 directly instead of copying per-head key/value windows. The codec CDF path also
 reuses the exp, frequency, and cumulative buffers across tokens; tests verify
 the scratch API is bit-for-bit equivalent to the owned `logits_to_cdf` API and

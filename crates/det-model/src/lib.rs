@@ -187,11 +187,16 @@ impl F32Matrix {
         Ok(matrix)
     }
 
-    fn validate(&self) -> Result<(), ModelError> {
+    fn validate_shape(&self) -> Result<(), ModelError> {
         if self.rows == 0 || self.cols == 0 || checked_len(self.rows, self.cols)? != self.data.len()
         {
             return Err(ModelError::Shape);
         }
+        Ok(())
+    }
+
+    fn validate(&self) -> Result<(), ModelError> {
+        self.validate_shape()?;
         ensure_finite_slice(&self.data)
     }
 
@@ -207,6 +212,11 @@ impl F32Matrix {
 
     pub fn gemv(&self, x: &[f32], out: &mut [f32]) -> Result<(), ModelError> {
         self.validate()?;
+        self.gemv_validated(x, out)
+    }
+
+    fn gemv_validated(&self, x: &[f32], out: &mut [f32]) -> Result<(), ModelError> {
+        self.validate_shape()?;
         if x.len() != self.cols || out.len() != self.rows {
             return Err(ModelError::Shape);
         }
@@ -356,22 +366,14 @@ impl WeightMatrix {
         }
     }
 
-    fn validate(&self) -> Result<(), ModelError> {
+    fn validate_shape(&self) -> Result<(), ModelError> {
         match self {
-            Self::F32(m) => m.validate(),
+            Self::F32(m) => m.validate_shape(),
             Self::Q8_0(m) => {
-                validate_quant_matrix_shape(m.rows, m.cols, m.blocks_per_row, m.blocks.len())?;
-                if m.blocks.iter().any(|block| !block.d.is_finite()) {
-                    return Err(ModelError::NonFinite);
-                }
-                Ok(())
+                validate_quant_matrix_shape(m.rows, m.cols, m.blocks_per_row, m.blocks.len())
             }
             Self::Q4_0(m) => {
-                validate_quant_matrix_shape(m.rows, m.cols, m.blocks_per_row, m.blocks.len())?;
-                if m.blocks.iter().any(|block| !block.d.is_finite()) {
-                    return Err(ModelError::NonFinite);
-                }
-                Ok(())
+                validate_quant_matrix_shape(m.rows, m.cols, m.blocks_per_row, m.blocks.len())
             }
             Self::Q4K(m) => {
                 validate_quant_matrix_shape_with_block(
@@ -381,12 +383,6 @@ impl WeightMatrix {
                     m.blocks.len(),
                     Q4K_BLOCK,
                 )?;
-                if m.blocks
-                    .iter()
-                    .any(|block| !block.d.is_finite() || !block.dmin.is_finite())
-                {
-                    return Err(ModelError::NonFinite);
-                }
                 Ok(())
             }
             Self::Q6K(m) => {
@@ -397,6 +393,37 @@ impl WeightMatrix {
                     m.blocks.len(),
                     Q6K_BLOCK,
                 )?;
+                Ok(())
+            }
+        }
+    }
+
+    fn validate(&self) -> Result<(), ModelError> {
+        self.validate_shape()?;
+        match self {
+            Self::F32(m) => ensure_finite_slice(&m.data),
+            Self::Q8_0(m) => {
+                if m.blocks.iter().any(|block| !block.d.is_finite()) {
+                    return Err(ModelError::NonFinite);
+                }
+                Ok(())
+            }
+            Self::Q4_0(m) => {
+                if m.blocks.iter().any(|block| !block.d.is_finite()) {
+                    return Err(ModelError::NonFinite);
+                }
+                Ok(())
+            }
+            Self::Q4K(m) => {
+                if m.blocks
+                    .iter()
+                    .any(|block| !block.d.is_finite() || !block.dmin.is_finite())
+                {
+                    return Err(ModelError::NonFinite);
+                }
+                Ok(())
+            }
+            Self::Q6K(m) => {
                 if m.blocks.iter().any(|block| !block.d.is_finite()) {
                     return Err(ModelError::NonFinite);
                 }
@@ -407,12 +434,17 @@ impl WeightMatrix {
 
     pub fn gemv(&self, x: &[f32], out: &mut [f32]) -> Result<(), ModelError> {
         self.validate()?;
+        self.gemv_validated(x, out)
+    }
+
+    fn gemv_validated(&self, x: &[f32], out: &mut [f32]) -> Result<(), ModelError> {
+        self.validate_shape()?;
         if x.len() != self.cols() || out.len() != self.rows() {
             return Err(ModelError::Shape);
         }
         ensure_finite_slice(x)?;
         match self {
-            Self::F32(m) => m.gemv(x, out),
+            Self::F32(m) => m.gemv_validated(x, out),
             Self::Q8_0(m) => {
                 let qx = quantize_q8a(x).map_err(map_quant_error)?;
                 gemv_rows(m.rows, out, |r| {
@@ -461,12 +493,13 @@ impl WeightMatrix {
         qx: Option<&[Q8ABlock]>,
         out: &mut [f32],
     ) -> Result<(), ModelError> {
+        self.validate_shape()?;
         if x.len() != self.cols() || out.len() != self.rows() {
             return Err(ModelError::Shape);
         }
         ensure_finite_slice(x)?;
         match self {
-            Self::F32(m) => m.gemv(x, out),
+            Self::F32(m) => m.gemv_validated(x, out),
             Self::Q8_0(m) => {
                 let qx = qx.ok_or(ModelError::Shape)?;
                 if qx.len() != m.blocks_per_row {
@@ -520,18 +553,21 @@ impl WeightMatrix {
             return Err(ModelError::Shape);
         }
         let mut out = vec![0.0; self.cols()];
-        self.write_row(row, &mut out)?;
+        self.write_row_validated(row, &mut out)?;
         Ok(out)
     }
 
-    fn write_row(&self, row: usize, out: &mut [f32]) -> Result<(), ModelError> {
-        self.validate()?;
+    fn write_row_validated(&self, row: usize, out: &mut [f32]) -> Result<(), ModelError> {
+        self.validate_shape()?;
         if row >= self.rows() || out.len() != self.cols() {
             return Err(ModelError::Shape);
         }
         match self {
             Self::F32(m) => {
-                out.copy_from_slice(m.row(row)?);
+                m.validate_shape()?;
+                let start = row.checked_mul(m.cols).ok_or(ModelError::Shape)?;
+                let end = start.checked_add(m.cols).ok_or(ModelError::Shape)?;
+                out.copy_from_slice(m.data.get(start..end).ok_or(ModelError::Shape)?);
                 Ok(())
             }
             Self::Q8_0(m) => {
@@ -993,6 +1029,34 @@ impl F32Llama {
     }
 
     pub fn validate(&self) -> Result<(), ModelError> {
+        self.validate_layout()?;
+        self.token_embedding.validate()?;
+        self.output.validate()?;
+        ensure_finite_slice(&self.output_norm)?;
+        for layer in &self.layers {
+            ensure_finite_slice(&layer.attention_norm)?;
+            ensure_finite_slice(&layer.ffn_norm)?;
+            if let Some(bias) = &layer.attn_q_bias {
+                ensure_finite_slice(bias)?;
+            }
+            if let Some(bias) = &layer.attn_k_bias {
+                ensure_finite_slice(bias)?;
+            }
+            if let Some(bias) = &layer.attn_v_bias {
+                ensure_finite_slice(bias)?;
+            }
+            layer.wq.validate()?;
+            layer.wk.validate()?;
+            layer.wv.validate()?;
+            layer.wo.validate()?;
+            layer.w_gate.validate()?;
+            layer.w_up.validate()?;
+            layer.w_down.validate()?;
+        }
+        Ok(())
+    }
+
+    fn validate_layout(&self) -> Result<(), ModelError> {
         self.config.validate()?;
         let d = self.config.embedding_length;
         let d_ff = self.config.feed_forward_length;
@@ -1005,9 +1069,8 @@ impl F32Llama {
         {
             return Err(ModelError::Shape);
         }
-        self.token_embedding.validate()?;
-        self.output.validate()?;
-        ensure_finite_slice(&self.output_norm)?;
+        self.token_embedding.validate_shape()?;
+        self.output.validate_shape()?;
         for layer in &self.layers {
             if layer.attention_norm.len() != d
                 || layer.ffn_norm.len() != d
@@ -1040,24 +1103,13 @@ impl F32Llama {
             {
                 return Err(ModelError::Shape);
             }
-            ensure_finite_slice(&layer.attention_norm)?;
-            ensure_finite_slice(&layer.ffn_norm)?;
-            if let Some(bias) = &layer.attn_q_bias {
-                ensure_finite_slice(bias)?;
-            }
-            if let Some(bias) = &layer.attn_k_bias {
-                ensure_finite_slice(bias)?;
-            }
-            if let Some(bias) = &layer.attn_v_bias {
-                ensure_finite_slice(bias)?;
-            }
-            layer.wq.validate()?;
-            layer.wk.validate()?;
-            layer.wv.validate()?;
-            layer.wo.validate()?;
-            layer.w_gate.validate()?;
-            layer.w_up.validate()?;
-            layer.w_down.validate()?;
+            layer.wq.validate_shape()?;
+            layer.wk.validate_shape()?;
+            layer.wv.validate_shape()?;
+            layer.wo.validate_shape()?;
+            layer.w_gate.validate_shape()?;
+            layer.w_up.validate_shape()?;
+            layer.w_down.validate_shape()?;
         }
         Ok(())
     }
@@ -1092,7 +1144,7 @@ impl F32Llama {
         logits: &mut [f32],
         workspace: &mut ForwardWorkspace,
     ) -> Result<(), ModelError> {
-        self.validate()?;
+        self.validate_layout()?;
         if pos >= self.config.context_length
             || logits.len() != self.output.rows()
             || token >= self.token_embedding.rows()
@@ -1108,7 +1160,8 @@ impl F32Llama {
         }
         let head_dim = self.config.head_dim()?;
         workspace.validate_for(self.config, self.output.rows(), pos)?;
-        self.token_embedding.write_row(token, &mut workspace.x)?;
+        self.token_embedding
+            .write_row_validated(token, &mut workspace.x)?;
 
         for (layer_idx, layer) in self.layers.iter().enumerate() {
             rmsnorm(
@@ -1170,7 +1223,9 @@ impl F32Llama {
                 )?;
             }
 
-            layer.wo.gemv(&workspace.attn, &mut workspace.tmp_d)?;
+            layer
+                .wo
+                .gemv_validated(&workspace.attn, &mut workspace.tmp_d)?;
             residual_add(&mut workspace.x, &workspace.tmp_d)?;
 
             rmsnorm(
@@ -1189,7 +1244,9 @@ impl F32Llama {
                 .w_up
                 .gemv_with_optional_q8a(&workspace.h, h_q8a.as_deref(), &mut workspace.up)?;
             swiglu(&workspace.gate, &workspace.up, &mut workspace.ff)?;
-            layer.w_down.gemv(&workspace.ff, &mut workspace.tmp_d)?;
+            layer
+                .w_down
+                .gemv_validated(&workspace.ff, &mut workspace.tmp_d)?;
             residual_add(&mut workspace.x, &workspace.tmp_d)?;
         }
 
@@ -1199,7 +1256,7 @@ impl F32Llama {
             self.config.rms_epsilon,
             &mut workspace.h,
         )?;
-        self.output.gemv(&workspace.h, logits)?;
+        self.output.gemv_validated(&workspace.h, logits)?;
         Ok(())
     }
 
