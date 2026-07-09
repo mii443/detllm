@@ -1684,6 +1684,28 @@ compare-llamacpp-logprobs chunks=3 n_ctx=16 vocab=151936 rows=21 values=3190656 
 compare-llamacpp-logprobs chunks=3 n_ctx=16 vocab=49152 rows=21 values=1032192 add_bos=false bos_token=1 max_abs_diff=20.969736099 rms_diff=2.214630498 max_target_abs_diff=0.250263214
 ```
 
+enwik8 first-1MB llama.cpp reference PPL smoke:
+
+```sh
+scripts/run-target-ppl-reference-matrix.sh --input /tmp/enwik8 --tinyllama-q8 /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf --tinyllama-q4 /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf --qwen25-q8 /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --smollm2-q8 /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf --out /tmp/detllm-ppl-reference-matrix-20260710 --limit-bytes 1048576 --threads 8 --ctx-size 128 --batch-size 128 --chunks 4
+```
+
+This records external reference model-quality evidence over the same first-1MB
+source used by `bench-file` preflights. It is not a detllm compression-rate
+measurement. The llama.cpp build reports `build: 4847 (88b97a47)`. TinyLlama
+SPM tokenization produced PPL estimates, while Qwen2.5 and SmolLM2 BPE
+tokenization hit llama.cpp `invalid token = -1` on the raw enwik8 prefix and
+therefore did not produce a final PPL line.
+
+Observed PPL reference output:
+
+```text
+ppl-reference model=tinyllama-q8 status=ok ctx_size=128 chunks=4 limit_bytes=1048576 PPL = 3.9869 +/- 0.70623
+ppl-reference model=tinyllama-q4 status=ok ctx_size=128 chunks=4 limit_bytes=1048576 PPL = 3.9348 +/- 0.68780
+ppl-reference model=qwen25-q8 status=unavailable ctx_size=128 chunks=4 limit_bytes=1048576 reason=no-final-ppl
+ppl-reference model=smollm2-q8 status=unavailable ctx_size=128 chunks=4 limit_bytes=1048576 reason=no-final-ppl
+```
+
 TinyLlama Q8_0 llama.cpp reference command:
 
 ```sh
