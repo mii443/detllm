@@ -405,11 +405,12 @@ fn encode_tokens_with_model(
 ) -> Result<Vec<u8>, String> {
     validate_window(n_ctx, overlap, model.config.context_length)?;
     let mut enc = det_coder::RangeEncoder::new();
-    let mut window_start = 0usize;
+    let mut state = WindowedModelState::new(model, n_ctx)?;
     for pos in 0..tokens.len() {
-        window_start = next_window_start(pos, window_start, n_ctx, overlap);
-        let cdf = cdf_for_context(model, &tokens[window_start..pos], n_ctx)?;
+        state.sync(pos, &tokens[..pos], overlap)?;
+        let cdf = state.cdf()?;
         encode_symbol(&mut enc, &cdf, tokens[pos])?;
+        state.advance(tokens[pos])?;
     }
     Ok(enc.finish())
 }
@@ -426,11 +427,12 @@ fn decode_tokens_with_model(
     let mut dec =
         det_coder::RangeDecoder::new(payload).map_err(|e| format!("range decoder error: {e:?}"))?;
     let mut tokens = Vec::with_capacity(token_len);
-    let mut window_start = 0usize;
+    let mut state = WindowedModelState::new(model, n_ctx)?;
     for pos in 0..token_len {
-        window_start = next_window_start(pos, window_start, n_ctx, overlap);
-        let cdf = cdf_for_context(model, &tokens[window_start..pos], n_ctx)?;
+        state.sync(pos, &tokens, overlap)?;
+        let cdf = state.cdf()?;
         tokens.push(decode_symbol(&mut dec, &cdf)?);
+        state.advance(*tokens.last().expect("decoded token was just pushed"))?;
     }
     Ok(tokens)
 }
@@ -453,11 +455,11 @@ fn decode_bytes_with_model(
         det_coder::RangeDecoder::new(payload).map_err(|e| format!("range decoder error: {e:?}"))?;
     let mut tokens = Vec::new();
     let mut bytes = Vec::with_capacity(byte_len.min(8192));
-    let mut window_start = 0usize;
+    let mut state = WindowedModelState::new(model, n_ctx)?;
     while bytes.len() < byte_len {
         let pos = tokens.len();
-        window_start = next_window_start(pos, window_start, n_ctx, overlap);
-        let cdf = cdf_for_context(model, &tokens[window_start..pos], n_ctx)?;
+        state.sync(pos, &tokens, overlap)?;
+        let cdf = state.cdf()?;
         let token = decode_symbol(&mut dec, &cdf)?;
         let token_u32 =
             u32::try_from(token).map_err(|_| format!("decoded token too large: {token}"))?;
@@ -469,8 +471,86 @@ fn decode_bytes_with_model(
         }
         bytes.extend_from_slice(&piece);
         tokens.push(token);
+        state.advance(token)?;
     }
     Ok(DecodedBytes { bytes, tokens })
+}
+
+struct WindowedModelState<'a> {
+    model: &'a det_model::F32Llama,
+    n_ctx: usize,
+    window_start: usize,
+    context_len: usize,
+    rope: det_model::RopeTables,
+    cache: det_model::KvCache,
+    logits: Vec<f32>,
+}
+
+impl<'a> WindowedModelState<'a> {
+    fn new(model: &'a det_model::F32Llama, n_ctx: usize) -> Result<Self, String> {
+        let rope = det_model::RopeTables::llama(model.config, n_ctx)
+            .map_err(|e| format!("rope error: {e:?}"))?;
+        let cache =
+            det_model::KvCache::new(model.config).map_err(|e| format!("cache error: {e:?}"))?;
+        Ok(Self {
+            model,
+            n_ctx,
+            window_start: 0,
+            context_len: 0,
+            rope,
+            cache,
+            logits: vec![0.0f32; model.output.rows()],
+        })
+    }
+
+    fn sync(&mut self, pos: usize, tokens: &[usize], overlap: usize) -> Result<(), String> {
+        if pos != tokens.len() {
+            return Err("codec state position does not match token prefix length".to_owned());
+        }
+        let next_start = next_window_start(pos, self.window_start, self.n_ctx, overlap);
+        if next_start != self.window_start {
+            self.replay(next_start, &tokens[next_start..pos])?;
+        }
+        Ok(())
+    }
+
+    fn replay(&mut self, window_start: usize, context: &[usize]) -> Result<(), String> {
+        self.cache = det_model::KvCache::new(self.model.config)
+            .map_err(|e| format!("cache error: {e:?}"))?;
+        self.logits.fill(0.0);
+        self.window_start = window_start;
+        self.context_len = 0;
+        for &token in context {
+            self.advance(token)?;
+        }
+        Ok(())
+    }
+
+    fn cdf(&self) -> Result<det_coder::Cdf, String> {
+        if self.context_len == 0 {
+            det_coder::uniform_cdf(self.model.output.rows())
+                .map_err(|e| format!("uniform CDF error: {e:?}"))
+        } else {
+            det_coder::logits_to_cdf(&self.logits).map_err(|e| format!("CDF error: {e:?}"))
+        }
+    }
+
+    fn advance(&mut self, token: usize) -> Result<(), String> {
+        if self.context_len >= self.n_ctx {
+            return Err("context window invariant violated".to_owned());
+        }
+        self.model
+            .forward_one(
+                token,
+                self.context_len,
+                &self.rope,
+                &mut self.cache,
+                &mut self.logits,
+            )
+            .map_err(|e| format!("forward error: {e:?}"))?;
+        self.context_len += 1;
+        Ok(())
+    }
 }
 
 fn next_window_start(pos: usize, window_start: usize, n_ctx: usize, overlap: usize) -> usize {
@@ -481,6 +561,7 @@ fn next_window_start(pos: usize, window_start: usize, n_ctx: usize, overlap: usi
     }
 }
 
+#[cfg(test)]
 fn cdf_for_context(
     model: &det_model::F32Llama,
     context: &[usize],
@@ -945,6 +1026,16 @@ mod tests {
     }
 
     #[test]
+    fn streaming_codec_matches_replay_cdf_payload() {
+        let model = fixture_model().expect("fixture model");
+        let tokens = [0usize, 1, 2, 3, 0, 2, 1, 3, 2, 0];
+        let encoded = encode_tokens_with_model(&model, &tokens, 3, 1).expect("encode");
+        let reference =
+            encode_tokens_with_replayed_context(&model, &tokens, 3, 1).expect("reference encode");
+        assert_eq!(encoded, reference);
+    }
+
+    #[test]
     fn model_backed_token_codec_rejects_invalid_windows() {
         let model = fixture_model().expect("fixture model");
         let tokens = [0usize, 1];
@@ -1028,6 +1119,23 @@ mod tests {
         assert_eq!(header.orig_len, input.len() as u64);
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    fn encode_tokens_with_replayed_context(
+        model: &det_model::F32Llama,
+        tokens: &[usize],
+        n_ctx: usize,
+        overlap: usize,
+    ) -> Result<Vec<u8>, String> {
+        validate_window(n_ctx, overlap, model.config.context_length)?;
+        let mut enc = det_coder::RangeEncoder::new();
+        let mut window_start = 0usize;
+        for pos in 0..tokens.len() {
+            window_start = next_window_start(pos, window_start, n_ctx, overlap);
+            let cdf = cdf_for_context(model, &tokens[window_start..pos], n_ctx)?;
+            encode_symbol(&mut enc, &cdf, tokens[pos])?;
+        }
+        Ok(enc.finish())
     }
 
     #[test]

@@ -73,7 +73,9 @@ is not a meaningful compression-ratio benchmark. `bench-file` records model and
 input SHA-256 values, measured byte/token counts, payload and DTLZ bpb,
 compression ratio, throughput, optional token-prefix limit, warmup mode, and
 thread override so real enwik8 measurements can be copied directly into the
-validation notes. `model-info` records a lightweight GGUF
+validation notes. The codec benchmark path reuses a streaming KV cache inside
+each fixed context window and only replays the configured overlap after window
+rollover. `model-info` records a lightweight GGUF
 intake summary without loading all weights, including model SHA-256, parsed
 config, tokenizer kind, byte coverage, vocabulary/codec compatibility, tensor
 inventory, and required tensor shape/type status.

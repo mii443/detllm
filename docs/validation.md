@@ -830,8 +830,8 @@ cargo run --release -p xtask --features parallel,simd -- bench-file --model /tmp
 
 ```text
 bench-file model=/tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=16 iters=1 warmup=false threads=8 n_ctx=64 overlap=16 model_sha256=d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8 input_sha256=4fe5a21798e43c8258edcf9f3a98fac2df77613b4d2add15a2a3082eedc7b0b2
-bench-file: source_input_bytes=100000000 measured_input_bytes=53 total_input_bytes=53 tokens=16 total_tokens=16 payload_bytes=14 dtlz_bytes=70 payload_bits_per_byte=2.113208 dtlz_bits_per_byte=10.566038 compression_ratio=1.320755 elapsed_ms=46264.744 input_bytes_per_s=1.146 tokens_per_s=0.346
-bench-file-phases: model_read_ms=2735.876 gguf_parse_ms=24.779 model_load_ms=1878.211 tokenizer_setup_ms=237.637 input_read_ms=189.615 tokenize_ms=791.689 token_prefix_ms=10.121 warmup_ms=0.000 measured_ms=46264.744 total_ms=57526.226
+bench-file: source_input_bytes=100000000 measured_input_bytes=53 total_input_bytes=53 tokens=16 total_tokens=16 payload_bytes=14 dtlz_bytes=70 payload_bits_per_byte=2.113208 dtlz_bits_per_byte=10.566038 compression_ratio=1.320755 elapsed_ms=6327.000 input_bytes_per_s=8.377 tokens_per_s=2.529
+bench-file-phases: model_read_ms=1878.882 gguf_parse_ms=25.770 model_load_ms=1934.860 tokenizer_setup_ms=273.114 input_read_ms=107.469 tokenize_ms=813.685 token_prefix_ms=9.829 warmup_ms=0.000 measured_ms=6327.000 total_ms=16785.329
 ```
 
 This is input-scale and round-trip evidence for the `bench-file`
@@ -840,9 +840,14 @@ model compression-quality result. The tiny fixture has byte tokens and a tiny
 context, so it is expected to produce near-raw 8 bpb output.
 
 `bench-file` tokenizes the input, encodes the token stream, decodes it, and
-detokenizes back to bytes on every measured iteration. It reports payload size
-and DTLZ size, including the 56-byte file header. It also reports model and
-measured input SHA-256 values, source and measured input byte counts,
+detokenizes back to bytes on every measured iteration. The codec path keeps a
+streaming KV cache within each fixed window and replays only the configured
+overlap when a window rolls over; it does not rebuild the full prefix CDF for
+every token. The tests `streaming_codec_matches_replay_cdf_payload` and
+`xtask_streaming_codec_matches_replay_cdf_payload` compare the streaming
+payload against the direct replay rule byte-for-byte. The harness reports
+payload size and DTLZ size, including the 56-byte file header. It also reports
+model and measured input SHA-256 values, source and measured input byte counts,
 one-iteration and total token counts, payload-only bpb, DTLZ bpb, compression
 ratio, elapsed time, bytes/s, tokens/s, whether a pre-measurement warmup
 round-trip was run, and the thread override used for model kernels.
@@ -863,7 +868,9 @@ iteration still verifies encode/decode byte round-trip. `--show-phases` adds
 an opt-in `bench-file-phases` line for model read/parse/load, tokenizer setup,
 input read, tokenization, token-prefix detokenization, warmup, measured loop,
 and total wall time. The Qwen2.5 prefix run above shows 1MB ByteBPE tokenization
-is below one second and the measured inference/codec loop is the dominant cost.
+is below one second; after streaming KV-cache reuse, the 16-token measured
+encode/decode loop is roughly 6.3 seconds instead of repeatedly replaying the
+full context prefix for each CDF.
 This is the harness to use for target-model enwik8 first-1MB measurements; the
 bundled fixtures remain smoke and input-scale checks.
 The harness applies the same tokenizer/model vocabulary equality check and
