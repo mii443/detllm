@@ -803,6 +803,74 @@ SmolLM2 codec validation needs a compatible GGUF/tokenizer source or a
 deterministic tokenizer strategy that can represent all byte values without
 changing the model vocabulary.
 
+### Target-Model Mixed-Byte Round-Trip Smoke
+
+TinyLlama Q8_0 and Qwen2.5 Q8_0 both expose complete byte coverage, so they can
+exercise the public `compress` / `decompress` CLI on byte data that is not just
+plain UTF-8 text. The smoke input includes `00 ff c0 04` bytes:
+
+```sh
+mkdir -p /tmp/detllm-roundtrip
+printf 'detllm\0binary\xff\xc0\x04\nvalidation\n' > /tmp/detllm-roundtrip/mixed.bin
+sha256sum /tmp/detllm-roundtrip/mixed.bin
+wc -c /tmp/detllm-roundtrip/mixed.bin
+od -An -tx1 /tmp/detllm-roundtrip/mixed.bin
+```
+
+Observed input:
+
+```text
+458b71a7d9440b62ec2e34688a788980d90a4d872151d0634bb8e5402108b5a8  /tmp/detllm-roundtrip/mixed.bin
+28 /tmp/detllm-roundtrip/mixed.bin
+ 64 65 74 6c 6c 6d 00 62 69 6e 61 72 79 ff c0 04
+ 0a 76 61 6c 69 64 61 74 69 6f 6e 0a
+```
+
+TinyLlama Q8_0:
+
+```sh
+cargo run --release -p det-cli -- compress -m /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf -i /tmp/detllm-roundtrip/mixed.bin -o /tmp/detllm-roundtrip/tinyllama-q8-mixed.dtlz --n-ctx 32 --threads 8
+cargo run --release -p det-cli -- decompress -m /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf -i /tmp/detllm-roundtrip/tinyllama-q8-mixed.dtlz -o /tmp/detllm-roundtrip/tinyllama-q8-mixed.restored --threads 8
+cmp /tmp/detllm-roundtrip/mixed.bin /tmp/detllm-roundtrip/tinyllama-q8-mixed.restored
+sha256sum /tmp/detllm-roundtrip/tinyllama-q8-mixed.dtlz /tmp/detllm-roundtrip/tinyllama-q8-mixed.restored
+wc -c /tmp/detllm-roundtrip/tinyllama-q8-mixed.dtlz /tmp/detllm-roundtrip/tinyllama-q8-mixed.restored
+```
+
+Observed output:
+
+```text
+3206d799dcf3486cb0892b8060aca833efc70fc96ee4532579e57597751def28  /tmp/detllm-roundtrip/tinyllama-q8-mixed.dtlz
+458b71a7d9440b62ec2e34688a788980d90a4d872151d0634bb8e5402108b5a8  /tmp/detllm-roundtrip/tinyllama-q8-mixed.restored
+ 87 /tmp/detllm-roundtrip/tinyllama-q8-mixed.dtlz
+ 28 /tmp/detllm-roundtrip/tinyllama-q8-mixed.restored
+115 total
+```
+
+Qwen2.5 Q8_0:
+
+```sh
+cargo run --release -p det-cli -- compress -m /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf -i /tmp/detllm-roundtrip/mixed.bin -o /tmp/detllm-roundtrip/qwen25-q8-mixed.dtlz --n-ctx 32 --threads 8
+cargo run --release -p det-cli -- decompress -m /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf -i /tmp/detllm-roundtrip/qwen25-q8-mixed.dtlz -o /tmp/detllm-roundtrip/qwen25-q8-mixed.restored --threads 8
+cmp /tmp/detllm-roundtrip/mixed.bin /tmp/detllm-roundtrip/qwen25-q8-mixed.restored
+sha256sum /tmp/detllm-roundtrip/qwen25-q8-mixed.dtlz /tmp/detllm-roundtrip/qwen25-q8-mixed.restored
+wc -c /tmp/detllm-roundtrip/qwen25-q8-mixed.dtlz /tmp/detllm-roundtrip/qwen25-q8-mixed.restored
+```
+
+Observed output:
+
+```text
+f299ca7a17cf05bbb081f6c044b5c054fdce0c34d96ee7002f9784d66c60515e  /tmp/detllm-roundtrip/qwen25-q8-mixed.dtlz
+458b71a7d9440b62ec2e34688a788980d90a4d872151d0634bb8e5402108b5a8  /tmp/detllm-roundtrip/qwen25-q8-mixed.restored
+ 85 /tmp/detllm-roundtrip/qwen25-q8-mixed.dtlz
+ 28 /tmp/detllm-roundtrip/qwen25-q8-mixed.restored
+113 total
+```
+
+This is target-model arbitrary-byte round-trip smoke evidence for two complete
+byte-coverage GGUFs. It does not replace the larger §9.7 matrix over empty,
+multilingual, binary-mixed, and context-spanning inputs for every target model
+and quantization.
+
 ## File Codec Bench Harness
 
 Command:

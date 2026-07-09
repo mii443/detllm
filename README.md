@@ -113,7 +113,8 @@ the following acceptance evidence is still missing:
   evidence passes the 0.999 cosine threshold, and 8-token log-probability target
   checks pass, but the current 8-token raw-logits comparison is below the 0.999
   per-row cosine target. Broader target-model checks are also still needed
-  beyond the current TinyLlama/Qwen2.5/SmolLM2 smoke evidence.
+  beyond the current TinyLlama/Qwen2.5/SmolLM2 logits/log-probability smoke
+  evidence and TinyLlama/Qwen2.5 mixed-byte round-trip smoke.
 - Target-model enwik8 first-1MB compression-rate measurement with
   `xtask bench-file`; the bundled tiny fixture has input-scale enwik8 evidence.
 - Broader benchmark results on real target hardware beyond the current bundled
