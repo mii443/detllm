@@ -347,8 +347,8 @@ pub fn dot_q6_k_q8k(blocks_w: &[Q6KBlock], blocks_a: &[Q8KBlock]) -> Result<f32,
         for &scale in &w.scales {
             let scale = scale as i32;
             for _ in 0..2 {
-                for lane in 0..8 {
-                    aux32[lane] += scale
+                for (lane, acc) in aux32.iter_mut().enumerate() {
+                    *acc += scale
                         * (a.q[offset + lane] as i32)
                         * (q6_k_quant(*w, offset + lane) as i32);
                 }
