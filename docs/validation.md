@@ -532,7 +532,7 @@ cargo run --release -p xtask -- bench-file --model /tmp/detllm-external/tinyllam
 Observed output:
 
 ```text
-bench-file model=/tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf input=/tmp/detllm-external/hello.txt limit_bytes=all iters=1 warmup=true threads=default n_ctx=16 overlap=4 model_sha256=a4c9bb1dbaa372f6381a035fa5c02ef087aaa1ff1f843a56a22328114f03fc59 input_sha256=66a045b452102c59d840ec097d59d9467e13a3f34f6494e539ffd32c1bb35f18
+bench-file model=/tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf input=/tmp/detllm-external/hello.txt limit_bytes=all limit_tokens=all iters=1 warmup=true threads=default n_ctx=16 overlap=4 model_sha256=a4c9bb1dbaa372f6381a035fa5c02ef087aaa1ff1f843a56a22328114f03fc59 input_sha256=66a045b452102c59d840ec097d59d9467e13a3f34f6494e539ffd32c1bb35f18
 bench-file: source_input_bytes=6 measured_input_bytes=6 total_input_bytes=6 tokens=2 total_tokens=2 payload_bytes=10 dtlz_bytes=66 payload_bits_per_byte=13.333333 dtlz_bits_per_byte=88.000000 compression_ratio=11.000000 elapsed_ms=344.482 input_bytes_per_s=17.417 tokens_per_s=5.806
 ```
 
@@ -617,7 +617,7 @@ cargo run --release -p xtask -- bench-file --model /tmp/detllm-external/qwen2.5-
 Observed output:
 
 ```text
-bench-file model=/tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf input=/tmp/detllm-external/hello.txt limit_bytes=all iters=1 warmup=true threads=default n_ctx=16 overlap=4 model_sha256=d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8 input_sha256=66a045b452102c59d840ec097d59d9467e13a3f34f6494e539ffd32c1bb35f18
+bench-file model=/tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf input=/tmp/detllm-external/hello.txt limit_bytes=all limit_tokens=all iters=1 warmup=true threads=default n_ctx=16 overlap=4 model_sha256=d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8 input_sha256=66a045b452102c59d840ec097d59d9467e13a3f34f6494e539ffd32c1bb35f18
 bench-file: source_input_bytes=6 measured_input_bytes=6 total_input_bytes=6 tokens=2 total_tokens=2 payload_bytes=10 dtlz_bytes=66 payload_bits_per_byte=13.333333 dtlz_bits_per_byte=88.000000 compression_ratio=11.000000 elapsed_ms=412.009 input_bytes_per_s=14.563 tokens_per_s=4.854
 ```
 
@@ -721,6 +721,7 @@ Command:
 
 ```sh
 cargo run --release -p xtask -- bench-file --model testdata/tiny-f32.gguf --input testdata/tiny.tokens.txt --n-ctx 8 --iters 1
+cargo run --release -p xtask -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --limit-tokens 512 --n-ctx 2048 --threads 8 --iters 1 --no-warmup
 cargo run --release -p xtask -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --threads 8 --iters 1 --no-warmup
 ```
 
@@ -743,8 +744,19 @@ cargo run --release -p xtask -- bench-file --model testdata/tiny-f32.gguf --inpu
 ```text
 547994d9980ebed1288380d652999f38a14fe291a6247c157c3d33d4932534bc  /tmp/enwik8.zip
 2b49720ec4d78c3c9fabaee6e4179a5e997302b3a70029f30f2d582218c024a8  /tmp/enwik8
-bench-file model=testdata/tiny-f32.gguf input=/tmp/enwik8 limit_bytes=1048576 iters=1 warmup=true threads=default n_ctx=8 overlap=2 model_sha256=ce2aa01900a63585a409ef995a2827dcac81e1678e38a1ab0733302ba82ce79b input_sha256=4fb5efa9f35df431737731bf3c8f38a467b69731940ff82a4ee0e218aae58834
+bench-file model=testdata/tiny-f32.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=all iters=1 warmup=true threads=default n_ctx=8 overlap=2 model_sha256=ce2aa01900a63585a409ef995a2827dcac81e1678e38a1ab0733302ba82ce79b input_sha256=4fb5efa9f35df431737731bf3c8f38a467b69731940ff82a4ee0e218aae58834
 bench-file: source_input_bytes=100000000 measured_input_bytes=1048576 total_input_bytes=1048576 tokens=1048576 total_tokens=1048576 payload_bytes=1048535 dtlz_bytes=1048591 payload_bits_per_byte=7.999687 dtlz_bits_per_byte=8.000114 compression_ratio=1.000014 elapsed_ms=51811.324 input_bytes_per_s=20238.356 tokens_per_s=20238.356
+```
+
+Observed token-prefix smoke on the bundled token text fixture:
+
+```sh
+cargo run -p xtask -- bench-file --model testdata/tiny-f32.gguf --input testdata/tiny.tokens.txt --n-ctx 8 --iters 1 --limit-tokens 5 --no-warmup
+```
+
+```text
+bench-file model=testdata/tiny-f32.gguf input=testdata/tiny.tokens.txt limit_bytes=all limit_tokens=5 iters=1 warmup=false threads=default n_ctx=8 overlap=2 model_sha256=ce2aa01900a63585a409ef995a2827dcac81e1678e38a1ab0733302ba82ce79b input_sha256=c0be322c1ad6af50f418b96232d98fe25a36d5d0a557291833f8248f2084b8ef
+bench-file: source_input_bytes=12 measured_input_bytes=5 total_input_bytes=5 tokens=5 total_tokens=5 payload_bytes=12 dtlz_bytes=68 payload_bits_per_byte=19.200000 dtlz_bits_per_byte=108.800000 compression_ratio=13.600000 elapsed_ms=0.872 input_bytes_per_s=5736.261 tokens_per_s=5736.261
 ```
 
 This is input-scale and round-trip evidence for the `bench-file`
@@ -761,12 +773,17 @@ ratio, elapsed time, bytes/s, tokens/s, whether a pre-measurement warmup
 round-trip was run, and the thread override used for model kernels.
 `--limit-bytes N` truncates the input to at most the first `N` bytes before
 tokenization, so the enwik8 first-1MB measurement can use
-`--limit-bytes 1048576` without creating a separate file. `--threads N` fixes
-the model parallelism for reproducible benchmark notes, and `--no-warmup`
-skips the extra pre-measurement round-trip for long target-model measurements;
-the measured iteration still verifies encode/decode byte round-trip. This is
-the harness to use for target-model enwik8 first-1MB measurements; the bundled
-fixtures remain smoke and input-scale checks.
+`--limit-bytes 1048576` without creating a separate file. `--limit-tokens N`
+then truncates the tokenized stream and detokenizes that prefix back to bytes
+before measurement; this gives a reproducible target-model prefix smoke path
+for long runs while keeping the reported byte counts and SHA-256 tied to the
+actual bytes round-tripped. Omit `--limit-tokens` for the final first-1MB
+acceptance measurement. `--threads N` fixes the model parallelism for
+reproducible benchmark notes, and `--no-warmup` skips the extra
+pre-measurement round-trip for long target-model measurements; the measured
+iteration still verifies encode/decode byte round-trip. This is the harness to
+use for target-model enwik8 first-1MB measurements; the bundled fixtures
+remain smoke and input-scale checks.
 The harness applies the same tokenizer/model vocabulary equality check and
 `2^18` codec vocabulary bound as the CLI compression path before accepting a
 model for measurement.

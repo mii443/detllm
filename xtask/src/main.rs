@@ -116,7 +116,7 @@ fn real_main() -> Result<(), String> {
         Some("check-ci-workflow") => check_ci_workflow(),
         Some("check-determinism") => check_determinism(),
         _ => Err(
-            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf|bench-file --model model.gguf --input file [--limit-bytes N] [--n-ctx N] [--iters N] [--threads N] [--no-warmup]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
+            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf|bench-file --model model.gguf --input file [--limit-bytes N] [--limit-tokens N] [--n-ctx N] [--iters N] [--threads N] [--no-warmup]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
                 .to_owned(),
         ),
     }
@@ -323,6 +323,7 @@ struct BenchFileOpts {
     model: String,
     input: String,
     limit_bytes: Option<usize>,
+    limit_tokens: Option<usize>,
     n_ctx: Option<usize>,
     iters: usize,
     threads: Option<usize>,
@@ -897,6 +898,7 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
     let mut model = None;
     let mut input = None;
     let mut limit_bytes = None;
+    let mut limit_tokens = None;
     let mut n_ctx = None;
     let mut iters = 1usize;
     let mut threads = None;
@@ -924,6 +926,19 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
                     return Err("bench-file: --limit-bytes must be greater than zero".to_owned());
                 }
                 limit_bytes = Some(value);
+            }
+            "--limit-tokens" => {
+                i += 1;
+                let raw = args
+                    .get(i)
+                    .ok_or("bench-file: missing value for --limit-tokens")?;
+                let value = raw
+                    .parse::<usize>()
+                    .map_err(|e| format!("bench-file: invalid --limit-tokens value: {e}"))?;
+                if value == 0 {
+                    return Err("bench-file: --limit-tokens must be greater than zero".to_owned());
+                }
+                limit_tokens = Some(value);
             }
             "--n-ctx" => {
                 i += 1;
@@ -967,6 +982,7 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
         model: model.ok_or("bench-file: missing --model")?,
         input: input.ok_or("bench-file: missing --input")?,
         limit_bytes,
+        limit_tokens,
         n_ctx,
         iters,
         threads,
@@ -991,14 +1007,27 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
     if let Some(limit_bytes) = opts.limit_bytes {
         input.truncate(limit_bytes);
     }
-    let measured_input_bytes = input.len();
-    let input_sha256 = sha256_hex(&input);
-    let token_ids: Vec<usize> = tokenizer
+    let mut token_ids: Vec<usize> = tokenizer
         .tokenize_bytes(&input)
         .map_err(|e| format!("{}: tokenize error: {e:?}", opts.input))?
         .into_iter()
         .map(|token| token as usize)
         .collect();
+    if let Some(limit_tokens) = opts.limit_tokens {
+        token_ids.truncate(limit_tokens);
+        let truncated_tokens = token_ids
+            .iter()
+            .copied()
+            .map(|token| {
+                u32::try_from(token).map_err(|_| format!("token too large to detokenize: {token}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        input = tokenizer
+            .detokenize_bytes(&truncated_tokens)
+            .map_err(|e| format!("{}: token-prefix detokenize error: {e:?}", opts.input))?;
+    }
+    let measured_input_bytes = input.len();
+    let input_sha256 = sha256_hex(&input);
 
     let n_ctx = opts.n_ctx.unwrap_or(model.config.context_length);
     let overlap = n_ctx / 4;
@@ -1041,11 +1070,15 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
     let limit_label = opts
         .limit_bytes
         .map_or_else(|| "all".to_owned(), |limit_bytes| limit_bytes.to_string());
+    let token_limit_label = opts
+        .limit_tokens
+        .map_or_else(|| "all".to_owned(), |limit_tokens| limit_tokens.to_string());
     println!(
-        "bench-file model={} input={} limit_bytes={} iters={} warmup={} threads={} n_ctx={} overlap={} model_sha256={} input_sha256={}",
+        "bench-file model={} input={} limit_bytes={} limit_tokens={} iters={} warmup={} threads={} n_ctx={} overlap={} model_sha256={} input_sha256={}",
         opts.model,
         opts.input,
         limit_label,
+        token_limit_label,
         opts.iters,
         opts.warmup,
         opts.threads
@@ -2764,6 +2797,8 @@ mod tests {
             "enwik8".to_owned(),
             "--limit-bytes".to_owned(),
             "1048576".to_owned(),
+            "--limit-tokens".to_owned(),
+            "512".to_owned(),
             "--n-ctx".to_owned(),
             "2048".to_owned(),
             "--iters".to_owned(),
@@ -2776,6 +2811,7 @@ mod tests {
         assert_eq!(opts.model, "model.gguf");
         assert_eq!(opts.input, "enwik8");
         assert_eq!(opts.limit_bytes, Some(1_048_576));
+        assert_eq!(opts.limit_tokens, Some(512));
         assert_eq!(opts.n_ctx, Some(2048));
         assert_eq!(opts.iters, 2);
         assert_eq!(opts.threads, Some(8));
@@ -2791,6 +2827,17 @@ mod tests {
         ])
         .expect_err("zero limit must be rejected");
         assert_eq!(err, "bench-file: --limit-bytes must be greater than zero");
+
+        let err = parse_bench_file_opts(vec![
+            "--model".to_owned(),
+            "model.gguf".to_owned(),
+            "--input".to_owned(),
+            "enwik8".to_owned(),
+            "--limit-tokens".to_owned(),
+            "0".to_owned(),
+        ])
+        .expect_err("zero token limit must be rejected");
+        assert_eq!(err, "bench-file: --limit-tokens must be greater than zero");
 
         let err = parse_bench_file_opts(vec![
             "--model".to_owned(),
