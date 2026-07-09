@@ -105,6 +105,7 @@ run_case() {
     --no-warmup \
     --encode-only \
     --show-phases \
+    --estimate-full-run \
     --progress-every "$progress_every"
 }
 

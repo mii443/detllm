@@ -47,7 +47,7 @@ cargo run -p xtask -- model-info --model model-prefix.gguf --metadata-prefix
 cargo run --release -p xtask -- bench-testdata --iters 100
 cargo run --release -p xtask -- bench-file --model testdata/tiny-f32.gguf --input testdata/tiny.tokens.txt --n-ctx 8 --iters 2
 cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 4096 --limit-tokens 512 --n-ctx 2048 --threads 8 --iters 1 --no-warmup
-cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --threads 8 --iters 1 --no-warmup --encode-only --show-phases --progress-every 100
+cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --threads 8 --iters 1 --no-warmup --encode-only --show-phases --estimate-full-run --progress-every 100
 scripts/run-target-bench-smoke.sh --input /tmp/enwik8 --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
 scripts/run-target-determinism-matrix.sh --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
 scripts/run-target-codec-determinism-matrix.sh --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
@@ -103,7 +103,8 @@ and prefix sums single-threaded.
 For long compression-rate runs where a separate round-trip smoke already covers
 codec correctness, `bench-file --encode-only` measures payload generation
 without paying for the mirrored decode pass; the default mode still verifies
-round-trip byte equality.
+round-trip byte equality. Prefix preflights can add `--estimate-full-run` to
+scale the measured token throughput to the full tokenized first-1MB prefix.
 `model-info` records a
 lightweight GGUF
 intake summary without loading all weights, including model SHA-256, parsed
@@ -133,15 +134,18 @@ Target-model prefix smoke on the same host, using
 `scripts/run-target-bench-smoke.sh` with enwik8 first-1MB tokenization,
 `--limit-tokens 16`, `--encode-only`, `--threads 8`, and `--n-ctx 64`:
 
-| check | measured bytes | payload bpb | DTLZ bpb | throughput |
-|---|---:|---:|---:|---:|
-| TinyLlama Q8_0 | 47 | 5.617021 | 15.148936 | 7.377 tokens/s |
-| TinyLlama Q4_0 | 47 | 5.787234 | 15.319149 | 5.285 tokens/s |
-| Qwen2.5 Q8_0 | 53 | 1.962264 | 10.415094 | 5.366 tokens/s |
-| SmolLM2 Q8_0 | 46 | 2.434783 | 12.173913 | 5.352 tokens/s |
+| check | measured bytes | payload bpb | DTLZ bpb | throughput | full-token ETA |
+|---|---:|---:|---:|---:|---:|
+| TinyLlama Q8_0 | 47 | 5.617021 | 15.148936 | 7.322 tokens/s | 45,938 s |
+| TinyLlama Q4_0 | 47 | 5.787234 | 15.319149 | 5.167 tokens/s | 65,094 s |
+| Qwen2.5 Q8_0 | 53 | 1.962264 | 10.415094 | 5.438 tokens/s | 51,389 s |
+| SmolLM2 Q8_0 | 46 | 2.434783 | 12.173913 | 5.593 tokens/s | 54,134 s |
 
 This is real target-model throughput and prefix compression smoke evidence, not
-the final full-token enwik8 first-1MB compression-rate result.
+the final full-token enwik8 first-1MB compression-rate result. A current
+Qwen2.5 Q8_0 16-token encode-only preflight with `--estimate-full-run` reports
+279,472 full tokens for the first 1MB and estimates the measured encode loop at
+about 51,389 seconds, or roughly 14 hours, on this host.
 
 Target-model determinism smoke, using
 `scripts/run-target-determinism-matrix.sh`, checks the same four external GGUFs

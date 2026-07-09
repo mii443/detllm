@@ -1096,7 +1096,7 @@ Command:
 ```sh
 cargo run --release -p xtask -- bench-file --model testdata/tiny-f32.gguf --input testdata/tiny.tokens.txt --n-ctx 8 --iters 1
 cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 4096 --limit-tokens 512 --n-ctx 2048 --threads 8 --iters 1 --no-warmup
-cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --threads 8 --iters 1 --no-warmup --encode-only --show-phases --progress-every 100
+cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --threads 8 --iters 1 --no-warmup --encode-only --show-phases --estimate-full-run --progress-every 100
 ```
 
 Build `xtask` with `--features parallel,simd` for target-model benchmark
@@ -1111,6 +1111,10 @@ Long target-model compression-rate preflights can use `--encode-only` after a
 separate round-trip smoke has established codec correctness. This mode measures
 payload generation and compression ratio without paying for the mirrored decode
 pass. The default remains `mode=round-trip` and verifies decoded bytes.
+When a token-prefix preflight uses `--limit-tokens`, `--estimate-full-run`
+adds a `bench-file-estimate` line that scales measured token throughput to the
+full tokenized input prefix. This is an ETA and planning aid, not acceptance
+evidence for the full compression-rate result.
 
 Observed smoke output on the bundled token text fixture:
 
@@ -1216,6 +1220,25 @@ bench-file-phases: model_read_ms=2357.780 gguf_parse_ms=26.854 model_load_ms=261
 This preserves the same measured byte prefix and payload size as the previous
 round-trip run while removing the decode phase from the measured loop.
 
+Qwen2.5 16-token encode-only preflight with full-token estimate enabled:
+
+```sh
+cargo run --release -p xtask --features parallel,simd -- bench-file --model /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --input /tmp/enwik8 --limit-bytes 1048576 --limit-tokens 16 --n-ctx 64 --threads 8 --iters 1 --no-warmup --encode-only --show-phases --progress-every 8 --estimate-full-run
+```
+
+```text
+bench-file-progress phase=encode tokens_done=8 tokens_total=16 elapsed_ms=1393.335 tokens_per_s=5.742
+bench-file-progress phase=encode tokens_done=16 tokens_total=16 elapsed_ms=2842.047 tokens_per_s=5.630
+bench-file model=/tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=16 iters=1 warmup=false mode=encode-only threads=8 n_ctx=64 overlap=16 model_sha256=d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8 input_sha256=4fe5a21798e43c8258edcf9f3a98fac2df77613b4d2add15a2a3082eedc7b0b2
+bench-file: source_input_bytes=100000000 measured_input_bytes=53 total_input_bytes=53 tokenized_tokens=279472 tokens=16 total_tokens=16 payload_bytes=13 dtlz_bytes=69 payload_bits_per_byte=1.962264 dtlz_bits_per_byte=10.415094 compression_ratio=1.301887 elapsed_ms=2942.089 input_bytes_per_s=18.014 tokens_per_s=5.438
+bench-file-estimate: full_tokens=279472 full_input_bytes=1048576 measured_tokens=16 scale_factor=17467.000000 estimated_measured_ms=51389459.952 estimated_measured_s=51389.460 measured_tokens_per_s=5.438
+bench-file-phases: model_read_ms=1580.194 gguf_parse_ms=25.450 model_load_ms=2225.827 tokenizer_setup_ms=382.699 input_read_ms=24.083 tokenize_ms=1622.583 token_prefix_ms=0.151 warmup_ms=0.000 measured_ms=2942.089 total_ms=14987.132
+```
+
+On this host, the ETA line puts the Qwen2.5 Q8_0 first-1MB encode-only
+measured loop at roughly 14 hours. It explains why the final M4 measurement is
+still tracked separately instead of being folded into routine validation.
+
 Scripted target-model prefix benchmark smoke across the current external GGUF
 validation set:
 
@@ -1226,33 +1249,38 @@ scripts/run-target-bench-smoke.sh --input /tmp/enwik8 --tinyllama-q8 /tmp/detllm
 Environment: same local `x86_64` WSL2 host as the fixture benchmark snapshot,
 with `rustc 1.95.0`. Command defaults were enwik8 `--limit-bytes 1048576`,
 `--limit-tokens 16`, `--encode-only`, `--threads 8`, `--n-ctx 64`,
-`--iters 1`, `--no-warmup`, `--show-phases`, and `--progress-every 8`.
+`--iters 1`, `--no-warmup`, `--show-phases`, `--estimate-full-run`, and
+`--progress-every 8`.
 
 ```text
 == tinyllama-q8 ==
-bench-file-progress phase=encode tokens_done=8 tokens_total=16 elapsed_ms=1033.887 tokens_per_s=7.738
-bench-file-progress phase=encode tokens_done=16 tokens_total=16 elapsed_ms=2124.285 tokens_per_s=7.532
+bench-file-progress phase=encode tokens_done=8 tokens_total=16 elapsed_ms=1036.155 tokens_per_s=7.721
+bench-file-progress phase=encode tokens_done=16 tokens_total=16 elapsed_ms=2134.613 tokens_per_s=7.496
 bench-file model=/tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=16 iters=1 warmup=false mode=encode-only threads=8 n_ctx=64 overlap=16 model_sha256=a4c9bb1dbaa372f6381a035fa5c02ef087aaa1ff1f843a56a22328114f03fc59 input_sha256=516d4b5d16ec0a573a2eaf415abe04b40ca38038fce3531e71bb3f019ff9b6de
-bench-file: source_input_bytes=100000000 measured_input_bytes=47 total_input_bytes=47 tokenized_tokens=336344 tokens=16 total_tokens=16 payload_bytes=33 dtlz_bytes=89 payload_bits_per_byte=5.617021 dtlz_bits_per_byte=15.148936 compression_ratio=1.893617 elapsed_ms=2169.014 input_bytes_per_s=21.669 tokens_per_s=7.377
-bench-file-phases: model_read_ms=1262.530 gguf_parse_ms=7.479 model_load_ms=1386.544 tokenizer_setup_ms=23.364 input_read_ms=1.490 tokenize_ms=960.320 token_prefix_ms=0.132 warmup_ms=0.000 measured_ms=2169.014 total_ms=9685.141
+bench-file: source_input_bytes=100000000 measured_input_bytes=47 total_input_bytes=47 tokenized_tokens=336344 tokens=16 total_tokens=16 payload_bytes=33 dtlz_bytes=89 payload_bits_per_byte=5.617021 dtlz_bits_per_byte=15.148936 compression_ratio=1.893617 elapsed_ms=2185.280 input_bytes_per_s=21.508 tokens_per_s=7.322
+bench-file-estimate: full_tokens=336344 full_input_bytes=1048576 measured_tokens=16 scale_factor=21021.500000 estimated_measured_ms=45937863.163 estimated_measured_s=45937.863 measured_tokens_per_s=7.322
+bench-file-phases: model_read_ms=1259.832 gguf_parse_ms=8.619 model_load_ms=1405.274 tokenizer_setup_ms=31.427 input_read_ms=1.529 tokenize_ms=927.340 token_prefix_ms=0.119 warmup_ms=0.000 measured_ms=2185.280 total_ms=9697.857
 == tinyllama-q4 ==
-bench-file-progress phase=encode tokens_done=8 tokens_total=16 elapsed_ms=1487.704 tokens_per_s=5.377
-bench-file-progress phase=encode tokens_done=16 tokens_total=16 elapsed_ms=3000.518 tokens_per_s=5.332
+bench-file-progress phase=encode tokens_done=8 tokens_total=16 elapsed_ms=1552.729 tokens_per_s=5.152
+bench-file-progress phase=encode tokens_done=16 tokens_total=16 elapsed_ms=3065.533 tokens_per_s=5.219
 bench-file model=/tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=16 iters=1 warmup=false mode=encode-only threads=8 n_ctx=64 overlap=16 model_sha256=da3087fb14aede55fde6eb81a0e55e886810e43509ec82ecdc7aa5d62a03b556 input_sha256=516d4b5d16ec0a573a2eaf415abe04b40ca38038fce3531e71bb3f019ff9b6de
-bench-file: source_input_bytes=100000000 measured_input_bytes=47 total_input_bytes=47 tokenized_tokens=336344 tokens=16 total_tokens=16 payload_bytes=34 dtlz_bytes=90 payload_bits_per_byte=5.787234 dtlz_bits_per_byte=15.319149 compression_ratio=1.914894 elapsed_ms=3027.252 input_bytes_per_s=15.526 tokens_per_s=5.285
-bench-file-phases: model_read_ms=425.575 gguf_parse_ms=8.484 model_load_ms=618.819 tokenizer_setup_ms=29.250 input_read_ms=0.796 tokenize_ms=996.966 token_prefix_ms=0.137 warmup_ms=0.000 measured_ms=3027.252 total_ms=7197.508
+bench-file: source_input_bytes=100000000 measured_input_bytes=47 total_input_bytes=47 tokenized_tokens=336344 tokens=16 total_tokens=16 payload_bytes=34 dtlz_bytes=90 payload_bits_per_byte=5.787234 dtlz_bits_per_byte=15.319149 compression_ratio=1.914894 elapsed_ms=3096.543 input_bytes_per_s=15.178 tokens_per_s=5.167
+bench-file-estimate: full_tokens=336344 full_input_bytes=1048576 measured_tokens=16 scale_factor=21021.500000 estimated_measured_ms=65093979.158 estimated_measured_s=65093.979 measured_tokens_per_s=5.167
+bench-file-phases: model_read_ms=435.598 gguf_parse_ms=8.402 model_load_ms=591.899 tokenizer_setup_ms=32.735 input_read_ms=0.753 tokenize_ms=873.588 token_prefix_ms=0.126 warmup_ms=0.000 measured_ms=3096.543 total_ms=7089.378
 == qwen25-q8 ==
-bench-file-progress phase=encode tokens_done=8 tokens_total=16 elapsed_ms=1470.267 tokens_per_s=5.441
-bench-file-progress phase=encode tokens_done=16 tokens_total=16 elapsed_ms=2885.040 tokens_per_s=5.546
+bench-file-progress phase=encode tokens_done=8 tokens_total=16 elapsed_ms=1393.335 tokens_per_s=5.742
+bench-file-progress phase=encode tokens_done=16 tokens_total=16 elapsed_ms=2842.047 tokens_per_s=5.630
 bench-file model=/tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=16 iters=1 warmup=false mode=encode-only threads=8 n_ctx=64 overlap=16 model_sha256=d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8 input_sha256=4fe5a21798e43c8258edcf9f3a98fac2df77613b4d2add15a2a3082eedc7b0b2
-bench-file: source_input_bytes=100000000 measured_input_bytes=53 total_input_bytes=53 tokenized_tokens=279472 tokens=16 total_tokens=16 payload_bytes=13 dtlz_bytes=69 payload_bits_per_byte=1.962264 dtlz_bits_per_byte=10.415094 compression_ratio=1.301887 elapsed_ms=2981.684 input_bytes_per_s=17.775 tokens_per_s=5.366
-bench-file-phases: model_read_ms=1460.853 gguf_parse_ms=27.110 model_load_ms=2566.031 tokenizer_setup_ms=407.239 input_read_ms=22.125 tokenize_ms=1459.331 token_prefix_ms=0.138 warmup_ms=0.000 measured_ms=2981.684 total_ms=15171.847
+bench-file: source_input_bytes=100000000 measured_input_bytes=53 total_input_bytes=53 tokenized_tokens=279472 tokens=16 total_tokens=16 payload_bytes=13 dtlz_bytes=69 payload_bits_per_byte=1.962264 dtlz_bits_per_byte=10.415094 compression_ratio=1.301887 elapsed_ms=2942.089 input_bytes_per_s=18.014 tokens_per_s=5.438
+bench-file-estimate: full_tokens=279472 full_input_bytes=1048576 measured_tokens=16 scale_factor=17467.000000 estimated_measured_ms=51389459.952 estimated_measured_s=51389.460 measured_tokens_per_s=5.438
+bench-file-phases: model_read_ms=1580.194 gguf_parse_ms=25.450 model_load_ms=2225.827 tokenizer_setup_ms=382.699 input_read_ms=24.083 tokenize_ms=1622.583 token_prefix_ms=0.151 warmup_ms=0.000 measured_ms=2942.089 total_ms=14987.132
 == smollm2-q8 ==
-bench-file-progress phase=encode tokens_done=8 tokens_total=16 elapsed_ms=1435.780 tokens_per_s=5.572
-bench-file-progress phase=encode tokens_done=16 tokens_total=16 elapsed_ms=2897.850 tokens_per_s=5.521
+bench-file-progress phase=encode tokens_done=8 tokens_total=16 elapsed_ms=1399.829 tokens_per_s=5.715
+bench-file-progress phase=encode tokens_done=16 tokens_total=16 elapsed_ms=2748.361 tokens_per_s=5.822
 bench-file model=/tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=16 iters=1 warmup=false mode=encode-only threads=8 n_ctx=64 overlap=16 model_sha256=0f3fb091804c48a561b42a4ca1be9ce2c353017187f74c48f52299cae790abe5 input_sha256=cde97e63d212a07d92a900e45f13c3974ec428806f1d8dbf44a1ddd0083edc8d
-bench-file: source_input_bytes=100000000 measured_input_bytes=46 total_input_bytes=46 tokenized_tokens=302781 tokens=16 total_tokens=16 payload_bytes=14 dtlz_bytes=70 payload_bits_per_byte=2.434783 dtlz_bits_per_byte=12.173913 compression_ratio=1.521739 elapsed_ms=2989.284 input_bytes_per_s=15.388 tokens_per_s=5.352
-bench-file-phases: model_read_ms=1256.798 gguf_parse_ms=10.325 model_load_ms=2629.199 tokenizer_setup_ms=104.185 input_read_ms=1.897 tokenize_ms=1435.414 token_prefix_ms=0.124 warmup_ms=0.000 measured_ms=2989.284 total_ms=14548.763
+bench-file: source_input_bytes=100000000 measured_input_bytes=46 total_input_bytes=46 tokenized_tokens=302781 tokens=16 total_tokens=16 payload_bytes=14 dtlz_bytes=70 payload_bits_per_byte=2.434783 dtlz_bits_per_byte=12.173913 compression_ratio=1.521739 elapsed_ms=2860.649 input_bytes_per_s=16.080 tokens_per_s=5.593
+bench-file-estimate: full_tokens=302781 full_input_bytes=1048576 measured_tokens=16 scale_factor=18923.812500 estimated_measured_ms=54134378.151 estimated_measured_s=54134.378 measured_tokens_per_s=5.593
+bench-file-phases: model_read_ms=1227.084 gguf_parse_ms=8.054 model_load_ms=2379.588 tokenizer_setup_ms=118.976 input_read_ms=2.349 tokenize_ms=1586.070 token_prefix_ms=0.110 warmup_ms=0.000 measured_ms=2860.649 total_ms=14136.766
 ```
 
 This is target-model throughput and prefix compression smoke evidence for the
@@ -1313,10 +1341,15 @@ encode-only mode, use a separate short round-trip smoke for codec correctness.
 `--show-phases` adds an opt-in `bench-file-phases` line for model
 read/parse/load, tokenizer setup, input read, tokenization, token-prefix
 detokenization, warmup, measured loop, and total wall time.
+`--estimate-full-run` adds an opt-in `bench-file-estimate` line for
+`--limit-tokens` preflights, reporting the full tokenized prefix, full input
+byte count, scale factor, measured token throughput, and estimated measured
+loop time for running without the token limit.
 `--progress-every N` emits `bench-file-progress` lines on stderr every N encode
 or decode tokens and at phase completion; the stdout summary lines remain
 stable for copying into this file. The Qwen2.5 prefix run above shows 1MB
-ByteBPE tokenization is about 1.5 seconds on this host; after streaming
+ByteBPE tokenization is about 1.5 seconds on this host; the estimate line shows
+the current full 279,472-token measured encode loop is about 14 hours. After streaming
 KV-cache reuse and validated-model hot-path checks, the current 64-token
 encode-only measured loop is roughly 12 seconds. The model forward path also reuses
 `ForwardWorkspace` scratch buffers across tokens, avoiding per-token allocation

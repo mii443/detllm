@@ -117,7 +117,7 @@ fn real_main() -> Result<(), String> {
         Some("check-ci-workflow") => check_ci_workflow(),
         Some("check-determinism") => check_determinism(),
         _ => Err(
-            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf [--metadata-prefix]|bench-file --model model.gguf --input file [--limit-bytes N] [--limit-tokens N] [--n-ctx N] [--iters N] [--threads N] [--progress-every N] [--no-warmup] [--encode-only] [--show-phases]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N] [--worst-rows N] [--top-diffs N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
+            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf [--metadata-prefix]|bench-file --model model.gguf --input file [--limit-bytes N] [--limit-tokens N] [--n-ctx N] [--iters N] [--threads N] [--progress-every N] [--no-warmup] [--encode-only] [--show-phases] [--estimate-full-run]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N] [--worst-rows N] [--top-diffs N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
                 .to_owned(),
         ),
     }
@@ -332,6 +332,7 @@ struct BenchFileOpts {
     warmup: bool,
     encode_only: bool,
     show_phases: bool,
+    estimate_full_run: bool,
 }
 
 #[derive(Debug)]
@@ -928,6 +929,7 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
     let mut warmup = true;
     let mut encode_only = false;
     let mut show_phases = false;
+    let mut estimate_full_run = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
@@ -1015,6 +1017,9 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
             "--show-phases" => {
                 show_phases = true;
             }
+            "--estimate-full-run" => {
+                estimate_full_run = true;
+            }
             other => return Err(format!("unknown bench-file argument: {other}")),
         }
         i += 1;
@@ -1034,6 +1039,7 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
         warmup,
         encode_only,
         show_phases,
+        estimate_full_run,
     })
 }
 
@@ -1080,6 +1086,7 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
     let phase_start = Instant::now();
     let source_input_bytes = input_file_len(&opts.input)?;
     let mut input = read_limited_input(&opts.input, opts.limit_bytes)?;
+    let limited_input_bytes = input.len();
     let input_read_ms = phase_start.elapsed().as_secs_f64() * 1000.0;
     let phase_start = Instant::now();
     let mut symbols = tokenizer
@@ -1200,6 +1207,15 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
         input_bytes as f64 / elapsed.as_secs_f64(),
         (symbols.len() * opts.iters) as f64 / elapsed.as_secs_f64()
     );
+    if opts.estimate_full_run {
+        print_bench_file_estimate(
+            tokenized_tokens,
+            symbols.len(),
+            limited_input_bytes,
+            opts.iters,
+            elapsed.as_secs_f64(),
+        );
+    }
     if opts.show_phases {
         println!(
             "bench-file-phases: model_read_ms={:.3} gguf_parse_ms={:.3} model_load_ms={:.3} tokenizer_setup_ms={:.3} input_read_ms={:.3} tokenize_ms={:.3} token_prefix_ms={:.3} warmup_ms={:.3} measured_ms={:.3} total_ms={:.3}",
@@ -1216,6 +1232,73 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+fn print_bench_file_estimate(
+    tokenized_tokens: usize,
+    measured_tokens: usize,
+    limited_input_bytes: usize,
+    iters: usize,
+    elapsed_s: f64,
+) {
+    let Some(estimate) = bench_file_estimate(
+        tokenized_tokens,
+        measured_tokens,
+        limited_input_bytes,
+        iters,
+        elapsed_s,
+    ) else {
+        println!(
+            "bench-file-estimate: full_tokens={} full_input_bytes={} unavailable=true reason=empty-or-invalid-measurement",
+            tokenized_tokens.saturating_mul(iters),
+            limited_input_bytes.saturating_mul(iters)
+        );
+        return;
+    };
+    println!(
+        "bench-file-estimate: full_tokens={} full_input_bytes={} measured_tokens={} scale_factor={:.6} estimated_measured_ms={:.3} estimated_measured_s={:.3} measured_tokens_per_s={:.3}",
+        estimate.full_tokens,
+        estimate.full_input_bytes,
+        estimate.measured_tokens,
+        estimate.scale_factor,
+        estimate.estimated_measured_s * 1000.0,
+        estimate.estimated_measured_s,
+        estimate.measured_tokens_per_s
+    );
+}
+
+#[derive(Debug)]
+struct BenchFileEstimate {
+    full_tokens: usize,
+    full_input_bytes: usize,
+    measured_tokens: usize,
+    scale_factor: f64,
+    estimated_measured_s: f64,
+    measured_tokens_per_s: f64,
+}
+
+fn bench_file_estimate(
+    tokenized_tokens: usize,
+    measured_tokens: usize,
+    limited_input_bytes: usize,
+    iters: usize,
+    elapsed_s: f64,
+) -> Option<BenchFileEstimate> {
+    let measured_total_tokens = measured_tokens.checked_mul(iters)?;
+    let full_total_tokens = tokenized_tokens.checked_mul(iters)?;
+    if measured_total_tokens == 0 || !elapsed_s.is_finite() || elapsed_s <= 0.0 {
+        return None;
+    }
+    let measured_tokens_per_s = measured_total_tokens as f64 / elapsed_s;
+    let estimated_measured_s = full_total_tokens as f64 / measured_tokens_per_s;
+    Some(BenchFileEstimate {
+        full_tokens: full_total_tokens,
+        full_input_bytes: limited_input_bytes.saturating_mul(iters),
+        measured_tokens: measured_total_tokens,
+        scale_factor: full_total_tokens as f64 / measured_total_tokens as f64,
+        estimated_measured_s,
+        measured_tokens_per_s,
+    })
 }
 
 fn parse_compare_logits_opts(args: Vec<String>) -> Result<CompareLogitsOpts, String> {
@@ -3346,6 +3429,7 @@ mod tests {
             "--no-warmup".to_owned(),
             "--encode-only".to_owned(),
             "--show-phases".to_owned(),
+            "--estimate-full-run".to_owned(),
         ])
         .expect("bench-file options");
         assert_eq!(opts.model, "model.gguf");
@@ -3359,6 +3443,7 @@ mod tests {
         assert!(!opts.warmup);
         assert!(opts.encode_only);
         assert!(opts.show_phases);
+        assert!(opts.estimate_full_run);
 
         let err = parse_bench_file_opts(vec![
             "--model".to_owned(),
@@ -3406,6 +3491,20 @@ mod tests {
             err,
             "bench-file: --progress-every must be greater than zero"
         );
+    }
+
+    #[test]
+    fn bench_file_estimate_scales_prefix_measurement_to_full_tokens() {
+        let estimate = bench_file_estimate(1_000, 25, 4_096, 2, 10.0).expect("valid estimate");
+        assert_eq!(estimate.full_tokens, 2_000);
+        assert_eq!(estimate.full_input_bytes, 8_192);
+        assert_eq!(estimate.measured_tokens, 50);
+        assert_eq!(estimate.scale_factor, 40.0);
+        assert_eq!(estimate.measured_tokens_per_s, 5.0);
+        assert_eq!(estimate.estimated_measured_s, 400.0);
+
+        assert!(bench_file_estimate(1_000, 0, 4_096, 1, 10.0).is_none());
+        assert!(bench_file_estimate(1_000, 25, 4_096, 1, 0.0).is_none());
     }
 
     #[test]
