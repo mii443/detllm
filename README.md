@@ -50,6 +50,7 @@ cargo run --release -p xtask --features parallel,simd -- bench-file --model mode
 cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --threads 8 --iters 1 --no-warmup --encode-only --show-phases --progress-every 100
 scripts/run-target-bench-smoke.sh --input /tmp/enwik8 --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
 scripts/run-target-determinism-matrix.sh --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
+scripts/run-target-codec-determinism-matrix.sh --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
 cargo run -p det-cli -- tokenize -m model.gguf -p "prompt text"
 scripts/reference_logits_transformers.py --model-id TinyLlama/TinyLlama-1.1B-Chat-v1.0 --tokens 1,2,3 --out hf.logits.bin --expected-rows 3 --expected-vocab 32000
 c++ -std=c++17 -O2 -I/usr/local/include scripts/reference_logits_llamacpp.cpp -L/usr/local/lib -Wl,-rpath,/usr/local/lib -lllama -lggml -lggml-cpu -lggml-base -o /tmp/reference_logits_llamacpp
@@ -154,6 +155,18 @@ streams from the raw-logits matrix. All hashes matched bit-for-bit:
 | Qwen2.5 Q8_0 | `22a98865d5bd6c45a2ae4c1a29e8b37db58a78a6c7c8caedb53a3d6baee33088` |
 | SmolLM2 Q8_0 | `f9b3942c20f3a4177f8d41544a918af6cc6ec90a51c085f1f69cc73cf9f6683a` |
 
+Target-model codec determinism smoke, using
+`scripts/run-target-codec-determinism-matrix.sh`, checks DTLZ payload hashes for
+the byte-escape `binary-mixed` input and the `context-spanning` input with
+`threads=1,2,8`. Every output also decompresses back to the original bytes:
+
+| check | binary-mixed DTLZ SHA-256 | context-spanning DTLZ SHA-256 |
+|---|---|---|
+| TinyLlama Q8_0 | `0c8551a3afa977fe51e802bc5a4810925b2707e720ed74e5cf9057f07c421092` | `d0a0b9cb671df18d6188c5bb53487a085e65869ceee07f94fe5a768a123337ee` |
+| TinyLlama Q4_0 | `d2f89b70a1681bd5aaf28309e1bbc3d1f109c8ebba2c432875b7ef1b19229516` | `e79297e6e0da6e4449833057d0aaf6a6bb2b6cefe8764bc02bccb39f613f8395` |
+| Qwen2.5 Q8_0 | `ea719f3444398e1e1352aee5a4ac6690ae40ce106dc1990a4a3c60a3cbe7a72c` | `7047a35e2c976cb35333e2ccc653552f94a58e77d1a884719a703d6f8b2b1fa5` |
+| SmolLM2 Q8_0 | `2ac0d09372c2f16a57209a5e5bc585c8fb47913ff2bcb77588561101a61be4a4` | `960025e02a6baa87218018b877266628e37800585e5839a72d7fde6671f0d1c0` |
+
 ## Remaining Work
 
 The implementation is not yet complete against the full design. In particular,
@@ -164,7 +177,7 @@ the following acceptance evidence is still missing:
   tokenizer-backed 8-token raw-logits matrix, logits/log-probability smoke
   evidence, and the scripted target-model
   empty/multilingual/binary/context-spanning round-trip and
-  thread/chunk-size determinism matrices.
+  logits/thread/chunk-size and codec/thread determinism matrices.
 - Target-model enwik8 first-1MB compression-rate measurement with
   `xtask bench-file`; the bundled tiny fixture has input-scale enwik8 evidence.
 - Broader benchmark results on real target hardware beyond the current bundled

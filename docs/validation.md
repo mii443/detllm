@@ -1015,6 +1015,48 @@ binary-mixed, and context-spanning inputs for the tracked model/quantization
 set. Larger arbitrary-byte and multi-window payloads can still be used as
 stress tests, but this matrix is the acceptance smoke for each target model.
 
+### Target-Model Codec Determinism Matrix
+
+The target-model codec determinism matrix checks that public `compress` output
+is bit-identical across thread-count settings. It uses the byte-escape
+`binary-mixed` input and the `context-spanning` input from the round-trip
+matrix, with `--n-ctx 8` and `threads=1,2,8`. Every DTLZ file is decompressed
+and compared with the original input before the matrix accepts the row.
+
+Command:
+
+```sh
+scripts/run-target-codec-determinism-matrix.sh \
+  --tinyllama-q8 /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf \
+  --tinyllama-q4 /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf \
+  --qwen25-q8 /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf \
+  --smollm2-q8 /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf
+```
+
+Observed inputs:
+
+| input | bytes | SHA-256 |
+|---|---:|---|
+| `binary-mixed` | 28 | `458b71a7d9440b62ec2e34688a788980d90a4d872151d0634bb8e5402108b5a8` |
+| `context-spanning` | 64 | `3f29407e1529b5ba5f001e09a1d1e53b371a99036bfcc395c041d4cc23e75147` |
+
+Observed output summary:
+
+| model | input | invariant thread settings | DTLZ bytes | DTLZ SHA-256 |
+|---|---|---:|---:|---|
+| TinyLlama Q8_0 | binary-mixed | 3 | 86 | `0c8551a3afa977fe51e802bc5a4810925b2707e720ed74e5cf9057f07c421092` |
+| TinyLlama Q8_0 | context-spanning | 3 | 73 | `d0a0b9cb671df18d6188c5bb53487a085e65869ceee07f94fe5a768a123337ee` |
+| TinyLlama Q4_0 | binary-mixed | 3 | 85 | `d2f89b70a1681bd5aaf28309e1bbc3d1f109c8ebba2c432875b7ef1b19229516` |
+| TinyLlama Q4_0 | context-spanning | 3 | 73 | `e79297e6e0da6e4449833057d0aaf6a6bb2b6cefe8764bc02bccb39f613f8395` |
+| Qwen2.5 Q8_0 | binary-mixed | 3 | 85 | `ea719f3444398e1e1352aee5a4ac6690ae40ce106dc1990a4a3c60a3cbe7a72c` |
+| Qwen2.5 Q8_0 | context-spanning | 3 | 69 | `7047a35e2c976cb35333e2ccc653552f94a58e77d1a884719a703d6f8b2b1fa5` |
+| SmolLM2 Q8_0 | binary-mixed | 3 | 87 | `2ac0d09372c2f16a57209a5e5bc585c8fb47913ff2bcb77588561101a61be4a4` |
+| SmolLM2 Q8_0 | context-spanning | 3 | 70 | `960025e02a6baa87218018b877266628e37800585e5839a72d7fde6671f0d1c0` |
+
+This reuses the DTLZ hashes from the target round-trip matrix and proves that
+the current target-model codec path emits the same payload with
+`threads=1,2,8` for byte-escape and context-rollover cases.
+
 ### Target-Model Determinism Matrix
 
 The target-model determinism matrix checks that the current external GGUF set
