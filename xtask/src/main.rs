@@ -117,7 +117,7 @@ fn real_main() -> Result<(), String> {
         Some("check-ci-workflow") => check_ci_workflow(),
         Some("check-determinism") => check_determinism(),
         _ => Err(
-            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf [--metadata-prefix]|bench-file --model model.gguf --input file [--limit-bytes N] [--limit-tokens N] [--n-ctx N] [--iters N] [--threads N] [--progress-every N] [--no-warmup] [--encode-only] [--show-phases] [--estimate-full-run]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N] [--worst-rows N] [--top-diffs N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
+            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf [--metadata-prefix]|bench-file --model model.gguf --input file [--limit-bytes N] [--limit-tokens N] [--n-ctx N] [--iters N] [--threads N] [--progress-every N] [--summary PATH] [--no-warmup] [--encode-only] [--show-phases] [--estimate-full-run]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N] [--worst-rows N] [--top-diffs N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
                 .to_owned(),
         ),
     }
@@ -329,6 +329,7 @@ struct BenchFileOpts {
     iters: usize,
     threads: Option<usize>,
     progress_every: Option<usize>,
+    summary_path: Option<String>,
     warmup: bool,
     encode_only: bool,
     show_phases: bool,
@@ -926,6 +927,7 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
     let mut iters = 1usize;
     let mut threads = None;
     let mut progress_every = None;
+    let mut summary_path = None;
     let mut warmup = true;
     let mut encode_only = false;
     let mut show_phases = false;
@@ -1008,6 +1010,16 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
                 }
                 progress_every = Some(value);
             }
+            "--summary" => {
+                i += 1;
+                let raw = args
+                    .get(i)
+                    .ok_or("bench-file: missing value for --summary")?;
+                if raw.is_empty() {
+                    return Err("bench-file: --summary must not be empty".to_owned());
+                }
+                summary_path = Some(raw.clone());
+            }
             "--no-warmup" => {
                 warmup = false;
             }
@@ -1036,6 +1048,7 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
         iters,
         threads,
         progress_every,
+        summary_path,
         warmup,
         encode_only,
         show_phases,
@@ -1174,7 +1187,8 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
     let token_limit_label = opts
         .limit_tokens
         .map_or_else(|| "all".to_owned(), |limit_tokens| limit_tokens.to_string());
-    println!(
+    let mut summary_lines = Vec::new();
+    summary_lines.push(format!(
         "bench-file model={} input={} limit_bytes={} limit_tokens={} iters={} warmup={} mode={} threads={} n_ctx={} overlap={} model_sha256={} input_sha256={}",
         opts.model,
         opts.input,
@@ -1189,8 +1203,8 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
         overlap,
         model_sha256,
         input_sha256
-    );
-    println!(
+    ));
+    summary_lines.push(format!(
         "bench-file: source_input_bytes={} measured_input_bytes={} total_input_bytes={} tokenized_tokens={} tokens={} total_tokens={} payload_bytes={} dtlz_bytes={} payload_bits_per_byte={:.6} dtlz_bits_per_byte={:.6} compression_ratio={:.6} elapsed_ms={:.3} input_bytes_per_s={:.3} tokens_per_s={:.3}",
         source_input_bytes,
         measured_input_bytes,
@@ -1206,18 +1220,18 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
         elapsed.as_secs_f64() * 1000.0,
         input_bytes as f64 / elapsed.as_secs_f64(),
         (symbols.len() * opts.iters) as f64 / elapsed.as_secs_f64()
-    );
+    ));
     if opts.estimate_full_run {
-        print_bench_file_estimate(
+        summary_lines.push(bench_file_estimate_line(
             tokenized_tokens,
             symbols.len(),
             limited_input_bytes,
             opts.iters,
             elapsed.as_secs_f64(),
-        );
+        ));
     }
     if opts.show_phases {
-        println!(
+        summary_lines.push(format!(
             "bench-file-phases: model_read_ms={:.3} gguf_parse_ms={:.3} model_load_ms={:.3} tokenizer_setup_ms={:.3} input_read_ms={:.3} tokenize_ms={:.3} token_prefix_ms={:.3} warmup_ms={:.3} measured_ms={:.3} total_ms={:.3}",
             model_read_ms,
             gguf_parse_ms,
@@ -1229,18 +1243,24 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
             warmup_ms,
             elapsed.as_secs_f64() * 1000.0,
             total_start.elapsed().as_secs_f64() * 1000.0
-        );
+        ));
+    }
+    for line in &summary_lines {
+        println!("{line}");
+    }
+    if let Some(path) = &opts.summary_path {
+        write_bench_file_summary(path, &summary_lines)?;
     }
     Ok(())
 }
 
-fn print_bench_file_estimate(
+fn bench_file_estimate_line(
     tokenized_tokens: usize,
     measured_tokens: usize,
     limited_input_bytes: usize,
     iters: usize,
     elapsed_s: f64,
-) {
+) -> String {
     let Some(estimate) = bench_file_estimate(
         tokenized_tokens,
         measured_tokens,
@@ -1248,14 +1268,13 @@ fn print_bench_file_estimate(
         iters,
         elapsed_s,
     ) else {
-        println!(
+        return format!(
             "bench-file-estimate: full_tokens={} full_input_bytes={} unavailable=true reason=empty-or-invalid-measurement",
             tokenized_tokens.saturating_mul(iters),
             limited_input_bytes.saturating_mul(iters)
         );
-        return;
     };
-    println!(
+    format!(
         "bench-file-estimate: full_tokens={} full_input_bytes={} measured_tokens={} scale_factor={:.6} estimated_measured_ms={:.3} estimated_measured_s={:.3} measured_tokens_per_s={:.3}",
         estimate.full_tokens,
         estimate.full_input_bytes,
@@ -1264,7 +1283,31 @@ fn print_bench_file_estimate(
         estimate.estimated_measured_s * 1000.0,
         estimate.estimated_measured_s,
         estimate.measured_tokens_per_s
-    );
+    )
+}
+
+fn write_bench_file_summary(path: &str, lines: &[String]) -> Result<(), String> {
+    let path = Path::new(path);
+    if path.as_os_str().is_empty() {
+        return Err("bench-file: --summary must not be empty".to_owned());
+    }
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("bench-file: invalid --summary path: {}", path.display()))?;
+    let tmp = parent.join(format!(".{file_name}.{}.tmp", std::process::id()));
+    let mut body = String::new();
+    for line in lines {
+        body.push_str(line);
+        body.push('\n');
+    }
+    fs::write(&tmp, body).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    if let Err(e) = fs::rename(&tmp, path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("{}: {e}", path.display()));
+    }
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -3473,6 +3516,8 @@ mod tests {
             "8".to_owned(),
             "--progress-every".to_owned(),
             "100".to_owned(),
+            "--summary".to_owned(),
+            "/tmp/bench.summary".to_owned(),
             "--no-warmup".to_owned(),
             "--encode-only".to_owned(),
             "--show-phases".to_owned(),
@@ -3487,6 +3532,7 @@ mod tests {
         assert_eq!(opts.iters, 2);
         assert_eq!(opts.threads, Some(8));
         assert_eq!(opts.progress_every, Some(100));
+        assert_eq!(opts.summary_path.as_deref(), Some("/tmp/bench.summary"));
         assert!(!opts.warmup);
         assert!(opts.encode_only);
         assert!(opts.show_phases);
@@ -3538,6 +3584,16 @@ mod tests {
             err,
             "bench-file: --progress-every must be greater than zero"
         );
+
+        let err = parse_bench_file_opts(vec![
+            "--model".to_owned(),
+            "model.gguf".to_owned(),
+            "--input".to_owned(),
+            "enwik8".to_owned(),
+            "--summary".to_owned(),
+        ])
+        .expect_err("summary missing value must be rejected");
+        assert_eq!(err, "bench-file: missing value for --summary");
     }
 
     #[test]
@@ -3570,6 +3626,40 @@ mod tests {
         assert!(bench_file_progress_estimate(101, 100, 5.0).is_none());
         assert!(bench_file_progress_estimate(25, 100, 0.0).is_none());
         assert!(bench_file_progress_estimate(25, 100, f64::INFINITY).is_none());
+    }
+
+    #[test]
+    fn bench_file_summary_writer_replaces_file() {
+        let dir = unique_tmp_dir();
+        fs::create_dir_all(&dir).expect("mkdir");
+        let path = dir.join("bench.summary");
+        fs::write(&path, "old\n").expect("old summary");
+
+        write_bench_file_summary(
+            path.to_str().expect("utf8 path"),
+            &[
+                "bench-file model=x".to_owned(),
+                "bench-file: tokens=1".to_owned(),
+            ],
+        )
+        .expect("write summary");
+
+        assert_eq!(
+            fs::read_to_string(&path).expect("summary"),
+            "bench-file model=x\nbench-file: tokens=1\n"
+        );
+        let leftovers = fs::read_dir(&dir)
+            .expect("read dir")
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.ends_with(".tmp"))
+            })
+            .count();
+        assert_eq!(leftovers, 0);
+        fs::remove_dir_all(dir).expect("cleanup");
     }
 
     #[test]

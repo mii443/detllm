@@ -1096,7 +1096,7 @@ Command:
 ```sh
 cargo run --release -p xtask -- bench-file --model testdata/tiny-f32.gguf --input testdata/tiny.tokens.txt --n-ctx 8 --iters 1
 cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 4096 --limit-tokens 512 --n-ctx 2048 --threads 8 --iters 1 --no-warmup
-cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --threads 8 --iters 1 --no-warmup --encode-only --show-phases --estimate-full-run --progress-every 100
+cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --threads 8 --iters 1 --no-warmup --encode-only --show-phases --summary bench-file.summary --progress-every 100
 ```
 
 Build `xtask` with `--features parallel,simd` for target-model benchmark
@@ -1387,6 +1387,9 @@ encode-only mode, use a separate short round-trip smoke for codec correctness.
 `--show-phases` adds an opt-in `bench-file-phases` line for model
 read/parse/load, tokenizer setup, input read, tokenization, token-prefix
 detokenization, warmup, measured loop, and total wall time.
+`--summary PATH` writes the final stdout summary lines to a file through a
+same-directory temporary file and rename, which is useful for long target-model
+runs where progress output is noisy or the terminal history is transient.
 `--estimate-full-run` adds an opt-in `bench-file-estimate` line for
 `--limit-tokens` preflights, reporting the full tokenized prefix, full input
 byte count, scale factor, measured token throughput, and estimated measured
