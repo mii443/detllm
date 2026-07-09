@@ -1,5 +1,6 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap};
+use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TokenError {
@@ -8,7 +9,7 @@ pub enum TokenError {
     MissingVocabulary,
     MissingTokenBytes(Vec<u8>),
     MissingMergeToken(Vec<u8>),
-    IncompleteByteFallback,
+    IncompleteByteFallback { missing: Vec<u8> },
     MetadataType,
     TokenTypeLength,
     InvalidTokenType(i64),
@@ -21,6 +22,21 @@ pub enum TokenError {
     InvalidMerge(String),
     DuplicateMerge(String),
     UnsupportedTokenizerModel(String),
+}
+
+impl fmt::Display for TokenError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::IncompleteByteFallback { missing } => {
+                write!(
+                    f,
+                    "IncompleteByteFallback(missing={})",
+                    format_bytes(missing)
+                )
+            }
+            other => write!(f, "{other:?}"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -167,10 +183,11 @@ impl ByteFallbackTokenizer {
             }
         }
         let out = Self::new(&pairs)?;
-        if out.byte_to_token.iter().all(Option::is_some) {
+        let missing = missing_byte_tokens(&out.byte_to_token);
+        if missing.is_empty() {
             Ok(out)
         } else {
-            Err(TokenError::IncompleteByteFallback)
+            Err(TokenError::IncompleteByteFallback { missing })
         }
     }
 
@@ -237,8 +254,9 @@ impl ByteBpeTokenizer {
             token_to_bytes.insert(id, bytes);
         }
 
-        if byte_to_token.iter().any(Option::is_none) {
-            return Err(TokenError::IncompleteByteFallback);
+        let missing = missing_byte_tokens(&byte_to_token);
+        if !missing.is_empty() {
+            return Err(TokenError::IncompleteByteFallback { missing });
         }
 
         let mut merge_ranks = BTreeMap::new();
@@ -617,6 +635,29 @@ fn missing_byte_values(present: &[bool; 256]) -> Vec<u8> {
         .collect()
 }
 
+fn missing_byte_tokens(byte_to_token: &[Option<u32>; 256]) -> Vec<u8> {
+    byte_to_token
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, token)| token.is_none().then_some(idx as u8))
+        .collect()
+}
+
+fn format_bytes(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return "none".to_owned();
+    }
+    let mut out = String::new();
+    for (idx, byte) in bytes.iter().enumerate() {
+        if idx > 0 {
+            out.push(',');
+        }
+        use fmt::Write as _;
+        write!(&mut out, "{byte:02x}").expect("write to string");
+    }
+    out
+}
+
 fn parse_merge(merge: &str) -> Result<(&str, &str), TokenError> {
     let mut parts = merge.split(' ');
     let left = parts
@@ -748,7 +789,10 @@ mod tests {
         let tokens = vec!["<0x00>".to_owned(), "<0x01>".to_owned()];
         assert!(matches!(
             ByteFallbackTokenizer::from_tokens(&tokens),
-            Err(TokenError::IncompleteByteFallback)
+            Err(TokenError::IncompleteByteFallback { missing })
+                if missing.len() == 254
+                    && missing[0] == 2
+                    && missing[253] == 255
         ));
     }
 

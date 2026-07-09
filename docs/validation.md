@@ -722,7 +722,7 @@ model-info metadata key=tokenizer.ggml.eos_token_id u32=2
 model-info metadata key=tokenizer.ggml.tokens array<string>[49152]
 model-info metadata key=tokenizer.ggml.merges array<string>[48900]
 model-info metadata key=tokenizer.ggml.token_type array<i32>[49152]
-model-info tokenizer status=error error=IncompleteByteFallback
+model-info tokenizer status=error error=IncompleteByteFallback(missing=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,fb,fc,fd,fe,ff)
 model-info byte-coverage tokens=49152 single_byte=235 emittable_single_byte=235 missing=21 missing_emittable=21 missing_first=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,... missing_emittable_first=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,...
 model-info config status=ok block_count=24 embedding_length=2048 feed_forward_length=8192 head_count=32 head_count_kv=32 context_length=8192 rope_dimension_count=64 rope_pairing=Adjacent rope_freq_base=130000.0 rms_epsilon=1e-5 attention_scale=0.125
 model-info tensor-inventory total=218 encoded_bytes=1818632192 encoded_len_errors=0 F32=49 Q8_0=169
@@ -745,7 +745,7 @@ Observed bartowski Q8_0 prefix result:
 ```text
 model-info path=/tmp/smollm2-bartowski-prefix.gguf bytes=4194304 sha256=a82b6f909a52c435a6a19ebd907eb8919dd5160008ed1d24e456331de1102b2b metadata_prefix=true gguf_version=3 metadata=38 tensors=218 data_offset=1782752
 model-info metadata key=general.name string=Smollm2 1.7B 8k Mix7 Ep2 v2
-model-info tokenizer status=error error=IncompleteByteFallback
+model-info tokenizer status=error error=IncompleteByteFallback(missing=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,fb,fc,fd,fe,ff)
 model-info byte-coverage tokens=49152 single_byte=235 emittable_single_byte=235 missing=21 missing_emittable=21 missing_first=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,... missing_emittable_first=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,...
 model-info tensor-inventory total=218 encoded_bytes=1818632192 encoded_len_errors=0 F32=49 Q8_0=169
 model-info required-tensors status=ok checked=218 missing=0 shape_mismatch=0 unsupported_type=0 tied_output=true
@@ -765,7 +765,7 @@ model-info metadata key=tokenizer.ggml.eos_token_id u32=2
 model-info metadata key=tokenizer.ggml.tokens array<string>[49152]
 model-info metadata key=tokenizer.ggml.merges array<string>[48900]
 model-info metadata key=tokenizer.ggml.token_type array<i32>[49152]
-model-info tokenizer status=error error=IncompleteByteFallback
+model-info tokenizer status=error error=IncompleteByteFallback(missing=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,fb,fc,fd,fe,ff)
 model-info byte-coverage tokens=49152 single_byte=235 emittable_single_byte=235 missing=21 missing_emittable=21 missing_first=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,... missing_emittable_first=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,...
 model-info config status=ok block_count=24 embedding_length=2048 feed_forward_length=8192 head_count=32 head_count_kv=32 context_length=8192 rope_dimension_count=64 rope_pairing=Adjacent rope_freq_base=130000.0 rms_epsilon=1e-5 attention_scale=0.125
 model-info tensor-inventory total=218 encoded_bytes=1053827072 encoded_len_errors=0 F32=49 Q4_K=144 Q6_K=25
@@ -838,7 +838,7 @@ cargo run --release -p det-cli -- tokenize -m /tmp/detllm-external/SmolLM2-1.7B-
 Observed output:
 
 ```text
-detllm: tokenizer error: IncompleteByteFallback
+detllm: tokenizer error: IncompleteByteFallback(missing=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,fb,fc,fd,fe,ff)
 ```
 
 This is real SmolLM2 GGUF evidence for model config parsing, required tensor

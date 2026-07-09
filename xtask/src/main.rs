@@ -475,8 +475,7 @@ fn write_tokenizer_summary(out: &mut String, gguf: &det_gguf::Gguf) {
             writeln!(out, "model-info tokenizer status=ok kind={kind}").expect("write to string");
         }
         Err(e) => {
-            writeln!(out, "model-info tokenizer status=error error={e:?}")
-                .expect("write to string");
+            writeln!(out, "model-info tokenizer status=error error={e}").expect("write to string");
         }
     }
     match det_token::byte_coverage_from_gguf(gguf) {
@@ -495,7 +494,7 @@ fn write_tokenizer_summary(out: &mut String, gguf: &det_gguf::Gguf) {
             .expect("write to string");
         }
         Err(e) => {
-            writeln!(out, "model-info byte-coverage status=error error={e:?}")
+            writeln!(out, "model-info byte-coverage status=error error={e}")
                 .expect("write to string");
         }
     }
@@ -1032,7 +1031,7 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
     let phase_start = Instant::now();
     validate_tokenizer_and_codec_vocab(&gguf, &model)?;
     let tokenizer = det_token::Tokenizer::from_gguf(&gguf)
-        .map_err(|e| format!("{}: tokenizer error: {e:?}", opts.model))?;
+        .map_err(|e| format!("{}: tokenizer error: {e}", opts.model))?;
     let tokenizer_setup_ms = phase_start.elapsed().as_secs_f64() * 1000.0;
     let phase_start = Instant::now();
     let mut input = fs::read(&opts.input).map_err(|e| format!("{}: {e}", opts.input))?;
@@ -2171,7 +2170,7 @@ fn bench_codec(label: &str, path: &str, iters: usize) -> Result<(), String> {
         .map_err(|e| format!("{label}: model load error: {e:?}"))?;
     validate_tokenizer_and_codec_vocab(&gguf, &model)?;
     let tokenizer = det_token::Tokenizer::from_gguf(&gguf)
-        .map_err(|e| format!("{label}: tokenizer error: {e:?}"))?;
+        .map_err(|e| format!("{label}: tokenizer error: {e}"))?;
     let input = b"detllm deterministic compression smoke\n";
     let token_ids: Vec<usize> = tokenizer
         .tokenize_bytes(input)

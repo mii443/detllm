@@ -824,8 +824,8 @@ impl LoadedModel {
         let model_sha256 = hasher.finalize();
         let gguf = det_gguf::parse(&bytes).map_err(|e| format!("GGUF parse error: {e:?}"))?;
         let tokenizer_vocab_len = gguf_token_vocab_len(&gguf)?;
-        let tokenizer = det_token::Tokenizer::from_gguf(&gguf)
-            .map_err(|e| format!("tokenizer error: {e:?}"))?;
+        let tokenizer =
+            det_token::Tokenizer::from_gguf(&gguf).map_err(|e| format!("tokenizer error: {e}"))?;
         let model = det_model::F32Llama::from_gguf(&gguf, &bytes)
             .map_err(|e| format!("model load error: {e:?}"))?;
         validate_tokenizer_model_vocab_len(tokenizer_vocab_len, &model)?;
@@ -932,7 +932,7 @@ fn tokenize(args: Vec<String>) -> Result<(), String> {
     let gguf = det_gguf::parse(&model_bytes).map_err(|e| format!("GGUF parse error: {e:?}"))?;
     let tokenizer_vocab_len = gguf_token_vocab_len(&gguf)?;
     let tokenizer =
-        det_token::Tokenizer::from_gguf(&gguf).map_err(|e| format!("tokenizer error: {e:?}"))?;
+        det_token::Tokenizer::from_gguf(&gguf).map_err(|e| format!("tokenizer error: {e}"))?;
     let model_vocab_len = gguf_model_vocab_len(&gguf)?;
     validate_vocab_lengths(tokenizer_vocab_len, model_vocab_len)?;
 
@@ -1030,8 +1030,8 @@ fn logits(args: Vec<String>) -> Result<(), String> {
         parse_tokens(&raw)?
     } else {
         tokenizer_vocab_len = Some(gguf_token_vocab_len(&gguf)?);
-        let tokenizer = det_token::Tokenizer::from_gguf(&gguf)
-            .map_err(|e| format!("tokenizer error: {e:?}"))?;
+        let tokenizer =
+            det_token::Tokenizer::from_gguf(&gguf).map_err(|e| format!("tokenizer error: {e}"))?;
         tokenizer
             .tokenize_bytes(prompt.as_deref().unwrap_or_default().as_bytes())
             .map_err(|e| format!("tokenize error: {e:?}"))?
@@ -1370,7 +1370,7 @@ mod tests {
             Err(err) => err,
         };
         assert!(
-            err.contains("tokenizer error: IncompleteByteFallback"),
+            err.contains("tokenizer error: IncompleteByteFallback(missing=ff)"),
             "{err}"
         );
 
