@@ -45,7 +45,7 @@ cargo run -p xtask -- model-info --model testdata/tiny-f32.gguf
 cargo run -p xtask -- model-info --model model.gguf
 cargo run --release -p xtask -- bench-testdata --iters 100
 cargo run --release -p xtask -- bench-file --model testdata/tiny-f32.gguf --input testdata/tiny.tokens.txt --n-ctx 8 --iters 2
-cargo run --release -p xtask -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --limit-tokens 512 --n-ctx 2048 --threads 8 --iters 1 --no-warmup
+cargo run --release -p xtask -- bench-file --model model.gguf --input enwik8 --limit-bytes 4096 --limit-tokens 512 --n-ctx 2048 --threads 8 --iters 1 --no-warmup
 cargo run --release -p xtask -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --threads 8 --iters 1 --no-warmup
 cargo run -p det-cli -- tokenize -m model.gguf -p "prompt text"
 scripts/reference_logits_transformers.py --model-id TinyLlama/TinyLlama-1.1B-Chat-v1.0 --tokens 1,2,3 --out hf.logits.bin --expected-rows 3 --expected-vocab 32000
