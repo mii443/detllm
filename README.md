@@ -54,6 +54,7 @@ scripts/run-target-logits-broad-matrix.sh --reference /tmp/reference_logits_llam
 scripts/run-target-determinism-matrix.sh --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
 scripts/run-target-codec-determinism-matrix.sh --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
 scripts/run-target-logprob-matrix.sh --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
+scripts/run-target-logprob-broad-matrix.sh --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
 cargo run -p det-cli -- tokenize -m model.gguf -p "prompt text"
 scripts/reference_logits_transformers.py --model-id TinyLlama/TinyLlama-1.1B-Chat-v1.0 --tokens 1,2,3 --out hf.logits.bin --expected-rows 3 --expected-vocab 32000
 c++ -std=c++17 -O2 -I/usr/local/include scripts/reference_logits_llamacpp.cpp -L/usr/local/lib -Wl,-rpath,/usr/local/lib -lllama -lggml -lggml-cpu -lggml-base -o /tmp/reference_logits_llamacpp
@@ -169,6 +170,20 @@ minimum row cosine per model was:
 | Qwen2.5 Q8_0 | 2 | 0.999647692 |
 | SmolLM2 Q8_0 | 2 | 0.999227139 |
 
+Target-model longer-context log-probability smoke, using
+`scripts/run-target-logprob-broad-matrix.sh`, checks llama.cpp
+`llama-perplexity --save-all-logits` references with `ctx-size=16`,
+`chunks=3`, and a repeated validation prompt. All cases passed the broad
+`--max-target-abs-diff 0.3` threshold; SmolLM2 Q8_0 is the current worst case
+and exceeds the shorter matrix's `0.2` threshold:
+
+| check | rows | max target abs diff |
+|---|---:|---:|
+| TinyLlama Q8_0 | 21 | 0.091041565 |
+| TinyLlama Q4_0 | 21 | 0.152609825 |
+| Qwen2.5 Q8_0 | 21 | 0.186036110 |
+| SmolLM2 Q8_0 | 21 | 0.250263214 |
+
 Target-model determinism smoke, using
 `scripts/run-target-determinism-matrix.sh`, checks the same four external GGUFs
 with `threads=1,2,8` and `chunk-size=1,2,8` over the tokenizer-backed 8-token
@@ -200,9 +215,9 @@ the following acceptance evidence is still missing:
 
 - Further target-model reference-quality checks are still needed beyond the
   current scripted TinyLlama Q8_0/Q4_0, Qwen2.5 Q8_0, and SmolLM2 Q8_0
-  llama.cpp raw-logits broad matrix and log-probability matrix, especially
-  independent HF transformers coverage and longer-context/perplexity-quality
-  checks.
+  llama.cpp raw-logits broad matrix and short/long log-probability matrices,
+  especially independent HF transformers coverage and broader
+  perplexity-quality checks.
 - Target-model enwik8 first-1MB compression-rate measurement with
   `xtask bench-file`; the bundled tiny fixture has input-scale enwik8 evidence.
 - Broader benchmark results on real target hardware beyond the current bundled

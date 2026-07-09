@@ -1660,6 +1660,30 @@ compare-llamacpp-logprobs chunks=2 n_ctx=8 vocab=151936 rows=6 values=911616 add
 compare-llamacpp-logprobs chunks=2 n_ctx=8 vocab=49152 rows=6 values=294912 add_bos=false bos_token=1 max_abs_diff=12.659570694 rms_diff=0.653486127 max_target_abs_diff=0.076397419
 ```
 
+Longer-context reproducible target-model wrapper:
+
+```sh
+scripts/run-target-logprob-broad-matrix.sh --tinyllama-q8 /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf --tinyllama-q4 /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf --qwen25-q8 /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --smollm2-q8 /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf --out /tmp/detllm-logprob-broad-matrix-20260710 --threads 8 --ctx-size 16 --batch-size 16 --chunks 3
+```
+
+This broader check uses a repeated validation prompt, `ctx-size=16`,
+`chunks=3`, and the wrapper's default `--max-target-abs-diff 0.3`. The shorter
+`0.2` threshold was too tight for SmolLM2 in this longer setup:
+`max_target_abs_diff=0.250263214`.
+
+Observed longer-context matrix output:
+
+```text
+== tinyllama-q8-c16-k3 ==
+compare-llamacpp-logprobs chunks=3 n_ctx=16 vocab=32000 rows=21 values=672000 add_bos=true bos_token=1 max_abs_diff=13.301235199 rms_diff=1.700152315 max_target_abs_diff=0.091041565
+== tinyllama-q4-c16-k3 ==
+compare-llamacpp-logprobs chunks=3 n_ctx=16 vocab=32000 rows=21 values=672000 add_bos=true bos_token=1 max_abs_diff=13.530838013 rms_diff=1.578967313 max_target_abs_diff=0.152609825
+== qwen25-q8-c16-k3 ==
+compare-llamacpp-logprobs chunks=3 n_ctx=16 vocab=151936 rows=21 values=3190656 add_bos=false bos_token=151643 max_abs_diff=15.926328659 rms_diff=2.879756257 max_target_abs_diff=0.186036110
+== smollm2-q8-c16-k3 ==
+compare-llamacpp-logprobs chunks=3 n_ctx=16 vocab=49152 rows=21 values=1032192 add_bos=false bos_token=1 max_abs_diff=20.969736099 rms_diff=2.214630498 max_target_abs_diff=0.250263214
+```
+
 TinyLlama Q8_0 llama.cpp reference command:
 
 ```sh
