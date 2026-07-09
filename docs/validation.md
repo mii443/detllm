@@ -1561,16 +1561,45 @@ scripts/reference_logits_transformers.py --model-id TinyLlama/TinyLlama-1.1B-Cha
 cargo run -p xtask -- compare-logits --actual detllm.logits.bin --reference reference.logits.bin --row-size 32000 --rows 3 --min-cosine 0.999
 ```
 
+Reproducible target-model HF Transformers wrapper:
+
+```sh
+scripts/run-target-hf-logits-matrix.sh \
+  --tinyllama-q8 /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf \
+  --tinyllama-q4 /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf \
+  --qwen25-q8 /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf \
+  --smollm2-q8 /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf \
+  --out /tmp/detllm-hf-logits-matrix-20260710 \
+  --threads 8 \
+  --torch-threads 1 \
+  --dtype float32
+```
+
+The wrapper runs the same short low-level token streams and tokenizer-backed
+8-token validation streams used by the llama.cpp raw-logits broad matrix:
+TinyLlama Q8_0/Q4_0 against
+`TinyLlama/TinyLlama-1.1B-Chat-v1.0`, Qwen2.5 Q8_0 against
+`Qwen/Qwen2.5-1.5B-Instruct`, and SmolLM2 Q8_0 against
+`HuggingFaceTB/SmolLM2-1.7B-Instruct`. Each row writes a detllm dump, an HF
+Transformers dump, and a `compare-logits` report under `--out`. The HF model
+arguments can also point at local model directories for offline validation.
+
 The script's syntax and argument parser were checked locally without writing
 bytecode with:
 
 ```sh
 python3 -B scripts/reference_logits_transformers.py --help
+bash -n scripts/run-target-hf-logits-matrix.sh
+scripts/run-target-hf-logits-matrix.sh --help
 ```
 
-This still does not count as the required external raw-logits cosine evidence
-until it is run in an environment with compatible `torch` and `transformers`
-installed and the resulting `compare-logits` output is recorded here.
+This still does not count as the required independent HF raw-logits cosine
+evidence until the wrapper is run in an environment with compatible `torch` and
+`transformers` installed, the requested HF model IDs or local model directories
+available, and the resulting `compare-logits` output recorded here.
+Current host dependency preflight on 2026-07-10: `torch` imports as
+`2.7.1+cu126`, but `transformers` is not installed, so the HF matrix was not
+run in this validation pass.
 
 TinyLlama Q8_0 llama.cpp raw-logits reference command:
 

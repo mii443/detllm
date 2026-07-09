@@ -51,6 +51,7 @@ cargo run --release -p xtask --features parallel,simd -- bench-file --model mode
 scripts/run-target-full-bench.sh --model qwen25-q8.gguf --input /tmp/enwik8 --name qwen25-q8-first1m
 scripts/run-target-bench-smoke.sh --input /tmp/enwik8 --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
 scripts/run-target-logits-broad-matrix.sh --reference /tmp/reference_logits_llamacpp --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
+scripts/run-target-hf-logits-matrix.sh --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
 scripts/run-target-determinism-matrix.sh --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
 scripts/run-target-codec-determinism-matrix.sh --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
 scripts/run-target-logprob-matrix.sh --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
@@ -171,6 +172,13 @@ minimum row cosine per model was:
 | Qwen2.5 Q8_0 | 2 | 0.999647692 |
 | SmolLM2 Q8_0 | 2 | 0.999227139 |
 
+`scripts/run-target-hf-logits-matrix.sh` provides the matching independent HF
+Transformers raw-logits matrix shape for the same token streams and target
+GGUFs. It expects a Python environment with `torch` and `transformers` plus
+HF model IDs or local model directories, then writes detllm dumps, HF dumps,
+and `compare-logits` logs under `/tmp/detllm-hf-logits-matrix` by default.
+Recorded HF matrix results are still pending.
+
 Target-model longer-context log-probability smoke, using
 `scripts/run-target-logprob-broad-matrix.sh`, checks llama.cpp
 `llama-perplexity --save-all-logits` references with `ctx-size=16`,
@@ -231,8 +239,9 @@ the following acceptance evidence is still missing:
 - Further target-model reference-quality checks are still needed beyond the
   current scripted TinyLlama Q8_0/Q4_0, Qwen2.5 Q8_0, and SmolLM2 Q8_0
   llama.cpp raw-logits broad matrix and short/long log-probability matrices,
-  plus the current llama.cpp PPL reference smoke, especially independent HF
-  transformers coverage and broader perplexity-quality checks.
+  plus the current llama.cpp PPL reference smoke. A reproducible HF
+  transformers raw-logits matrix wrapper exists, but recorded HF results and
+  broader perplexity-quality checks are still pending.
 - Target-model enwik8 first-1MB compression-rate measurement with
   `xtask bench-file`; the bundled tiny fixture has input-scale enwik8 evidence.
 - Broader benchmark results on real target hardware beyond the current bundled
