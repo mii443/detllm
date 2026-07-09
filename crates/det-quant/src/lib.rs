@@ -59,14 +59,24 @@ pub struct Q6KBlock {
 }
 
 pub fn quantize_q8a(input: &[f32]) -> Result<alloc::vec::Vec<Q8ABlock>, QuantError> {
+    let mut out = alloc::vec::Vec::new();
+    quantize_q8a_into(input, &mut out)?;
+    Ok(out)
+}
+
+pub fn quantize_q8a_into(
+    input: &[f32],
+    out: &mut alloc::vec::Vec<Q8ABlock>,
+) -> Result<(), QuantError> {
     if input.is_empty() || input.len() % BLOCK != 0 {
         return Err(QuantError::InvalidBlockLength);
     }
-    let mut out = alloc::vec::Vec::with_capacity(input.len() / BLOCK);
+    out.clear();
+    out.reserve(input.len() / BLOCK);
     for chunk in input.chunks_exact(BLOCK) {
         out.push(try_quantize_q8a_block(chunk)?);
     }
-    Ok(out)
+    Ok(())
 }
 
 pub fn quantize_q8a_block(input: &[f32]) -> Q8ABlock {
@@ -74,14 +84,24 @@ pub fn quantize_q8a_block(input: &[f32]) -> Q8ABlock {
 }
 
 pub fn quantize_q8k(input: &[f32]) -> Result<alloc::vec::Vec<Q8KBlock>, QuantError> {
+    let mut out = alloc::vec::Vec::new();
+    quantize_q8k_into(input, &mut out)?;
+    Ok(out)
+}
+
+pub fn quantize_q8k_into(
+    input: &[f32],
+    out: &mut alloc::vec::Vec<Q8KBlock>,
+) -> Result<(), QuantError> {
     if input.is_empty() || input.len() % Q6K_BLOCK != 0 {
         return Err(QuantError::InvalidBlockLength);
     }
-    let mut out = alloc::vec::Vec::with_capacity(input.len() / Q6K_BLOCK);
+    out.clear();
+    out.reserve(input.len() / Q6K_BLOCK);
     for chunk in input.chunks_exact(Q6K_BLOCK) {
         out.push(try_quantize_q8k_block(chunk)?);
     }
-    Ok(out)
+    Ok(())
 }
 
 pub fn quantize_q8k_block(input: &[f32]) -> Q8KBlock {
@@ -842,6 +862,32 @@ mod tests {
             try_quantize_q8a_block(&input),
             Err(QuantError::NonFiniteInput)
         );
+    }
+
+    #[test]
+    fn quantize_into_matches_owned_api_and_reuses_buffers() {
+        let input = (0..(BLOCK * 2))
+            .map(|i| (i as f32 - 17.0) / 11.0)
+            .collect::<alloc::vec::Vec<_>>();
+        let expected = quantize_q8a(&input).expect("owned q8a");
+        let mut scratch = alloc::vec::Vec::with_capacity(8);
+        quantize_q8a_into(&input, &mut scratch).expect("scratch q8a");
+        assert_eq!(scratch, expected);
+        let capacity = scratch.capacity();
+        quantize_q8a_into(&input[..BLOCK], &mut scratch).expect("second q8a");
+        assert_eq!(
+            scratch,
+            quantize_q8a(&input[..BLOCK]).expect("owned second q8a")
+        );
+        assert!(scratch.capacity() >= capacity);
+
+        let input_k = (0..Q6K_BLOCK)
+            .map(|i| (i as f32 - 128.0) / 13.0)
+            .collect::<alloc::vec::Vec<_>>();
+        let expected_k = quantize_q8k(&input_k).expect("owned q8k");
+        let mut scratch_k = alloc::vec::Vec::with_capacity(4);
+        quantize_q8k_into(&input_k, &mut scratch_k).expect("scratch q8k");
+        assert_eq!(scratch_k, expected_k);
     }
 
     #[test]

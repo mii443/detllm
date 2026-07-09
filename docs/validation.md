@@ -1237,12 +1237,13 @@ ByteBPE tokenization is about 1.5 seconds on this host; after streaming
 KV-cache reuse and validated-model hot-path checks, the current 64-token
 encode-only measured loop is roughly 12 seconds. The model forward path also reuses
 `ForwardWorkspace` scratch buffers across tokens, avoiding per-token allocation
-of the large hidden-state, projection, attention, and feed-forward vectors, and
-uses layout checks for already-loaded models instead of re-scanning all weight
-tensors on every token and GEMV. Attention reads KV-cache prefix slices
-directly instead of copying per-head key/value windows. The codec CDF path also
-reuses the exp, frequency, and cumulative buffers across tokens; tests verify
-the scratch API is bit-for-bit equivalent to the owned `logits_to_cdf` API and
+of the large hidden-state, projection, attention, feed-forward, Q8A, and Q8_K
+activation buffers, and uses layout checks for already-loaded models instead
+of re-scanning all weight tensors on every token and GEMV. Attention reads
+KV-cache prefix slices directly instead of copying per-head key/value windows.
+The codec CDF path also reuses the exp, frequency, and cumulative buffers
+across tokens; tests verify the scratch API is bit-for-bit equivalent to the
+owned `logits_to_cdf` API and
 that streaming codec payloads still match the direct replay rule. Decode uses
 the validated CDF lookup for CDFs built by this codec path, avoiding a full CDF
 validation scan on every decoded token while leaving the public validating

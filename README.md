@@ -84,7 +84,8 @@ changing the stdout result lines. The codec benchmark path reuses a
 streaming KV cache inside each
 fixed context window and only replays the configured overlap after window
 rollover; repeated forward calls also reuse `ForwardWorkspace` scratch buffers
-instead of allocating the large model temporaries per token, and the codec CDF
+instead of allocating the large model temporaries or quantized activation
+buffers per token, and the codec CDF
 path reuses frequency/cumulative buffers across tokens while decode skips the
 full validation scan for CDFs built by the codec path. The hot forward path
 uses layout checks for already-loaded models instead of re-scanning all weight

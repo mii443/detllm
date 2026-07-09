@@ -5,8 +5,8 @@ use det_num::{
 use det_quant::{
     dot_q4_0_q8a, dot_q4_k_q8a, dot_q6_k_q8k, dot_q8_0_q8a, q4_0_block_from_gguf,
     q4_k_block_from_gguf, q4_k_value, q6_k_block_from_gguf, q6_k_value, q8_0_block_from_gguf,
-    quantize_q8a, quantize_q8k, Q4KBlock, Q4_0Block, Q6KBlock, Q8ABlock, Q8_0Block, BLOCK,
-    Q4K_BLOCK, Q6K_BLOCK,
+    quantize_q8a, quantize_q8a_into, quantize_q8k, quantize_q8k_into, Q4KBlock, Q4_0Block,
+    Q6KBlock, Q8ABlock, Q8KBlock, Q8_0Block, BLOCK, Q4K_BLOCK, Q6K_BLOCK,
 };
 #[cfg(all(feature = "parallel", not(target_family = "wasm")))]
 use rayon::prelude::*;
@@ -165,6 +165,8 @@ pub struct ForwardWorkspace {
     gate: Vec<f32>,
     up: Vec<f32>,
     ff: Vec<f32>,
+    q8a: Vec<Q8ABlock>,
+    q8k: Vec<Q8KBlock>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -487,6 +489,7 @@ impl WeightMatrix {
         matches!(self, Self::Q8_0(_) | Self::Q4_0(_) | Self::Q4K(_))
     }
 
+    #[cfg(test)]
     fn gemv_with_optional_q8a(
         &self,
         x: &[f32],
@@ -539,6 +542,113 @@ impl WeightMatrix {
                     let start = r * m.blocks_per_row;
                     let end = start + m.blocks_per_row;
                     dot_q6_k_q8k(&m.blocks[start..end], &qx).map_err(map_quant_error)
+                })
+            }
+        }
+    }
+
+    fn gemv_with_optional_q8a_and_q8k_scratch(
+        &self,
+        x: &[f32],
+        qx: Option<&[Q8ABlock]>,
+        q8k_scratch: &mut Vec<Q8KBlock>,
+        out: &mut [f32],
+    ) -> Result<(), ModelError> {
+        self.validate_shape()?;
+        if x.len() != self.cols() || out.len() != self.rows() {
+            return Err(ModelError::Shape);
+        }
+        ensure_finite_slice(x)?;
+        match self {
+            Self::F32(m) => m.gemv_validated(x, out),
+            Self::Q8_0(m) => {
+                let qx = qx.ok_or(ModelError::Shape)?;
+                if qx.len() != m.blocks_per_row {
+                    return Err(ModelError::Shape);
+                }
+                gemv_rows(m.rows, out, |r| {
+                    let start = r * m.blocks_per_row;
+                    let end = start + m.blocks_per_row;
+                    dot_q8_0_q8a(&m.blocks[start..end], qx).map_err(map_quant_error)
+                })
+            }
+            Self::Q4_0(m) => {
+                let qx = qx.ok_or(ModelError::Shape)?;
+                if qx.len() != m.blocks_per_row {
+                    return Err(ModelError::Shape);
+                }
+                gemv_rows(m.rows, out, |r| {
+                    let start = r * m.blocks_per_row;
+                    let end = start + m.blocks_per_row;
+                    dot_q4_0_q8a(&m.blocks[start..end], qx).map_err(map_quant_error)
+                })
+            }
+            Self::Q4K(m) => {
+                let qx = qx.ok_or(ModelError::Shape)?;
+                if qx.len() != m.blocks_per_row * (Q4K_BLOCK / BLOCK) {
+                    return Err(ModelError::Shape);
+                }
+                gemv_rows(m.rows, out, |r| {
+                    let start = r * m.blocks_per_row;
+                    let end = start + m.blocks_per_row;
+                    dot_q4_k_q8a(&m.blocks[start..end], qx).map_err(map_quant_error)
+                })
+            }
+            Self::Q6K(m) => {
+                quantize_q8k_into(x, q8k_scratch).map_err(map_quant_error)?;
+                gemv_rows(m.rows, out, |r| {
+                    let start = r * m.blocks_per_row;
+                    let end = start + m.blocks_per_row;
+                    dot_q6_k_q8k(&m.blocks[start..end], q8k_scratch).map_err(map_quant_error)
+                })
+            }
+        }
+    }
+
+    fn gemv_with_quant_scratch(
+        &self,
+        x: &[f32],
+        q8a_scratch: &mut Vec<Q8ABlock>,
+        q8k_scratch: &mut Vec<Q8KBlock>,
+        out: &mut [f32],
+    ) -> Result<(), ModelError> {
+        self.validate_shape()?;
+        if x.len() != self.cols() || out.len() != self.rows() {
+            return Err(ModelError::Shape);
+        }
+        ensure_finite_slice(x)?;
+        match self {
+            Self::F32(m) => m.gemv_validated(x, out),
+            Self::Q8_0(m) => {
+                quantize_q8a_into(x, q8a_scratch).map_err(map_quant_error)?;
+                gemv_rows(m.rows, out, |r| {
+                    let start = r * m.blocks_per_row;
+                    let end = start + m.blocks_per_row;
+                    dot_q8_0_q8a(&m.blocks[start..end], q8a_scratch).map_err(map_quant_error)
+                })
+            }
+            Self::Q4_0(m) => {
+                quantize_q8a_into(x, q8a_scratch).map_err(map_quant_error)?;
+                gemv_rows(m.rows, out, |r| {
+                    let start = r * m.blocks_per_row;
+                    let end = start + m.blocks_per_row;
+                    dot_q4_0_q8a(&m.blocks[start..end], q8a_scratch).map_err(map_quant_error)
+                })
+            }
+            Self::Q4K(m) => {
+                quantize_q8a_into(x, q8a_scratch).map_err(map_quant_error)?;
+                gemv_rows(m.rows, out, |r| {
+                    let start = r * m.blocks_per_row;
+                    let end = start + m.blocks_per_row;
+                    dot_q4_k_q8a(&m.blocks[start..end], q8a_scratch).map_err(map_quant_error)
+                })
+            }
+            Self::Q6K(m) => {
+                quantize_q8k_into(x, q8k_scratch).map_err(map_quant_error)?;
+                gemv_rows(m.rows, out, |r| {
+                    let start = r * m.blocks_per_row;
+                    let end = start + m.blocks_per_row;
+                    dot_q6_k_q8k(&m.blocks[start..end], q8k_scratch).map_err(map_quant_error)
                 })
             }
         }
@@ -881,6 +991,8 @@ impl ForwardWorkspace {
             gate: vec![0.0; d_ff],
             up: vec![0.0; d_ff],
             ff: vec![0.0; d_ff],
+            q8a: Vec::new(),
+            q8k: Vec::new(),
         })
     }
 
@@ -1169,18 +1281,35 @@ impl F32Llama {
                 self.config.rms_epsilon,
                 &mut workspace.h,
             )?;
-            let h_q8a = shared_q8a_if_needed(&workspace.h, [&layer.wq, &layer.wk, &layer.wv])?;
-            layer
-                .wq
-                .gemv_with_optional_q8a(&workspace.h, h_q8a.as_deref(), &mut workspace.q)?;
+            let h_q8a = if [&layer.wq, &layer.wk, &layer.wv]
+                .iter()
+                .any(|matrix| matrix.needs_q8a())
+            {
+                quantize_q8a_into(&workspace.h, &mut workspace.q8a).map_err(map_quant_error)?;
+                Some(workspace.q8a.as_slice())
+            } else {
+                None
+            };
+            layer.wq.gemv_with_optional_q8a_and_q8k_scratch(
+                &workspace.h,
+                h_q8a,
+                &mut workspace.q8k,
+                &mut workspace.q,
+            )?;
             add_optional_bias(&mut workspace.q, layer.attn_q_bias.as_deref())?;
-            layer
-                .wk
-                .gemv_with_optional_q8a(&workspace.h, h_q8a.as_deref(), &mut workspace.k)?;
+            layer.wk.gemv_with_optional_q8a_and_q8k_scratch(
+                &workspace.h,
+                h_q8a,
+                &mut workspace.q8k,
+                &mut workspace.k,
+            )?;
             add_optional_bias(&mut workspace.k, layer.attn_k_bias.as_deref())?;
-            layer
-                .wv
-                .gemv_with_optional_q8a(&workspace.h, h_q8a.as_deref(), &mut workspace.v)?;
+            layer.wv.gemv_with_optional_q8a_and_q8k_scratch(
+                &workspace.h,
+                h_q8a,
+                &mut workspace.q8k,
+                &mut workspace.v,
+            )?;
             add_optional_bias(&mut workspace.v, layer.attn_v_bias.as_deref())?;
             apply_rope(
                 &mut workspace.q,
@@ -1210,9 +1339,12 @@ impl F32Llama {
                 workspace.max_context,
             )?;
 
-            layer
-                .wo
-                .gemv_validated(&workspace.attn, &mut workspace.tmp_d)?;
+            layer.wo.gemv_with_quant_scratch(
+                &workspace.attn,
+                &mut workspace.q8a,
+                &mut workspace.q8k,
+                &mut workspace.tmp_d,
+            )?;
             residual_add(&mut workspace.x, &workspace.tmp_d)?;
 
             rmsnorm(
@@ -1221,19 +1353,34 @@ impl F32Llama {
                 self.config.rms_epsilon,
                 &mut workspace.h,
             )?;
-            let h_q8a = shared_q8a_if_needed(&workspace.h, [&layer.w_gate, &layer.w_up])?;
-            layer.w_gate.gemv_with_optional_q8a(
+            let h_q8a = if [&layer.w_gate, &layer.w_up]
+                .iter()
+                .any(|matrix| matrix.needs_q8a())
+            {
+                quantize_q8a_into(&workspace.h, &mut workspace.q8a).map_err(map_quant_error)?;
+                Some(workspace.q8a.as_slice())
+            } else {
+                None
+            };
+            layer.w_gate.gemv_with_optional_q8a_and_q8k_scratch(
                 &workspace.h,
-                h_q8a.as_deref(),
+                h_q8a,
+                &mut workspace.q8k,
                 &mut workspace.gate,
             )?;
-            layer
-                .w_up
-                .gemv_with_optional_q8a(&workspace.h, h_q8a.as_deref(), &mut workspace.up)?;
+            layer.w_up.gemv_with_optional_q8a_and_q8k_scratch(
+                &workspace.h,
+                h_q8a,
+                &mut workspace.q8k,
+                &mut workspace.up,
+            )?;
             swiglu(&workspace.gate, &workspace.up, &mut workspace.ff)?;
-            layer
-                .w_down
-                .gemv_validated(&workspace.ff, &mut workspace.tmp_d)?;
+            layer.w_down.gemv_with_quant_scratch(
+                &workspace.ff,
+                &mut workspace.q8a,
+                &mut workspace.q8k,
+                &mut workspace.tmp_d,
+            )?;
             residual_add(&mut workspace.x, &workspace.tmp_d)?;
         }
 
@@ -1243,7 +1390,12 @@ impl F32Llama {
             self.config.rms_epsilon,
             &mut workspace.h,
         )?;
-        self.output.gemv_validated(&workspace.h, logits)?;
+        self.output.gemv_with_quant_scratch(
+            &workspace.h,
+            &mut workspace.q8a,
+            &mut workspace.q8k,
+            logits,
+        )?;
         Ok(())
     }
 
@@ -1800,6 +1952,7 @@ fn read_q6k_matrix(
     })
 }
 
+#[cfg(test)]
 fn shared_q8a_if_needed<const N: usize>(
     x: &[f32],
     matrices: [&WeightMatrix; N],
