@@ -1087,6 +1087,19 @@ bench-file: source_input_bytes=100000000 measured_input_bytes=190 total_input_by
 bench-file-phases: model_read_ms=2326.019 gguf_parse_ms=33.568 model_load_ms=2536.310 tokenizer_setup_ms=436.087 input_read_ms=45.359 tokenize_ms=1412.359 token_prefix_ms=0.134 warmup_ms=0.000 measured_ms=23201.015 total_ms=36310.746
 ```
 
+Current-format Qwen2.5 preflight with a one-token measured prefix records the
+full first-1MB tokenization size:
+
+```sh
+cargo run --release -p xtask --features parallel,simd -- bench-file --model /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --input /tmp/enwik8 --limit-bytes 1048576 --limit-tokens 1 --n-ctx 8 --threads 8 --iters 1 --no-warmup --show-phases
+```
+
+```text
+bench-file model=/tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=1 iters=1 warmup=false threads=8 n_ctx=8 overlap=2 model_sha256=d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8 input_sha256=dabd3aff769f07eb2965401eb029974ebba3407afd02b26ddb564ea5f8efae72
+bench-file: source_input_bytes=100000000 measured_input_bytes=1 total_input_bytes=1 tokenized_tokens=279472 tokens=1 total_tokens=1 payload_bytes=9 dtlz_bytes=65 payload_bits_per_byte=72.000000 dtlz_bits_per_byte=520.000000 compression_ratio=65.000000 elapsed_ms=466.371 input_bytes_per_s=2.144 tokens_per_s=2.144
+bench-file-phases: model_read_ms=2108.649 gguf_parse_ms=27.972 model_load_ms=2488.917 tokenizer_setup_ms=367.869 input_read_ms=10.851 tokenize_ms=1194.354 token_prefix_ms=0.109 warmup_ms=0.000 measured_ms=466.371 total_ms=12709.625
+```
+
 This is input-scale and round-trip evidence for the `bench-file`
 implementation on the canonical enwik8 byte stream, not a meaningful language
 model compression-quality result. The tiny fixture has byte tokens and a tiny
@@ -1101,9 +1114,10 @@ every token. The tests `streaming_codec_matches_replay_cdf_payload` and
 payload against the direct replay rule byte-for-byte. The harness reports
 payload size and DTLZ size, including the 56-byte file header. It also reports
 model and measured input SHA-256 values, source and measured input byte counts,
-one-iteration and total token counts, payload-only bpb, DTLZ bpb, compression
-ratio, elapsed time, bytes/s, tokens/s, whether a pre-measurement warmup
-round-trip was run, and the thread override used for model kernels.
+the tokenized token count before `--limit-tokens`, one-iteration and total
+measured token counts, payload-only bpb, DTLZ bpb, compression ratio, elapsed
+time, bytes/s, tokens/s, whether a pre-measurement warmup round-trip was run,
+and the thread override used for model kernels.
 `--limit-bytes N` truncates the input to at most the first `N` bytes before
 tokenization, and the harness reads only that prefix while retaining the full
 source file size in `source_input_bytes`. The enwik8 first-1MB measurement can

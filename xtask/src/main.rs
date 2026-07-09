@@ -1080,6 +1080,7 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
         .into_iter()
         .map(|token| token as usize)
         .collect();
+    let tokenized_tokens = token_ids.len();
     let tokenize_ms = phase_start.elapsed().as_secs_f64() * 1000.0;
     let phase_start = Instant::now();
     if let Some(limit_tokens) = opts.limit_tokens {
@@ -1168,10 +1169,11 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
         input_sha256
     );
     println!(
-        "bench-file: source_input_bytes={} measured_input_bytes={} total_input_bytes={} tokens={} total_tokens={} payload_bytes={} dtlz_bytes={} payload_bits_per_byte={:.6} dtlz_bits_per_byte={:.6} compression_ratio={:.6} elapsed_ms={:.3} input_bytes_per_s={:.3} tokens_per_s={:.3}",
+        "bench-file: source_input_bytes={} measured_input_bytes={} total_input_bytes={} tokenized_tokens={} tokens={} total_tokens={} payload_bytes={} dtlz_bytes={} payload_bits_per_byte={:.6} dtlz_bits_per_byte={:.6} compression_ratio={:.6} elapsed_ms={:.3} input_bytes_per_s={:.3} tokens_per_s={:.3}",
         source_input_bytes,
         measured_input_bytes,
         input_bytes,
+        tokenized_tokens,
         token_ids.len(),
         token_ids.len() * opts.iters,
         payload_bytes,

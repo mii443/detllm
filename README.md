@@ -70,12 +70,13 @@ The current smoke validation is recorded in
 [docs/validation.md](docs/validation.md). The included compression smoke uses
 the tiny F32 fixture and verifies byte-for-byte round-trip on a small input; it
 is not a meaningful compression-ratio benchmark. `bench-file` records model and
-input SHA-256 values, measured byte/token counts, payload and DTLZ bpb,
-compression ratio, throughput, optional token-prefix limit, warmup mode, and
-thread override so real enwik8 measurements can be copied directly into the
-validation notes. Long target-model measurements can use `--progress-every N`
-to emit encode/decode token progress on stderr without changing the stdout
-result lines. The codec benchmark path reuses a streaming KV cache inside each
+input SHA-256 values, measured byte/token counts, tokenized count before
+`--limit-tokens`, payload and DTLZ bpb, compression ratio, throughput, optional
+token-prefix limit, warmup mode, and thread override so real enwik8 measurements
+can be copied directly into the validation notes. Long target-model measurements
+can use `--progress-every N` to emit encode/decode token progress on stderr
+without changing the stdout result lines. The codec benchmark path reuses a
+streaming KV cache inside each
 fixed context window and only replays the configured overlap after window
 rollover; repeated forward calls also reuse `ForwardWorkspace` scratch buffers
 instead of allocating the large model temporaries per token, and the codec CDF
