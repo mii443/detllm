@@ -109,9 +109,11 @@ the following acceptance evidence is still missing:
 - SmolLM2 full codec validation with a tokenizer/model source that covers all
   256 input bytes; tested Unsloth, bartowski, and HuggingFaceTB GGUFs expose
   21 missing byte tokens.
-- Further SmolLM2 reference-quality checks, plus broader target-model checks
-  beyond the current TinyLlama/Qwen2.5 8-token raw-logits and log-probability
-  smoke evidence.
+- Further SmolLM2 reference-quality work remains: three-token raw-logits
+  evidence passes the 0.999 cosine threshold, and 8-token log-probability target
+  checks pass, but the current 8-token raw-logits comparison is below the 0.999
+  per-row cosine target. Broader target-model checks are also still needed
+  beyond the current TinyLlama/Qwen2.5/SmolLM2 smoke evidence.
 - Target-model enwik8 first-1MB compression-rate measurement with
   `xtask bench-file`; the bundled tiny fixture has input-scale enwik8 evidence.
 - Broader benchmark results on real target hardware beyond the current bundled
