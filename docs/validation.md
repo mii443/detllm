@@ -78,6 +78,32 @@ scripts/run-target-logits-matrix.sh \
   --threads 8
 ```
 
+Broader raw-logits matrix, using the same local host and reference binary:
+
+```sh
+scripts/run-target-logits-broad-matrix.sh \
+  --reference /tmp/reference_logits_llamacpp \
+  --tinyllama-q8 /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf \
+  --tinyllama-q4 /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf \
+  --qwen25-q8 /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf \
+  --smollm2-q8 /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf \
+  --out /tmp/detllm-logits-broad-matrix-20260710 \
+  --threads 8
+```
+
+Observed broader matrix results:
+
+| model | case | rows | vocab | overall cosine | min row cosine | status |
+|---|---|---:|---:|---:|---:|---|
+| TinyLlama Q8_0 | `ids-1-2-3` | 3 | 32000 | 0.999833181 | 0.999762988 | passes `--min-cosine 0.999` |
+| TinyLlama Q8_0 | `hello-validation-8` | 8 | 32000 | 0.999914931 | 0.999809620 | passes `--min-cosine 0.999` |
+| TinyLlama Q4_0 | `ids-1-2-3` | 3 | 32000 | 0.999667056 | 0.999624876 | passes `--min-cosine 0.999` |
+| TinyLlama Q4_0 | `hello-validation-8` | 8 | 32000 | 0.999836229 | 0.999521848 | passes `--min-cosine 0.999` |
+| Qwen2.5 Q8_0 | `special-hello-special` | 3 | 151936 | 0.999762170 | 0.999709642 | passes `--min-cosine 0.999` |
+| Qwen2.5 Q8_0 | `hello-validation-8` | 8 | 151936 | 0.999840330 | 0.999647692 | passes `--min-cosine 0.999` |
+| SmolLM2 Q8_0 | `ids-1-2-3` | 3 | 49152 | 0.999732621 | 0.999628577 | passes `--min-cosine 0.999` |
+| SmolLM2 Q8_0 | `hello-validation-8` | 8 | 49152 | 0.999467131 | 0.999227139 | passes `--min-cosine 0.999` |
+
 ## Architecture Metadata Compatibility
 
 `det-model` has a synthetic GGUF test for `general.architecture = "qwen2"`

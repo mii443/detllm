@@ -50,6 +50,7 @@ cargo run --release -p xtask --features parallel,simd -- bench-file --model mode
 cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --threads 8 --iters 1 --no-warmup --encode-only --show-phases --summary bench-file.summary --progress-every 100
 scripts/run-target-full-bench.sh --model qwen25-q8.gguf --input /tmp/enwik8 --name qwen25-q8-first1m
 scripts/run-target-bench-smoke.sh --input /tmp/enwik8 --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
+scripts/run-target-logits-broad-matrix.sh --reference /tmp/reference_logits_llamacpp --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
 scripts/run-target-determinism-matrix.sh --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
 scripts/run-target-codec-determinism-matrix.sh --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
 scripts/run-target-logprob-matrix.sh --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
@@ -155,6 +156,19 @@ Qwen2.5 Q8_0 64-token encode-only preflight with `--estimate-full-run` reports
 279,472 full tokens for the first 1MB and estimates the measured encode loop at
 about 52,926 seconds, or roughly 15 hours, on this host.
 
+Target-model raw-logits reference smoke, using
+`scripts/run-target-logits-broad-matrix.sh`, checks the same four external GGUFs
+against llama.cpp on both a short low-level token stream and the tokenizer-backed
+8-token validation prompt. All cases passed `--min-cosine 0.999`; the worst
+minimum row cosine per model was:
+
+| check | cases | worst min row cosine |
+|---|---:|---:|
+| TinyLlama Q8_0 | 2 | 0.999762988 |
+| TinyLlama Q4_0 | 2 | 0.999521848 |
+| Qwen2.5 Q8_0 | 2 | 0.999647692 |
+| SmolLM2 Q8_0 | 2 | 0.999227139 |
+
 Target-model determinism smoke, using
 `scripts/run-target-determinism-matrix.sh`, checks the same four external GGUFs
 with `threads=1,2,8` and `chunk-size=1,2,8` over the tokenizer-backed 8-token
@@ -184,12 +198,11 @@ the byte-escape `binary-mixed` input and the `context-spanning` input with
 The implementation is not yet complete against the full design. In particular,
 the following acceptance evidence is still missing:
 
-- Broader target-model reference-quality checks are still needed beyond the
+- Further target-model reference-quality checks are still needed beyond the
   current scripted TinyLlama Q8_0/Q4_0, Qwen2.5 Q8_0, and SmolLM2 Q8_0
-  tokenizer-backed 8-token raw-logits and llama.cpp log-probability matrices,
-  plus the scripted target-model
-  empty/multilingual/binary/context-spanning round-trip and
-  logits/thread/chunk-size and codec/thread determinism matrices.
+  llama.cpp raw-logits broad matrix and log-probability matrix, especially
+  independent HF transformers coverage and longer-context/perplexity-quality
+  checks.
 - Target-model enwik8 first-1MB compression-rate measurement with
   `xtask bench-file`; the bundled tiny fixture has input-scale enwik8 evidence.
 - Broader benchmark results on real target hardware beyond the current bundled
