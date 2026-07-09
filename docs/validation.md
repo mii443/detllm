@@ -960,94 +960,63 @@ GGUF and the two metadata-prefix-screened public candidates expose only 235 of
 the 256 byte values as single-byte BPE seed tokens. The byte escape tail keeps
 arbitrary-byte codec round-trip possible without changing the model vocabulary.
 
-### Target-Model Mixed-Byte Round-Trip Smoke
+### Target-Model Round-Trip Matrix
 
-TinyLlama Q8_0, TinyLlama Q4_0, and Qwen2.5 Q8_0 expose complete byte
-coverage, so they can exercise the public `compress` / `decompress` CLI on
-byte data that is not just plain UTF-8 text. The smoke input includes
-`00 ff c0 04` bytes:
+The external target-model round-trip matrix runs the public `compress` /
+`decompress` CLI over empty, multilingual UTF-8, binary-mixed, and
+context-spanning inputs for every currently tracked target GGUF. The
+`context-spanning` input tokenizes to 13 tokens for each target tokenizer, so
+`--n-ctx 8` forces at least one window rollover. The script runs `cmp` for every
+restored file before printing hashes and byte counts.
 
-```sh
-mkdir -p /tmp/detllm-roundtrip
-printf 'detllm\0binary\xff\xc0\x04\nvalidation\n' > /tmp/detllm-roundtrip/mixed.bin
-sha256sum /tmp/detllm-roundtrip/mixed.bin
-wc -c /tmp/detllm-roundtrip/mixed.bin
-od -An -tx1 /tmp/detllm-roundtrip/mixed.bin
-```
-
-Observed input:
-
-```text
-458b71a7d9440b62ec2e34688a788980d90a4d872151d0634bb8e5402108b5a8  /tmp/detllm-roundtrip/mixed.bin
-28 /tmp/detllm-roundtrip/mixed.bin
- 64 65 74 6c 6c 6d 00 62 69 6e 61 72 79 ff c0 04
- 0a 76 61 6c 69 64 61 74 69 6f 6e 0a
-```
-
-TinyLlama Q8_0:
+Command:
 
 ```sh
-cargo run --release -p det-cli -- compress -m /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf -i /tmp/detllm-roundtrip/mixed.bin -o /tmp/detllm-roundtrip/tinyllama-q8-mixed.dtlz --n-ctx 32 --threads 8
-cargo run --release -p det-cli -- decompress -m /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf -i /tmp/detllm-roundtrip/tinyllama-q8-mixed.dtlz -o /tmp/detllm-roundtrip/tinyllama-q8-mixed.restored --threads 8
-cmp /tmp/detllm-roundtrip/mixed.bin /tmp/detllm-roundtrip/tinyllama-q8-mixed.restored
-sha256sum /tmp/detllm-roundtrip/tinyllama-q8-mixed.dtlz /tmp/detllm-roundtrip/tinyllama-q8-mixed.restored
-wc -c /tmp/detllm-roundtrip/tinyllama-q8-mixed.dtlz /tmp/detllm-roundtrip/tinyllama-q8-mixed.restored
+cargo build --release -p det-cli --features parallel,simd
+scripts/run-target-roundtrip-matrix.sh \
+  --tinyllama-q8 /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf \
+  --tinyllama-q4 /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf \
+  --qwen25-q8 /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf \
+  --smollm2-q8 /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf \
+  --out /tmp/detllm-roundtrip-matrix-small \
+  --threads 8 \
+  --n-ctx 8
 ```
+
+Observed inputs:
+
+| input | bytes | SHA-256 |
+|---|---:|---|
+| `empty` | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `multilingual` | 104 | `6ebdf0dfe422b6a7c8db30204a579809e147b99b55d22d91b105388bd5535f9e` |
+| `binary-mixed` | 28 | `458b71a7d9440b62ec2e34688a788980d90a4d872151d0634bb8e5402108b5a8` |
+| `context-spanning` | 64 | `3f29407e1529b5ba5f001e09a1d1e53b371a99036bfcc395c041d4cc23e75147` |
 
 Observed output:
 
-```text
-3206d799dcf3486cb0892b8060aca833efc70fc96ee4532579e57597751def28  /tmp/detllm-roundtrip/tinyllama-q8-mixed.dtlz
-458b71a7d9440b62ec2e34688a788980d90a4d872151d0634bb8e5402108b5a8  /tmp/detllm-roundtrip/tinyllama-q8-mixed.restored
- 87 /tmp/detllm-roundtrip/tinyllama-q8-mixed.dtlz
- 28 /tmp/detllm-roundtrip/tinyllama-q8-mixed.restored
-115 total
-```
+| model | input | DTLZ bytes | DTLZ SHA-256 | restored bytes | restored SHA-256 |
+|---|---|---:|---|---:|---|
+| TinyLlama Q8_0 | empty | 64 | `f5cddfa0c666838a9a4931953caf92ae82b895d836d054bb3d10a436846d03ab` | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| TinyLlama Q8_0 | multilingual | 125 | `8ca05a0bbe0682aa64fa10dbf6133cf275f89b5ec1d35a10ea39e9a2d9adec8e` | 104 | `6ebdf0dfe422b6a7c8db30204a579809e147b99b55d22d91b105388bd5535f9e` |
+| TinyLlama Q8_0 | binary-mixed | 86 | `0c8551a3afa977fe51e802bc5a4810925b2707e720ed74e5cf9057f07c421092` | 28 | `458b71a7d9440b62ec2e34688a788980d90a4d872151d0634bb8e5402108b5a8` |
+| TinyLlama Q8_0 | context-spanning | 73 | `d0a0b9cb671df18d6188c5bb53487a085e65869ceee07f94fe5a768a123337ee` | 64 | `3f29407e1529b5ba5f001e09a1d1e53b371a99036bfcc395c041d4cc23e75147` |
+| TinyLlama Q4_0 | empty | 64 | `a769ef53bc5f0f9cf20875c9f916e3b77bd7927166c887f737208dcfbebfc1ad` | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| TinyLlama Q4_0 | multilingual | 125 | `8c74fc6391996009709f78f2f5188af594ad596d4b22f51093dfd65b49986de8` | 104 | `6ebdf0dfe422b6a7c8db30204a579809e147b99b55d22d91b105388bd5535f9e` |
+| TinyLlama Q4_0 | binary-mixed | 85 | `d2f89b70a1681bd5aaf28309e1bbc3d1f109c8ebba2c432875b7ef1b19229516` | 28 | `458b71a7d9440b62ec2e34688a788980d90a4d872151d0634bb8e5402108b5a8` |
+| TinyLlama Q4_0 | context-spanning | 73 | `e79297e6e0da6e4449833057d0aaf6a6bb2b6cefe8764bc02bccb39f613f8395` | 64 | `3f29407e1529b5ba5f001e09a1d1e53b371a99036bfcc395c041d4cc23e75147` |
+| Qwen2.5 Q8_0 | empty | 64 | `5edd561a793bf230a3de8a165ef37942f8f85469488b5cc848a5fe626a0ea5e2` | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| Qwen2.5 Q8_0 | multilingual | 91 | `ba121249e1b5118fe5934c40fd50633c66350816fe3da34739e535d31a6009f7` | 104 | `6ebdf0dfe422b6a7c8db30204a579809e147b99b55d22d91b105388bd5535f9e` |
+| Qwen2.5 Q8_0 | binary-mixed | 85 | `ea719f3444398e1e1352aee5a4ac6690ae40ce106dc1990a4a3c60a3cbe7a72c` | 28 | `458b71a7d9440b62ec2e34688a788980d90a4d872151d0634bb8e5402108b5a8` |
+| Qwen2.5 Q8_0 | context-spanning | 69 | `7047a35e2c976cb35333e2ccc653552f94a58e77d1a884719a703d6f8b2b1fa5` | 64 | `3f29407e1529b5ba5f001e09a1d1e53b371a99036bfcc395c041d4cc23e75147` |
+| SmolLM2 Q8_0 | empty | 64 | `d1370c44fc46be82cca9d7075d22ecae99e582694d89d0cc192595317786e1af` | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| SmolLM2 Q8_0 | multilingual | 95 | `68e4bedb09e4f1cefc1cbff7659dab60579229220740e0e350d8b5949ad5476e` | 104 | `6ebdf0dfe422b6a7c8db30204a579809e147b99b55d22d91b105388bd5535f9e` |
+| SmolLM2 Q8_0 | binary-mixed | 87 | `2ac0d09372c2f16a57209a5e5bc585c8fb47913ff2bcb77588561101a61be4a4` | 28 | `458b71a7d9440b62ec2e34688a788980d90a4d872151d0634bb8e5402108b5a8` |
+| SmolLM2 Q8_0 | context-spanning | 70 | `960025e02a6baa87218018b877266628e37800585e5839a72d7fde6671f0d1c0` | 64 | `3f29407e1529b5ba5f001e09a1d1e53b371a99036bfcc395c041d4cc23e75147` |
 
-TinyLlama Q4_0:
-
-```sh
-cargo run --release -p det-cli -- compress -m /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf -i /tmp/detllm-roundtrip/mixed.bin -o /tmp/detllm-roundtrip/tinyllama-q4-mixed.dtlz --n-ctx 32 --threads 8
-cargo run --release -p det-cli -- decompress -m /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf -i /tmp/detllm-roundtrip/tinyllama-q4-mixed.dtlz -o /tmp/detllm-roundtrip/tinyllama-q4-mixed.restored --threads 8
-cmp /tmp/detllm-roundtrip/mixed.bin /tmp/detllm-roundtrip/tinyllama-q4-mixed.restored
-sha256sum /tmp/detllm-roundtrip/tinyllama-q4-mixed.dtlz /tmp/detllm-roundtrip/tinyllama-q4-mixed.restored
-wc -c /tmp/detllm-roundtrip/tinyllama-q4-mixed.dtlz /tmp/detllm-roundtrip/tinyllama-q4-mixed.restored
-```
-
-Observed output:
-
-```text
-2e5f0f59a807442a66f4a55e3d9922af909f07ad9a25b15d40d051cdf3ad5826  /tmp/detllm-roundtrip/tinyllama-q4-mixed.dtlz
-458b71a7d9440b62ec2e34688a788980d90a4d872151d0634bb8e5402108b5a8  /tmp/detllm-roundtrip/tinyllama-q4-mixed.restored
- 86 /tmp/detllm-roundtrip/tinyllama-q4-mixed.dtlz
- 28 /tmp/detllm-roundtrip/tinyllama-q4-mixed.restored
-114 total
-```
-
-Qwen2.5 Q8_0:
-
-```sh
-cargo run --release -p det-cli -- compress -m /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf -i /tmp/detllm-roundtrip/mixed.bin -o /tmp/detllm-roundtrip/qwen25-q8-mixed.dtlz --n-ctx 32 --threads 8
-cargo run --release -p det-cli -- decompress -m /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf -i /tmp/detllm-roundtrip/qwen25-q8-mixed.dtlz -o /tmp/detllm-roundtrip/qwen25-q8-mixed.restored --threads 8
-cmp /tmp/detllm-roundtrip/mixed.bin /tmp/detllm-roundtrip/qwen25-q8-mixed.restored
-sha256sum /tmp/detllm-roundtrip/qwen25-q8-mixed.dtlz /tmp/detllm-roundtrip/qwen25-q8-mixed.restored
-wc -c /tmp/detllm-roundtrip/qwen25-q8-mixed.dtlz /tmp/detllm-roundtrip/qwen25-q8-mixed.restored
-```
-
-Observed output:
-
-```text
-f299ca7a17cf05bbb081f6c044b5c054fdce0c34d96ee7002f9784d66c60515e  /tmp/detllm-roundtrip/qwen25-q8-mixed.dtlz
-458b71a7d9440b62ec2e34688a788980d90a4d872151d0634bb8e5402108b5a8  /tmp/detllm-roundtrip/qwen25-q8-mixed.restored
- 85 /tmp/detllm-roundtrip/qwen25-q8-mixed.dtlz
- 28 /tmp/detllm-roundtrip/qwen25-q8-mixed.restored
-113 total
-```
-
-This is target-model arbitrary-byte round-trip smoke evidence for three
-complete byte-coverage GGUFs. It does not replace the larger §9.7 matrix over empty,
-multilingual, binary-mixed, and context-spanning inputs for every target model
-and quantization.
+This covers the current §9.7 target-model matrix over empty, multilingual,
+binary-mixed, and context-spanning inputs for the tracked model/quantization
+set. Larger arbitrary-byte and multi-window payloads can still be used as
+stress tests, but this matrix is the acceptance smoke for each target model.
 
 ## File Codec Bench Harness
 

@@ -133,8 +133,8 @@ the following acceptance evidence is still missing:
 - Broader target-model reference-quality checks are still needed beyond the
   current TinyLlama Q8_0/Q4_0, Qwen2.5 Q8_0, and SmolLM2 Q8_0
   tokenizer-backed 8-token raw-logits evidence, logits/log-probability smoke
-  evidence, and TinyLlama Q8/Q4, Qwen2.5, plus SmolLM2 mixed-byte round-trip
-  smoke.
+  evidence, and the target-model empty/multilingual/binary/context-spanning
+  round-trip matrix.
 - Target-model enwik8 first-1MB compression-rate measurement with
   `xtask bench-file`; the bundled tiny fixture has input-scale enwik8 evidence.
 - Broader benchmark results on real target hardware beyond the current bundled
