@@ -1142,6 +1142,49 @@ bench-file-phases: model_read_ms=2357.780 gguf_parse_ms=26.854 model_load_ms=261
 This preserves the same measured byte prefix and payload size as the previous
 round-trip run while removing the decode phase from the measured loop.
 
+Scripted target-model prefix benchmark smoke across the current external GGUF
+validation set:
+
+```sh
+scripts/run-target-bench-smoke.sh --input /tmp/enwik8 --tinyllama-q8 /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf --tinyllama-q4 /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf --qwen25-q8 /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --smollm2-q8 /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf
+```
+
+Environment: same local `x86_64` WSL2 host as the fixture benchmark snapshot,
+with `rustc 1.95.0`. Command defaults were enwik8 `--limit-bytes 1048576`,
+`--limit-tokens 16`, `--encode-only`, `--threads 8`, `--n-ctx 64`,
+`--iters 1`, `--no-warmup`, `--show-phases`, and `--progress-every 8`.
+
+```text
+== tinyllama-q8 ==
+bench-file-progress phase=encode tokens_done=8 tokens_total=16 elapsed_ms=1033.887 tokens_per_s=7.738
+bench-file-progress phase=encode tokens_done=16 tokens_total=16 elapsed_ms=2124.285 tokens_per_s=7.532
+bench-file model=/tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=16 iters=1 warmup=false mode=encode-only threads=8 n_ctx=64 overlap=16 model_sha256=a4c9bb1dbaa372f6381a035fa5c02ef087aaa1ff1f843a56a22328114f03fc59 input_sha256=516d4b5d16ec0a573a2eaf415abe04b40ca38038fce3531e71bb3f019ff9b6de
+bench-file: source_input_bytes=100000000 measured_input_bytes=47 total_input_bytes=47 tokenized_tokens=336344 tokens=16 total_tokens=16 payload_bytes=33 dtlz_bytes=89 payload_bits_per_byte=5.617021 dtlz_bits_per_byte=15.148936 compression_ratio=1.893617 elapsed_ms=2169.014 input_bytes_per_s=21.669 tokens_per_s=7.377
+bench-file-phases: model_read_ms=1262.530 gguf_parse_ms=7.479 model_load_ms=1386.544 tokenizer_setup_ms=23.364 input_read_ms=1.490 tokenize_ms=960.320 token_prefix_ms=0.132 warmup_ms=0.000 measured_ms=2169.014 total_ms=9685.141
+== tinyllama-q4 ==
+bench-file-progress phase=encode tokens_done=8 tokens_total=16 elapsed_ms=1487.704 tokens_per_s=5.377
+bench-file-progress phase=encode tokens_done=16 tokens_total=16 elapsed_ms=3000.518 tokens_per_s=5.332
+bench-file model=/tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=16 iters=1 warmup=false mode=encode-only threads=8 n_ctx=64 overlap=16 model_sha256=da3087fb14aede55fde6eb81a0e55e886810e43509ec82ecdc7aa5d62a03b556 input_sha256=516d4b5d16ec0a573a2eaf415abe04b40ca38038fce3531e71bb3f019ff9b6de
+bench-file: source_input_bytes=100000000 measured_input_bytes=47 total_input_bytes=47 tokenized_tokens=336344 tokens=16 total_tokens=16 payload_bytes=34 dtlz_bytes=90 payload_bits_per_byte=5.787234 dtlz_bits_per_byte=15.319149 compression_ratio=1.914894 elapsed_ms=3027.252 input_bytes_per_s=15.526 tokens_per_s=5.285
+bench-file-phases: model_read_ms=425.575 gguf_parse_ms=8.484 model_load_ms=618.819 tokenizer_setup_ms=29.250 input_read_ms=0.796 tokenize_ms=996.966 token_prefix_ms=0.137 warmup_ms=0.000 measured_ms=3027.252 total_ms=7197.508
+== qwen25-q8 ==
+bench-file-progress phase=encode tokens_done=8 tokens_total=16 elapsed_ms=1470.267 tokens_per_s=5.441
+bench-file-progress phase=encode tokens_done=16 tokens_total=16 elapsed_ms=2885.040 tokens_per_s=5.546
+bench-file model=/tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=16 iters=1 warmup=false mode=encode-only threads=8 n_ctx=64 overlap=16 model_sha256=d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8 input_sha256=4fe5a21798e43c8258edcf9f3a98fac2df77613b4d2add15a2a3082eedc7b0b2
+bench-file: source_input_bytes=100000000 measured_input_bytes=53 total_input_bytes=53 tokenized_tokens=279472 tokens=16 total_tokens=16 payload_bytes=13 dtlz_bytes=69 payload_bits_per_byte=1.962264 dtlz_bits_per_byte=10.415094 compression_ratio=1.301887 elapsed_ms=2981.684 input_bytes_per_s=17.775 tokens_per_s=5.366
+bench-file-phases: model_read_ms=1460.853 gguf_parse_ms=27.110 model_load_ms=2566.031 tokenizer_setup_ms=407.239 input_read_ms=22.125 tokenize_ms=1459.331 token_prefix_ms=0.138 warmup_ms=0.000 measured_ms=2981.684 total_ms=15171.847
+== smollm2-q8 ==
+bench-file-progress phase=encode tokens_done=8 tokens_total=16 elapsed_ms=1435.780 tokens_per_s=5.572
+bench-file-progress phase=encode tokens_done=16 tokens_total=16 elapsed_ms=2897.850 tokens_per_s=5.521
+bench-file model=/tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=16 iters=1 warmup=false mode=encode-only threads=8 n_ctx=64 overlap=16 model_sha256=0f3fb091804c48a561b42a4ca1be9ce2c353017187f74c48f52299cae790abe5 input_sha256=cde97e63d212a07d92a900e45f13c3974ec428806f1d8dbf44a1ddd0083edc8d
+bench-file: source_input_bytes=100000000 measured_input_bytes=46 total_input_bytes=46 tokenized_tokens=302781 tokens=16 total_tokens=16 payload_bytes=14 dtlz_bytes=70 payload_bits_per_byte=2.434783 dtlz_bits_per_byte=12.173913 compression_ratio=1.521739 elapsed_ms=2989.284 input_bytes_per_s=15.388 tokens_per_s=5.352
+bench-file-phases: model_read_ms=1256.798 gguf_parse_ms=10.325 model_load_ms=2629.199 tokenizer_setup_ms=104.185 input_read_ms=1.897 tokenize_ms=1435.414 token_prefix_ms=0.124 warmup_ms=0.000 measured_ms=2989.284 total_ms=14548.763
+```
+
+This is target-model throughput and prefix compression smoke evidence for the
+current GGUF matrix. Because `--limit-tokens 16` is set, it is not the final
+M4 enwik8 first-1MB compression-rate acceptance measurement.
+
 Current-format Qwen2.5 preflight with a one-token measured prefix records the
 full first-1MB tokenization size:
 

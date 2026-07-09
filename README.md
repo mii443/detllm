@@ -48,6 +48,7 @@ cargo run --release -p xtask -- bench-testdata --iters 100
 cargo run --release -p xtask -- bench-file --model testdata/tiny-f32.gguf --input testdata/tiny.tokens.txt --n-ctx 8 --iters 2
 cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 4096 --limit-tokens 512 --n-ctx 2048 --threads 8 --iters 1 --no-warmup
 cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --threads 8 --iters 1 --no-warmup --encode-only --show-phases --progress-every 100
+scripts/run-target-bench-smoke.sh --input /tmp/enwik8 --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
 cargo run -p det-cli -- tokenize -m model.gguf -p "prompt text"
 scripts/reference_logits_transformers.py --model-id TinyLlama/TinyLlama-1.1B-Chat-v1.0 --tokens 1,2,3 --out hf.logits.bin --expected-rows 3 --expected-vocab 32000
 c++ -std=c++17 -O2 -I/usr/local/include scripts/reference_logits_llamacpp.cpp -L/usr/local/lib -Wl,-rpath,/usr/local/lib -lllama -lggml -lggml-cpu -lggml-base -o /tmp/reference_logits_llamacpp
@@ -126,6 +127,20 @@ cargo run --release -p xtask -- bench-testdata --iters 100
 These numbers are fixture-scale smoke benchmarks, not target-model compression
 quality measurements.
 
+Target-model prefix smoke on the same host, using
+`scripts/run-target-bench-smoke.sh` with enwik8 first-1MB tokenization,
+`--limit-tokens 16`, `--encode-only`, `--threads 8`, and `--n-ctx 64`:
+
+| check | measured bytes | payload bpb | DTLZ bpb | throughput |
+|---|---:|---:|---:|---:|
+| TinyLlama Q8_0 | 47 | 5.617021 | 15.148936 | 7.377 tokens/s |
+| TinyLlama Q4_0 | 47 | 5.787234 | 15.319149 | 5.285 tokens/s |
+| Qwen2.5 Q8_0 | 53 | 1.962264 | 10.415094 | 5.366 tokens/s |
+| SmolLM2 Q8_0 | 46 | 2.434783 | 12.173913 | 5.352 tokens/s |
+
+This is real target-model throughput and prefix compression smoke evidence, not
+the final full-token enwik8 first-1MB compression-rate result.
+
 ## Remaining Work
 
 The implementation is not yet complete against the full design. In particular,
@@ -139,4 +154,5 @@ the following acceptance evidence is still missing:
 - Target-model enwik8 first-1MB compression-rate measurement with
   `xtask bench-file`; the bundled tiny fixture has input-scale enwik8 evidence.
 - Broader benchmark results on real target hardware beyond the current bundled
-  fixture `xtask bench-testdata` snapshot.
+  fixture `xtask bench-testdata` snapshot and the current 16-token target-model
+  enwik8 prefix smoke matrix.
