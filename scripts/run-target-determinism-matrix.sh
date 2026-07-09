@@ -8,7 +8,9 @@ usage: scripts/run-target-determinism-matrix.sh --tinyllama-q8 PATH --tinyllama-
 Checks target-model logits hash invariance across deterministic chunking and
 thread-count settings. The matrix uses the same tokenizer-backed 8-token
 streams as run-target-logits-matrix.sh, and requires every hash for each model
-to match bit-for-bit.
+to match bit-for-bit. The default matrix follows detllm-design.md section 9.2:
+threads={1,2,7,16} and chunk-size={1,3,full}, where full is 8 for these
+8-token validation streams.
 USAGE
 }
 
@@ -71,8 +73,8 @@ run_case() {
   local baseline=""
 
   echo "== $name =="
-  for threads in 1 2 8; do
-    for chunk_size in 1 2 8; do
+  for threads in 1 2 7 16; do
+    for chunk_size in 1 3 8; do
       local hash
       hash="$("$bin" logits -m "$model" --tokens "$tokens" --hash --threads "$threads" --chunk-size "$chunk_size")"
       if [[ -z "$baseline" ]]; then

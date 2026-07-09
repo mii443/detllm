@@ -270,8 +270,9 @@ produce PPL estimates; the BPE target models currently hit llama.cpp
 
 Target-model determinism smoke, using
 `scripts/run-target-determinism-matrix.sh`, checks the same four external GGUFs
-with `threads=1,2,8` and `chunk-size=1,2,8` over the tokenizer-backed 8-token
-streams from the raw-logits matrix. All hashes matched bit-for-bit:
+with `threads=1,2,7,16` and `chunk-size=1,3,8` over the tokenizer-backed
+8-token streams from the raw-logits matrix. The `chunk-size=8` case is the
+full-stream prefill case for these streams. All hashes matched bit-for-bit:
 
 | check | logits hash |
 |---|---|
@@ -283,7 +284,7 @@ streams from the raw-logits matrix. All hashes matched bit-for-bit:
 Target-model codec determinism smoke, using
 `scripts/run-target-codec-determinism-matrix.sh`, checks DTLZ payload hashes for
 the byte-escape `binary-mixed` input and the `context-spanning` input with
-`threads=1,2,8`. Every output also decompresses back to the original bytes:
+`threads=1,2,7,16`. Every output also decompresses back to the original bytes:
 
 | check | binary-mixed DTLZ SHA-256 | context-spanning DTLZ SHA-256 |
 |---|---|---|

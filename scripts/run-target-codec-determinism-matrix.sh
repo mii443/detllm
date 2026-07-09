@@ -6,9 +6,9 @@ usage() {
 usage: scripts/run-target-codec-determinism-matrix.sh --tinyllama-q8 PATH --tinyllama-q4 PATH --qwen25-q8 PATH --smollm2-q8 PATH [--bin target/release/detllm] [--out DIR] [--n-ctx N]
 
 Checks target-model DTLZ payload determinism across thread-count settings. The
-matrix compresses byte-escape and context-rollover inputs with threads=1,2,8,
-requires the DTLZ SHA-256 to match bit-for-bit for each model/input pair, and
-decompresses every output back to the original bytes.
+matrix compresses byte-escape and context-rollover inputs with
+threads={1,2,7,16}, requires the DTLZ SHA-256 to match bit-for-bit for each
+model/input pair, and decompresses every output back to the original bytes.
 USAGE
 }
 
@@ -104,7 +104,7 @@ for model_entry in "${models[@]}"; do
     baseline_hash=""
     baseline_size=""
     echo "== $model_name $input_name =="
-    for threads in 1 2 8; do
+    for threads in 1 2 7 16; do
       out_base="$out_dir/${model_name}-${input_name}-threads${threads}"
       "$bin" compress -m "$model_path" -i "$input_path" -o "$out_base.dtlz" --n-ctx "$n_ctx" --threads "$threads"
       "$bin" decompress -m "$model_path" -i "$out_base.dtlz" -o "$out_base.restored" --threads "$threads"
