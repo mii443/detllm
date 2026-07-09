@@ -116,7 +116,7 @@ fn real_main() -> Result<(), String> {
         Some("check-ci-workflow") => check_ci_workflow(),
         Some("check-determinism") => check_determinism(),
         _ => Err(
-            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf|bench-file --model model.gguf --input file [--limit-bytes N] [--limit-tokens N] [--n-ctx N] [--iters N] [--threads N] [--no-warmup]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
+            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf [--metadata-prefix]|bench-file --model model.gguf --input file [--limit-bytes N] [--limit-tokens N] [--n-ctx N] [--iters N] [--threads N] [--no-warmup]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
                 .to_owned(),
         ),
     }
@@ -333,6 +333,7 @@ struct BenchFileOpts {
 #[derive(Debug)]
 struct ModelInfoOpts {
     model: String,
+    metadata_prefix: bool,
 }
 
 #[derive(Debug)]
@@ -361,6 +362,7 @@ struct VerifyLogitsHashesOpts {
 
 fn parse_model_info_opts(args: Vec<String>) -> Result<ModelInfoOpts, String> {
     let mut model = None;
+    let mut metadata_prefix = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
@@ -368,31 +370,44 @@ fn parse_model_info_opts(args: Vec<String>) -> Result<ModelInfoOpts, String> {
                 i += 1;
                 model = args.get(i).cloned();
             }
+            "--metadata-prefix" => {
+                metadata_prefix = true;
+            }
             other => return Err(format!("unknown model-info argument: {other}")),
         }
         i += 1;
     }
     Ok(ModelInfoOpts {
         model: model.ok_or("model-info: missing --model")?,
+        metadata_prefix,
     })
 }
 
 fn model_info(opts: ModelInfoOpts) -> Result<(), String> {
     let bytes = fs::read(&opts.model).map_err(|e| format!("{}: {e}", opts.model))?;
-    print!("{}", model_info_text(&opts.model, &bytes)?);
+    print!(
+        "{}",
+        model_info_text(&opts.model, &bytes, opts.metadata_prefix)?
+    );
     Ok(())
 }
 
-fn model_info_text(path: &str, bytes: &[u8]) -> Result<String, String> {
+fn model_info_text(path: &str, bytes: &[u8], metadata_prefix: bool) -> Result<String, String> {
     let model_sha256 = sha256_hex(bytes);
-    let gguf = det_gguf::parse(bytes).map_err(|e| format!("{path}: GGUF parse error: {e:?}"))?;
+    let gguf = if metadata_prefix {
+        det_gguf::parse_metadata_prefix(bytes)
+    } else {
+        det_gguf::parse(bytes)
+    }
+    .map_err(|e| format!("{path}: GGUF parse error: {e:?}"))?;
     let mut out = String::new();
     writeln!(
         out,
-        "model-info path={} bytes={} sha256={} gguf_version={} metadata={} tensors={} data_offset={}",
+        "model-info path={} bytes={} sha256={} metadata_prefix={} gguf_version={} metadata={} tensors={} data_offset={}",
         path,
         bytes.len(),
         model_sha256,
+        metadata_prefix,
         gguf.version,
         gguf.metadata.len(),
         gguf.tensors.len(),
@@ -2854,8 +2869,10 @@ mod tests {
     #[test]
     fn model_info_reports_fixture_config_and_tensor_status() {
         let model_bytes = tiny_f32_gguf();
-        let text = model_info_text("testdata/tiny-f32.gguf", &model_bytes).expect("model info");
+        let text =
+            model_info_text("testdata/tiny-f32.gguf", &model_bytes, false).expect("model info");
         assert!(text.contains("model-info path=testdata/tiny-f32.gguf"));
+        assert!(text.contains("metadata_prefix=false"));
         assert!(text
             .contains("sha256=ce2aa01900a63585a409ef995a2827dcac81e1678e38a1ab0733302ba82ce79b"));
         assert!(text.contains("model-info tokenizer status=ok kind=byte_fallback"));
@@ -2875,12 +2892,32 @@ mod tests {
 
     #[test]
     fn parse_model_info_opts_requires_model() {
-        let opts = parse_model_info_opts(vec!["--model".to_owned(), "model.gguf".to_owned()])
-            .expect("model-info options");
+        let opts = parse_model_info_opts(vec![
+            "--model".to_owned(),
+            "model.gguf".to_owned(),
+            "--metadata-prefix".to_owned(),
+        ])
+        .expect("model-info options");
         assert_eq!(opts.model, "model.gguf");
+        assert!(opts.metadata_prefix);
 
         let err = parse_model_info_opts(Vec::new()).expect_err("missing model should fail");
         assert_eq!(err, "model-info: missing --model");
+    }
+
+    #[test]
+    fn model_info_metadata_prefix_summarizes_without_tensor_payloads() {
+        let model_bytes = tiny_f32_gguf();
+        let full = det_gguf::parse(&model_bytes).expect("parse full fixture");
+        let prefix = &model_bytes[..full.data_offset];
+
+        assert!(model_info_text("prefix.gguf", prefix, false).is_err());
+        let text = model_info_text("prefix.gguf", prefix, true).expect("prefix model info");
+        assert!(text.contains("metadata_prefix=true"));
+        assert!(text.contains("model-info tokenizer status=ok kind=byte_fallback"));
+        assert!(text.contains(
+            "model-info required-tensors status=ok checked=12 missing=0 shape_mismatch=0 unsupported_type=0 tied_output=false"
+        ));
     }
 
     #[test]

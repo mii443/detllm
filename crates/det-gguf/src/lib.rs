@@ -154,6 +154,14 @@ pub struct Gguf {
 }
 
 pub fn parse(bytes: &[u8]) -> Result<Gguf, GgufError> {
+    parse_inner(bytes, true)
+}
+
+pub fn parse_metadata_prefix(bytes: &[u8]) -> Result<Gguf, GgufError> {
+    parse_inner(bytes, false)
+}
+
+fn parse_inner(bytes: &[u8], validate_tensor_data: bool) -> Result<Gguf, GgufError> {
     let mut r = Reader { bytes, pos: 0 };
     if r.read_exact(4)? != b"GGUF" {
         return Err(GgufError::BadMagic);
@@ -200,16 +208,22 @@ pub fn parse(bytes: &[u8]) -> Result<Gguf, GgufError> {
     }
 
     let data_offset = align_up(r.pos, 32).ok_or(GgufError::Truncated)?;
-    if data_offset > bytes.len() {
+    if validate_tensor_data && data_offset > bytes.len() {
         return Err(GgufError::Truncated);
     }
-    validate_tensor_data_layout(data_offset, bytes.len(), &tensors)?;
+    if validate_tensor_data {
+        validate_tensor_data_layout(data_offset, bytes.len(), &tensors)?;
+    }
     Ok(Gguf {
         version,
         metadata,
         tensors,
         data_offset,
-        file_len: bytes.len(),
+        file_len: if validate_tensor_data {
+            bytes.len()
+        } else {
+            data_offset
+        },
     })
 }
 
@@ -587,6 +601,23 @@ mod tests {
             bytes.push(0);
         }
         parse(&bytes).expect("aligned header without tensors is valid");
+    }
+
+    #[test]
+    fn metadata_prefix_parse_accepts_missing_tensor_payloads() {
+        let mut bytes = empty_header_with_counts(1, 1);
+        push_u32_metadata(&mut bytes, "answer", 42);
+        push_tensor_header_with_offset(&mut bytes, "weight", 0);
+
+        assert!(matches!(parse(&bytes), Err(GgufError::Truncated)));
+
+        let gguf = parse_metadata_prefix(&bytes).expect("metadata prefix");
+        assert_eq!(gguf.metadata_u32("answer"), Ok(42));
+        assert_eq!(gguf.tensor("weight").expect("tensor").name, "weight");
+        assert_eq!(
+            gguf.tensor_data(&bytes, "weight"),
+            Err(GgufError::Truncated)
+        );
     }
 
     #[test]

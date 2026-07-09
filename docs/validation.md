@@ -427,6 +427,7 @@ Command:
 ```sh
 cargo run -p xtask -- model-info --model testdata/tiny-f32.gguf
 cargo run -p xtask -- model-info --model model.gguf
+cargo run -p xtask -- model-info --model model-prefix.gguf --metadata-prefix
 ```
 
 `model-info` is the lightweight first step for TinyLlama / SmolLM2 / Qwen2.5
@@ -436,11 +437,17 @@ interpretation, tensor type inventory, tokenizer/model/codec vocabulary
 compatibility, and the required tensor shape/type status. It does not
 instantiate `F32Llama`, so it can be run before a full logits or compression
 pass on larger external GGUFs.
+With `--metadata-prefix`, the same summaries can be run on a GGUF prefix that
+contains the header, metadata, and tensor table but not tensor payload bytes.
+This is useful for screening external GGUF candidates for tokenizer byte
+coverage and tensor shape/type compatibility before downloading multi-GB model
+files; payload-backed commands such as `logits` and `bench-file` still require
+the complete GGUF.
 
 Observed smoke output on the bundled F32 fixture:
 
 ```text
-model-info path=testdata/tiny-f32.gguf bytes=13520 sha256=ce2aa01900a63585a409ef995a2827dcac81e1678e38a1ab0733302ba82ce79b gguf_version=3 metadata=12 tensors=12 data_offset=4800
+model-info path=testdata/tiny-f32.gguf bytes=13520 sha256=ce2aa01900a63585a409ef995a2827dcac81e1678e38a1ab0733302ba82ce79b metadata_prefix=false gguf_version=3 metadata=12 tensors=12 data_offset=4800
 model-info metadata key=general.architecture string=llama
 model-info metadata key=llama.vocab_size u32=256
 model-info metadata key=tokenizer.ggml.tokens array<string>[256]
@@ -477,16 +484,16 @@ because `detllm-design.md` v1 only supports `F32`, `F16` dense loading,
 Observed Q4_0 intake result:
 
 ```text
-model-info path=/tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf bytes=637699456 sha256=da3087fb14aede55fde6eb81a0e55e886810e43509ec82ecdc7aa5d62a03b556 gguf_version=3 metadata=23 tensors=201 data_offset=1709440
+model-info path=/tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf bytes=637699456 sha256=da3087fb14aede55fde6eb81a0e55e886810e43509ec82ecdc7aa5d62a03b556 metadata_prefix=false gguf_version=3 metadata=23 tensors=201 data_offset=1709440
 model-info tensor-inventory total=201 encoded_bytes=635990016 encoded_len_errors=0 F32=45 Q4_0=155 Q6_K=1
 model-info tensor-issue name=output.weight issue=unsupported_type type=Q6_K
 model-info required-tensors status=error checked=201 missing=0 shape_mismatch=0 unsupported_type=1 tied_output=false
 ```
 
-Observed Q8_0 intake result:
+Observed Unsloth Q8_0 intake result:
 
 ```text
-model-info path=/tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf bytes=1170781568 sha256=a4c9bb1dbaa372f6381a035fa5c02ef087aaa1ff1f843a56a22328114f03fc59 gguf_version=3 metadata=23 tensors=201 data_offset=1709440
+model-info path=/tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf bytes=1170781568 sha256=a4c9bb1dbaa372f6381a035fa5c02ef087aaa1ff1f843a56a22328114f03fc59 metadata_prefix=false gguf_version=3 metadata=23 tensors=201 data_offset=1709440
 model-info metadata key=general.architecture string=llama
 model-info metadata key=general.name string=tinyllama_tinyllama-1.1b-chat-v1.0
 model-info metadata key=tokenizer.ggml.model string=llama
@@ -555,7 +562,7 @@ Source:
 Observed Q8_0 intake result:
 
 ```text
-model-info path=/tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf bytes=1894532128 sha256=d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8 gguf_version=3 metadata=26 tensors=339 data_offset=5950496
+model-info path=/tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf bytes=1894532128 sha256=d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8 metadata_prefix=false gguf_version=3 metadata=26 tensors=339 data_offset=5950496
 model-info metadata key=general.architecture string=qwen2
 model-info metadata key=general.name string=qwen2.5-1.5b-instruct
 model-info metadata key=tokenizer.ggml.model string=gpt2
@@ -641,7 +648,7 @@ Source:
 Observed Q8_0 intake result:
 
 ```text
-model-info path=/tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf bytes=1820414624 sha256=0f3fb091804c48a561b42a4ca1be9ce2c353017187f74c48f52299cae790abe5 gguf_version=3 metadata=33 tensors=218 data_offset=1782432
+model-info path=/tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf bytes=1820414624 sha256=0f3fb091804c48a561b42a4ca1be9ce2c353017187f74c48f52299cae790abe5 metadata_prefix=false gguf_version=3 metadata=33 tensors=218 data_offset=1782432
 model-info metadata key=general.architecture string=llama
 model-info metadata key=general.name string=SmolLM2 1.7B Instruct
 model-info metadata key=tokenizer.ggml.model string=gpt2
@@ -658,6 +665,38 @@ model-info config status=ok block_count=24 embedding_length=2048 feed_forward_le
 model-info tensor-inventory total=218 encoded_bytes=1818632192 encoded_len_errors=0 F32=49 Q8_0=169
 model-info vocab status=ok tokenizer=49152 model=49152 codec_max_symbols=262144
 model-info required-tensors status=ok checked=218 missing=0 shape_mismatch=0 unsupported_type=0 tied_output=true
+```
+
+Metadata-prefix screening of other public SmolLM2 GGUF candidates found the
+same tokenizer byte coverage gap before downloading full model payloads:
+
+```sh
+curl -L --fail --retry 3 --range 0-4194303 -o /tmp/smollm2-bartowski-prefix.gguf https://huggingface.co/bartowski/SmolLM2-1.7B-Instruct-GGUF/resolve/main/SmolLM2-1.7B-Instruct-Q8_0.gguf
+cargo run -p xtask -- model-info --model /tmp/smollm2-bartowski-prefix.gguf --metadata-prefix
+curl -L --fail --retry 3 --range 0-4194303 -o /tmp/smollm2-hftb-q4-prefix.gguf https://huggingface.co/HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF/resolve/main/smollm2-1.7b-instruct-q4_k_m.gguf
+cargo run -p xtask -- model-info --model /tmp/smollm2-hftb-q4-prefix.gguf --metadata-prefix
+```
+
+Observed bartowski Q8_0 prefix result:
+
+```text
+model-info path=/tmp/smollm2-bartowski-prefix.gguf bytes=4194304 sha256=a82b6f909a52c435a6a19ebd907eb8919dd5160008ed1d24e456331de1102b2b metadata_prefix=true gguf_version=3 metadata=38 tensors=218 data_offset=1782752
+model-info metadata key=general.name string=Smollm2 1.7B 8k Mix7 Ep2 v2
+model-info tokenizer status=error error=IncompleteByteFallback
+model-info byte-coverage tokens=49152 single_byte=235 emittable_single_byte=235 missing=21 missing_emittable=21 missing_first=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,... missing_emittable_first=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,...
+model-info tensor-inventory total=218 encoded_bytes=1818632192 encoded_len_errors=0 F32=49 Q8_0=169
+model-info required-tensors status=ok checked=218 missing=0 shape_mismatch=0 unsupported_type=0 tied_output=true
+```
+
+Observed HuggingFaceTB Q4_K_M prefix result:
+
+```text
+model-info path=/tmp/smollm2-hftb-q4-prefix.gguf bytes=4194304 sha256=278ab31551e6bef87bdbdfdb6d283c7515e5059016f19dee4cc4c26d2d4ed8ae metadata_prefix=true gguf_version=3 metadata=34 tensors=218 data_offset=1782464
+model-info metadata key=general.name string=Smollm2 1.7B 8k Mix7 Ep2 v2
+model-info tokenizer status=error error=IncompleteByteFallback
+model-info byte-coverage tokens=49152 single_byte=235 emittable_single_byte=235 missing=21 missing_emittable=21 missing_first=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,... missing_emittable_first=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,...
+model-info tensor-inventory total=218 encoded_bytes=1053827072 encoded_len_errors=0 F32=49 Q4_K=144 Q6_K=25
+model-info required-tensors status=error checked=218 missing=0 shape_mismatch=0 unsupported_type=169 tied_output=true
 ```
 
 Minimal logits smoke:
@@ -708,8 +747,9 @@ detllm: tokenizer error: IncompleteByteFallback
 This is real SmolLM2 GGUF evidence for model config parsing, required tensor
 compatibility on Q8_0, single-token forward, chunk-size-invariant logits
 hashing on a three-token stream, and a llama.cpp raw-logits cosine check. It
-also records the blocking codec issue: the tested GGUF exposes only 235 of the
-256 byte values as single-byte BPE seed tokens, so it cannot satisfy
+also records the blocking codec issue: the tested full GGUF and the two
+metadata-prefix-screened public candidates expose only 235 of the 256 byte
+values as single-byte BPE seed tokens, so they cannot satisfy
 `detllm-design.md` §7's arbitrary-byte losslessness requirement. Full SmolLM2
 codec validation needs a compatible GGUF/tokenizer source or a deterministic
 tokenizer strategy that can represent all byte values without changing the

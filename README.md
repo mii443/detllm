@@ -43,6 +43,7 @@ cargo run -p xtask -- check-determinism
 cargo run -p xtask -- check-ci-workflow
 cargo run -p xtask -- model-info --model testdata/tiny-f32.gguf
 cargo run -p xtask -- model-info --model model.gguf
+cargo run -p xtask -- model-info --model model-prefix.gguf --metadata-prefix
 cargo run --release -p xtask -- bench-testdata --iters 100
 cargo run --release -p xtask -- bench-file --model testdata/tiny-f32.gguf --input testdata/tiny.tokens.txt --n-ctx 8 --iters 2
 cargo run --release -p xtask -- bench-file --model model.gguf --input enwik8 --limit-bytes 4096 --limit-tokens 512 --n-ctx 2048 --threads 8 --iters 1 --no-warmup
@@ -102,7 +103,8 @@ The implementation is not yet complete against the full design. In particular,
 the following acceptance evidence is still missing:
 
 - SmolLM2 full codec validation with a tokenizer/model source that covers all
-  256 input bytes; the tested Unsloth Q8_0 GGUF has 21 missing byte tokens.
+  256 input bytes; tested Unsloth, bartowski, and HuggingFaceTB GGUFs expose
+  21 missing byte tokens.
 - Further SmolLM2 reference-quality checks, plus broader target-model checks
   beyond the current TinyLlama/Qwen2.5 8-token raw-logits and log-probability
   smoke evidence.
