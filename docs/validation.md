@@ -1387,6 +1387,40 @@ prefix than the 64-token encode-only matrix. Because `--limit-tokens 512` is
 still set, it remains prefix evidence rather than the final full-token M4
 compression-rate measurement.
 
+Production-shape Qwen2.5 Q8_0 encode-only preflight over one full `n_ctx=2048`
+measured prefix:
+
+```sh
+scripts/run-target-full-bench.sh --model /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --input /tmp/enwik8 --name qwen25-q8-first1m-c2048-encode --limit-tokens 2048 --n-ctx 2048 --threads 8 --progress-every 256 --encode-only --estimate-full-run
+```
+
+Completed locally on 2026-07-10. The wrapper wrote the combined progress log
+to `/tmp/detllm-target-bench/qwen25-q8-first1m-c2048-encode.log`, the stable
+summary to `/tmp/detllm-target-bench/qwen25-q8-first1m-c2048-encode.summary`,
+and the latest progress row to
+`/tmp/detllm-target-bench/qwen25-q8-first1m-c2048-encode.progress`.
+
+```text
+bench-file-progress phase=encode tokens_done=256 tokens_total=2048 elapsed_ms=50928.032 tokens_per_s=5.027 remaining_s=356.496 estimated_total_s=407.424
+bench-file-progress phase=encode tokens_done=512 tokens_total=2048 elapsed_ms=102578.300 tokens_per_s=4.991 remaining_s=307.735 estimated_total_s=410.313
+bench-file-progress phase=encode tokens_done=768 tokens_total=2048 elapsed_ms=155243.154 tokens_per_s=4.947 remaining_s=258.739 estimated_total_s=413.982
+bench-file-progress phase=encode tokens_done=1024 tokens_total=2048 elapsed_ms=209195.353 tokens_per_s=4.895 remaining_s=209.195 estimated_total_s=418.391
+bench-file-progress phase=encode tokens_done=1280 tokens_total=2048 elapsed_ms=264427.643 tokens_per_s=4.841 remaining_s=158.657 estimated_total_s=423.084
+bench-file-progress phase=encode tokens_done=1536 tokens_total=2048 elapsed_ms=320505.183 tokens_per_s=4.792 remaining_s=106.835 estimated_total_s=427.340
+bench-file-progress phase=encode tokens_done=1792 tokens_total=2048 elapsed_ms=378014.076 tokens_per_s=4.741 remaining_s=54.002 estimated_total_s=432.016
+bench-file-progress phase=encode tokens_done=2048 tokens_total=2048 elapsed_ms=436779.620 tokens_per_s=4.689 remaining_s=0.000 estimated_total_s=436.780
+bench-file model=/tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=2048 iters=1 warmup=false mode=encode-only threads=8 n_ctx=2048 overlap=512 model_sha256=d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8 input_sha256=2254bc36b0d368e41115ed9ff9dcf77b3057c28b2330dab7db3667cb196a7966
+bench-file: source_input_bytes=100000000 measured_input_bytes=6748 total_input_bytes=6748 tokenized_tokens=279472 tokens=2048 total_tokens=2048 payload_bytes=481 dtlz_bytes=537 payload_bits_per_byte=0.570243 dtlz_bits_per_byte=0.636633 compression_ratio=0.079579 elapsed_ms=436906.749 input_bytes_per_s=15.445 tokens_per_s=4.687
+bench-file-estimate: full_tokens=279472 full_input_bytes=1048576 measured_tokens=2048 scale_factor=136.460938 estimated_measured_ms=59620704.567 estimated_measured_s=59620.705 measured_tokens_per_s=4.687
+bench-file-phases: model_read_ms=2193.246 gguf_parse_ms=25.645 model_load_ms=2184.654 tokenizer_setup_ms=469.556 input_read_ms=30.966 tokenize_ms=1575.105 token_prefix_ms=0.445 warmup_ms=0.001 measured_ms=436906.749 total_ms=449697.079
+```
+
+This run measures the same production context length as the final wrapper
+default and covers a complete 2048-token window. Because it uses
+`--encode-only` and `--limit-tokens 2048`, it remains a long-prefix preflight:
+it does not replace the final no-token-limit round-trip M4 acceptance
+measurement.
+
 Current-format Qwen2.5 preflight with a one-token measured prefix records the
 full first-1MB tokenization size:
 
@@ -1468,9 +1502,11 @@ tokens/s, remaining seconds, and estimated total seconds for the current
 phase. The stdout summary lines remain stable for copying into this file. The
 Qwen2.5 prefix run above shows 1MB
 ByteBPE tokenization is about 1.5 seconds on this host; the estimate line shows
-the current full 279,472-token measured encode loop is roughly 15 hours. After streaming
+the current full 279,472-token measured encode loop is roughly 16.6 hours when
+estimated from the 2048-token production-context preflight. After streaming
 KV-cache reuse and validated-model hot-path checks, the current 64-token
-encode-only measured loop is roughly 12 seconds. The model forward path also reuses
+encode-only measured loop is roughly 12 seconds and the 2048-token measured
+loop is roughly 437 seconds. The model forward path also reuses
 `ForwardWorkspace` scratch buffers across tokens, avoiding per-token allocation
 of the large hidden-state, projection, attention, feed-forward, Q8A, and Q8_K
 activation buffers, and uses layout checks for already-loaded models instead

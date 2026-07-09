@@ -194,6 +194,17 @@ mode:
 |---|---:|---:|---:|---:|
 | Qwen2.5 Q8_0 | 1702 | 0.390129 | 0.653349 | 2.554 tokens/s |
 
+Production-shape encode-only preflight with a full `n_ctx=2048` measured
+prefix:
+
+| check | tokens | measured bytes | payload bpb | DTLZ bpb | encode throughput | full-token ETA |
+|---|---:|---:|---:|---:|---:|---:|
+| Qwen2.5 Q8_0 | 2048 | 6748 | 0.570243 | 0.636633 | 4.687 tokens/s | 59,621 s |
+
+This extends the target-model compression-rate preflight to a complete 2048
+token context window, but it is still encode-only prefix evidence rather than
+the final full-token round-trip M4 acceptance measurement.
+
 Target-model raw-logits reference smoke, using
 `scripts/run-target-logits-broad-matrix.sh`, checks the same four external GGUFs
 against llama.cpp on both a short low-level token stream and the tokenizer-backed
