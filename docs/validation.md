@@ -30,7 +30,7 @@ explicit byte-token sequence `--tokens 97,98,99,10` for both fixtures.
 The CLI suite also checks `logits --dump FILE`: the dumped little-endian f32
 stream length must equal `positions * vocab * 4`, and hashing the dumped bytes
 must reproduce the `--hash` stdout. This provides a stable artifact for
-external HF/llama.cpp cosine-similarity sanity checks.
+external raw-logits cosine-similarity sanity checks.
 The model logits request boundary rejects token IDs outside the embedding
 vocabulary before computing hashes or dump buffers, so raw `--tokens` input
 cannot carry an out-of-vocabulary ID into the forward pass.
@@ -534,8 +534,9 @@ This is real TinyLlama GGUF evidence for tokenizer construction, model config
 parsing, full required tensor compatibility on Q8_0, single-token forward,
 chunk-size-invariant logits hashing on a three-token stream, and an end-to-end
 codec round-trip on a tiny byte input. It is not a substitute for the HF
-transformers / llama.cpp cosine check or the enwik8 first-1MB compression
-measurement.
+transformers raw-logits cosine check or the enwik8 first-1MB compression
+measurement; the llama.cpp perplexity-path log-probability check is recorded
+below.
 
 ### Qwen2.5 External Smoke
 
@@ -602,8 +603,8 @@ construction, `qwen2` metadata parsing, split-half RoPE configuration, full
 required tensor compatibility on Q8_0, single-token forward,
 chunk-size-invariant logits hashing on a three-token stream, and an end-to-end
 codec round-trip on a tiny byte input. It is not a substitute for the HF
-transformers / llama.cpp cosine check or the enwik8 first-1MB compression
-measurement.
+transformers raw-logits cosine check, a Qwen2.5 llama.cpp log-probability
+check, or the enwik8 first-1MB compression measurement.
 
 ### SmolLM2 External Smoke
 
@@ -728,7 +729,7 @@ both the global cosine and minimum row cosine. With `--rows`, it rejects dumps
 whose row count does not match the expected number of token positions, which
 prevents comparing different prompt lengths or a single final-token dump
 against a full-position detllm dump. This is the harness for the HF
-transformers or llama.cpp cosine-similarity sanity check required by
+transformers raw-logits cosine-similarity sanity check required by
 `detllm-design.md` once an external reference dump is available.
 
 The helper script
@@ -756,9 +757,33 @@ bytecode with:
 python3 -B scripts/reference_logits_transformers.py --help
 ```
 
-This still does not count as the required external cosine evidence until it is
-run in an environment with compatible `torch` and `transformers` installed and
-the resulting `compare-logits` output is recorded here.
+This still does not count as the required external raw-logits cosine evidence
+until it is run in an environment with compatible `torch` and `transformers`
+installed and the resulting `compare-logits` output is recorded here.
+
+llama.cpp `llama-perplexity --save-all-logits` does not write the same raw f32
+logits matrix as `detllm logits --dump`; the file starts with `_logits_` and
+stores the evaluated token log-probability distributions in the quantized
+format used by llama.cpp's KL-divergence path. The source implementation is
+`tools/perplexity/perplexity.cpp` in llama.cpp. `xtask
+compare-llamacpp-logprobs` parses that format, mirrors llama.cpp's per-chunk
+BOS handling, converts detllm logits to log-probabilities, and reports both
+full-distribution and target-token differences. Because llama.cpp clips the
+saved distribution tail to a 16-nat band before uint16 encoding, the target
+token metric is the thresholded reference check for perplexity-path parity.
+
+TinyLlama Q8_0 llama.cpp reference command:
+
+```sh
+llama-perplexity -m /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf -p "Hello world from detllm validation. Hello world from detllm validation. Hello world from detllm validation. Hello world from detllm validation." --save-all-logits /tmp/llama-tiny-ppl-c8.logits --chunks 2 --threads 8 --ctx-size 8 --batch-size 8 --no-mmap --log-disable
+cargo run --release -p xtask -- compare-llamacpp-logprobs --model /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf --reference /tmp/llama-tiny-ppl-c8.logits --threads 8 --max-target-abs-diff 0.2
+```
+
+Observed output:
+
+```text
+compare-llamacpp-logprobs chunks=2 n_ctx=8 vocab=32000 rows=6 values=192000 add_bos=true bos_token=1 max_abs_diff=10.154125214 rms_diff=0.902546679 max_target_abs_diff=0.104429245
+```
 
 Local smoke using the same `testdata/tiny-f32.gguf` dump as both actual and
 reference reported:

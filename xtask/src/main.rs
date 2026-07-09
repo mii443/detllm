@@ -107,13 +107,16 @@ fn real_main() -> Result<(), String> {
         Some("model-info") => model_info(parse_model_info_opts(args.collect())?),
         Some("bench-file") => bench_file(parse_bench_file_opts(args.collect())?),
         Some("compare-logits") => compare_logits(parse_compare_logits_opts(args.collect())?),
+        Some("compare-llamacpp-logprobs") => {
+            compare_llamacpp_logprobs(parse_compare_llamacpp_logprobs_opts(args.collect())?)
+        }
         Some("verify-logits-hashes") => {
             verify_logits_hashes(parse_verify_logits_hashes_opts(args.collect())?)
         }
         Some("check-ci-workflow") => check_ci_workflow(),
         Some("check-determinism") => check_determinism(),
         _ => Err(
-            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf|bench-file --model model.gguf --input file [--limit-bytes N] [--n-ctx N] [--iters N]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
+            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf|bench-file --model model.gguf --input file [--limit-bytes N] [--n-ctx N] [--iters N]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
                 .to_owned(),
         ),
     }
@@ -336,6 +339,16 @@ struct CompareLogitsOpts {
     min_cosine: Option<f64>,
     row_size: Option<usize>,
     rows: Option<usize>,
+}
+
+#[derive(Debug)]
+struct CompareLlamaCppLogProbsOpts {
+    model: String,
+    reference: String,
+    max_rms_diff: Option<f64>,
+    max_abs_diff: Option<f64>,
+    max_target_abs_diff: Option<f64>,
+    threads: Option<usize>,
 }
 
 struct VerifyLogitsHashesOpts {
@@ -1145,6 +1158,162 @@ fn compare_logits(opts: CompareLogitsOpts) -> Result<(), String> {
     Ok(())
 }
 
+fn parse_compare_llamacpp_logprobs_opts(
+    args: Vec<String>,
+) -> Result<CompareLlamaCppLogProbsOpts, String> {
+    let mut model = None;
+    let mut reference = None;
+    let mut max_rms_diff = None;
+    let mut max_abs_diff = None;
+    let mut max_target_abs_diff = None;
+    let mut threads = None;
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-m" | "--model" => {
+                i += 1;
+                model = args.get(i).cloned();
+            }
+            "--reference" => {
+                i += 1;
+                reference = args.get(i).cloned();
+            }
+            "--max-rms-diff" => {
+                i += 1;
+                max_rms_diff = Some(parse_non_negative_f64_arg(
+                    "compare-llamacpp-logprobs",
+                    "--max-rms-diff",
+                    args.get(i),
+                )?);
+            }
+            "--max-abs-diff" => {
+                i += 1;
+                max_abs_diff = Some(parse_non_negative_f64_arg(
+                    "compare-llamacpp-logprobs",
+                    "--max-abs-diff",
+                    args.get(i),
+                )?);
+            }
+            "--max-target-abs-diff" => {
+                i += 1;
+                max_target_abs_diff = Some(parse_non_negative_f64_arg(
+                    "compare-llamacpp-logprobs",
+                    "--max-target-abs-diff",
+                    args.get(i),
+                )?);
+            }
+            "--threads" => {
+                i += 1;
+                let raw = args
+                    .get(i)
+                    .ok_or("compare-llamacpp-logprobs: missing value for --threads")?;
+                let value = raw.parse::<usize>().map_err(|e| {
+                    format!("compare-llamacpp-logprobs: invalid --threads value: {e}")
+                })?;
+                if value == 0 {
+                    return Err(
+                        "compare-llamacpp-logprobs: --threads must be greater than zero".to_owned(),
+                    );
+                }
+                threads = Some(value);
+            }
+            other => {
+                return Err(format!(
+                    "unknown compare-llamacpp-logprobs argument: {other}"
+                ))
+            }
+        }
+        i += 1;
+    }
+    Ok(CompareLlamaCppLogProbsOpts {
+        model: model.ok_or("compare-llamacpp-logprobs: missing --model")?,
+        reference: reference.ok_or("compare-llamacpp-logprobs: missing --reference")?,
+        max_rms_diff,
+        max_abs_diff,
+        max_target_abs_diff,
+        threads,
+    })
+}
+
+fn parse_non_negative_f64_arg(
+    command: &str,
+    flag: &str,
+    raw: Option<&String>,
+) -> Result<f64, String> {
+    let value = raw
+        .ok_or_else(|| format!("{command}: missing value for {flag}"))?
+        .parse::<f64>()
+        .map_err(|e| format!("{command}: invalid {flag} value: {e}"))?;
+    if !value.is_finite() || value < 0.0 {
+        return Err(format!(
+            "{command}: {flag} must be a finite non-negative value"
+        ));
+    }
+    Ok(value)
+}
+
+fn compare_llamacpp_logprobs(opts: CompareLlamaCppLogProbsOpts) -> Result<(), String> {
+    det_model::set_thread_count(opts.threads)
+        .map_err(|e| format!("compare-llamacpp-logprobs: thread configuration error: {e:?}"))?;
+    let model_bytes = fs::read(&opts.model).map_err(|e| format!("{}: {e}", opts.model))?;
+    let gguf = det_gguf::parse(&model_bytes)
+        .map_err(|e| format!("{}: GGUF parse error: {e:?}", opts.model))?;
+    let model = det_model::F32Llama::from_gguf(&gguf, &model_bytes)
+        .map_err(|e| format!("{}: model load error: {e:?}", opts.model))?;
+    let reference_bytes =
+        fs::read(&opts.reference).map_err(|e| format!("{}: {e}", opts.reference))?;
+    let reference = parse_llamacpp_logprob_dump(&reference_bytes, &opts.reference)?;
+    if reference.n_vocab != model.output.rows() {
+        return Err(format!(
+            "compare-llamacpp-logprobs: vocab mismatch reference={} model={}",
+            reference.n_vocab,
+            model.output.rows()
+        ));
+    }
+
+    let bos_policy = llama_cpp_bos_policy(&gguf)?;
+    let metrics = compare_llamacpp_logprob_values(&model, &reference, bos_policy)?;
+    if let Some(max_abs_diff) = opts.max_abs_diff {
+        if metrics.max_abs_diff > max_abs_diff {
+            return Err(format!(
+                "compare-llamacpp-logprobs: max abs diff {:.9} exceeds threshold {:.9}",
+                metrics.max_abs_diff, max_abs_diff
+            ));
+        }
+    }
+    if let Some(max_rms_diff) = opts.max_rms_diff {
+        if metrics.rms_diff > max_rms_diff {
+            return Err(format!(
+                "compare-llamacpp-logprobs: rms diff {:.9} exceeds threshold {:.9}",
+                metrics.rms_diff, max_rms_diff
+            ));
+        }
+    }
+    if let Some(max_target_abs_diff) = opts.max_target_abs_diff {
+        if metrics.max_target_abs_diff > max_target_abs_diff {
+            return Err(format!(
+                "compare-llamacpp-logprobs: max target abs diff {:.9} exceeds threshold {:.9}",
+                metrics.max_target_abs_diff, max_target_abs_diff
+            ));
+        }
+    }
+
+    println!(
+        "compare-llamacpp-logprobs chunks={} n_ctx={} vocab={} rows={} values={} add_bos={} bos_token={} max_abs_diff={:.9} rms_diff={:.9} max_target_abs_diff={:.9}",
+        reference.n_chunks,
+        reference.n_ctx,
+        reference.n_vocab,
+        metrics.rows,
+        metrics.values,
+        bos_policy.add_bos,
+        bos_policy.bos_token,
+        metrics.max_abs_diff,
+        metrics.rms_diff,
+        metrics.max_target_abs_diff
+    );
+    Ok(())
+}
+
 fn validate_expected_rows(
     row_metrics: &LogitsRowMetrics,
     expected_rows: Option<usize>,
@@ -1415,6 +1584,35 @@ struct LogitsRowMetrics {
     min_cosine: f64,
 }
 
+#[derive(Clone, Copy)]
+struct LlamaCppBosPolicy {
+    add_bos: bool,
+    bos_token: usize,
+}
+
+struct LlamaCppLogProbDump {
+    n_ctx: usize,
+    n_vocab: usize,
+    n_chunks: usize,
+    tokens: Vec<usize>,
+    rows: Vec<LlamaCppLogProbRow>,
+}
+
+struct LlamaCppLogProbRow {
+    chunk: usize,
+    position: usize,
+    target_token: usize,
+    log_probs: Vec<f32>,
+}
+
+struct LlamaCppLogProbMetrics {
+    rows: usize,
+    values: usize,
+    max_abs_diff: f64,
+    rms_diff: f64,
+    max_target_abs_diff: f64,
+}
+
 fn parse_logits_dump(bytes: &[u8], label: &str) -> Result<Vec<f32>, String> {
     if bytes.is_empty() {
         return Err(format!("{label}: logits dump is empty"));
@@ -1434,6 +1632,175 @@ fn parse_logits_dump(bytes: &[u8], label: &str) -> Result<Vec<f32>, String> {
         out.push(value);
     }
     Ok(out)
+}
+
+fn parse_llamacpp_logprob_dump(bytes: &[u8], label: &str) -> Result<LlamaCppLogProbDump, String> {
+    const MAGIC: &[u8; 8] = b"_logits_";
+    const HEADER_LEN: usize = 20;
+    if bytes.len() < HEADER_LEN {
+        return Err(format!("{label}: llama.cpp log-prob dump is too short"));
+    }
+    if &bytes[..MAGIC.len()] != MAGIC {
+        return Err(format!("{label}: missing llama.cpp _logits_ magic"));
+    }
+    let n_ctx = read_u32_le(bytes, 8, label)? as usize;
+    let n_vocab = read_i32_le_positive(bytes, 12, label, "n_vocab")? as usize;
+    let n_chunks = read_i32_le_positive(bytes, 16, label, "n_chunk")? as usize;
+    if n_ctx < 2 {
+        return Err(format!("{label}: n_ctx must be at least 2"));
+    }
+
+    let token_count = n_ctx
+        .checked_mul(n_chunks)
+        .ok_or_else(|| format!("{label}: token count overflow"))?;
+    let token_bytes = token_count
+        .checked_mul(4)
+        .ok_or_else(|| format!("{label}: token byte length overflow"))?;
+    let tokens_start = HEADER_LEN;
+    let rows_start = tokens_start
+        .checked_add(token_bytes)
+        .ok_or_else(|| format!("{label}: token section offset overflow"))?;
+    if bytes.len() < rows_start {
+        return Err(format!("{label}: truncated token section"));
+    }
+
+    let first = n_ctx / 2;
+    let rows_per_chunk = n_ctx
+        .checked_sub(1 + first)
+        .ok_or_else(|| format!("{label}: invalid n_ctx/first row layout"))?;
+    if rows_per_chunk == 0 {
+        return Err(format!("{label}: no evaluated rows in llama.cpp dump"));
+    }
+    let nv_u16 = 2usize
+        .checked_mul((n_vocab + 1) / 2)
+        .and_then(|v| v.checked_add(4))
+        .ok_or_else(|| format!("{label}: row width overflow"))?;
+    let row_bytes = nv_u16
+        .checked_mul(2)
+        .ok_or_else(|| format!("{label}: row byte length overflow"))?;
+    let row_count = rows_per_chunk
+        .checked_mul(n_chunks)
+        .ok_or_else(|| format!("{label}: row count overflow"))?;
+    let expected_len = rows_start
+        .checked_add(
+            row_count
+                .checked_mul(row_bytes)
+                .ok_or_else(|| format!("{label}: row data length overflow"))?,
+        )
+        .ok_or_else(|| format!("{label}: total length overflow"))?;
+    if bytes.len() != expected_len {
+        return Err(format!(
+            "{label}: length {} does not match llama.cpp layout {}",
+            bytes.len(),
+            expected_len
+        ));
+    }
+
+    let mut tokens = Vec::with_capacity(token_count);
+    for idx in 0..token_count {
+        let offset = tokens_start + idx * 4;
+        let token = read_i32_le_non_negative(bytes, offset, label, "token")? as usize;
+        if token >= n_vocab {
+            return Err(format!(
+                "{label}: token id {} at index {} exceeds vocab {}",
+                token, idx, n_vocab
+            ));
+        }
+        tokens.push(token);
+    }
+
+    let mut rows = Vec::with_capacity(row_count);
+    let mut offset = rows_start;
+    for chunk in 0..n_chunks {
+        for row_idx in 0..rows_per_chunk {
+            let position = first + row_idx;
+            let target_token = tokens[chunk * n_ctx + position + 1];
+            let scale = read_f32_le(bytes, offset, label, "scale")?;
+            let min_log_prob = read_f32_le(bytes, offset + 4, label, "min_log_prob")?;
+            if scale < 0.0 {
+                return Err(format!("{label}: negative scale in row {}", rows.len()));
+            }
+            let mut log_probs = Vec::with_capacity(n_vocab);
+            let quantized_start = offset + 8;
+            for vocab_idx in 0..n_vocab {
+                let q = read_u16_le(bytes, quantized_start + vocab_idx * 2, label)? as f32;
+                log_probs.push(min_log_prob + scale * q);
+            }
+            rows.push(LlamaCppLogProbRow {
+                chunk,
+                position,
+                target_token,
+                log_probs,
+            });
+            offset += row_bytes;
+        }
+    }
+
+    Ok(LlamaCppLogProbDump {
+        n_ctx,
+        n_vocab,
+        n_chunks,
+        tokens,
+        rows,
+    })
+}
+
+fn read_u16_le(bytes: &[u8], offset: usize, label: &str) -> Result<u16, String> {
+    let chunk = bytes
+        .get(offset..offset + 2)
+        .ok_or_else(|| format!("{label}: truncated u16 at byte {offset}"))?;
+    Ok(u16::from_le_bytes([chunk[0], chunk[1]]))
+}
+
+fn read_u32_le(bytes: &[u8], offset: usize, label: &str) -> Result<u32, String> {
+    let chunk = bytes
+        .get(offset..offset + 4)
+        .ok_or_else(|| format!("{label}: truncated u32 at byte {offset}"))?;
+    Ok(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+}
+
+fn read_i32_le_positive(
+    bytes: &[u8],
+    offset: usize,
+    label: &str,
+    field: &str,
+) -> Result<i32, String> {
+    let value = read_i32_le(bytes, offset, label)?;
+    if value <= 0 {
+        return Err(format!("{label}: {field} must be positive"));
+    }
+    Ok(value)
+}
+
+fn read_i32_le_non_negative(
+    bytes: &[u8],
+    offset: usize,
+    label: &str,
+    field: &str,
+) -> Result<i32, String> {
+    let value = read_i32_le(bytes, offset, label)?;
+    if value < 0 {
+        return Err(format!("{label}: {field} must be non-negative"));
+    }
+    Ok(value)
+}
+
+fn read_i32_le(bytes: &[u8], offset: usize, label: &str) -> Result<i32, String> {
+    let chunk = bytes
+        .get(offset..offset + 4)
+        .ok_or_else(|| format!("{label}: truncated i32 at byte {offset}"))?;
+    Ok(i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+}
+
+fn read_f32_le(bytes: &[u8], offset: usize, label: &str, field: &str) -> Result<f32, String> {
+    let chunk = bytes
+        .get(offset..offset + 4)
+        .ok_or_else(|| format!("{label}: truncated {field} at byte {offset}"))?;
+    let value = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+    if !value.is_finite() {
+        return Err(format!("{label}: non-finite {field} at byte {offset}"));
+    }
+    Ok(value)
 }
 
 fn compare_logits_values(
@@ -1513,6 +1880,115 @@ fn compare_logits_rows(
         row_size,
         min_cosine,
     })
+}
+
+fn compare_llamacpp_logprob_values(
+    model: &det_model::F32Llama,
+    reference: &LlamaCppLogProbDump,
+    bos_policy: LlamaCppBosPolicy,
+) -> Result<LlamaCppLogProbMetrics, String> {
+    let mut values = 0usize;
+    let mut max_abs_diff = 0.0f64;
+    let mut max_target_abs_diff = 0.0f64;
+    let mut sum_sq_diff = 0.0f64;
+
+    for chunk in 0..reference.n_chunks {
+        let token_start = chunk * reference.n_ctx;
+        let mut chunk_tokens =
+            reference.tokens[token_start..token_start + reference.n_ctx].to_vec();
+        if bos_policy.add_bos {
+            chunk_tokens[0] = bos_policy.bos_token;
+        }
+        let logits_bytes = model
+            .logits_bytes_for_tokens_chunked(&chunk_tokens, reference.n_ctx)
+            .map_err(|e| format!("compare-llamacpp-logprobs: logits error: {e:?}"))?;
+        let logits = parse_logits_dump(&logits_bytes, "detllm chunk logits")?;
+        let chunk_rows = reference.rows.iter().filter(|row| row.chunk == chunk);
+        for row in chunk_rows {
+            let row_start = row
+                .position
+                .checked_mul(reference.n_vocab)
+                .ok_or_else(|| "compare-llamacpp-logprobs: row offset overflow".to_owned())?;
+            let row_end = row_start
+                .checked_add(reference.n_vocab)
+                .ok_or_else(|| "compare-llamacpp-logprobs: row end overflow".to_owned())?;
+            let actual_log_probs =
+                logits_to_log_probs(logits.get(row_start..row_end).ok_or_else(|| {
+                    "compare-llamacpp-logprobs: detllm logits row out of range".to_owned()
+                })?)?;
+            let target_diff = (actual_log_probs[row.target_token] as f64
+                - row.log_probs[row.target_token] as f64)
+                .abs();
+            max_target_abs_diff = max_target_abs_diff.max(target_diff);
+            for (&actual, &reference) in actual_log_probs.iter().zip(&row.log_probs) {
+                let diff = (actual as f64 - reference as f64).abs();
+                max_abs_diff = max_abs_diff.max(diff);
+                sum_sq_diff += diff * diff;
+                values += 1;
+            }
+        }
+    }
+
+    if values == 0 {
+        return Err("compare-llamacpp-logprobs: no values to compare".to_owned());
+    }
+    Ok(LlamaCppLogProbMetrics {
+        rows: reference.rows.len(),
+        values,
+        max_abs_diff,
+        rms_diff: (sum_sq_diff / values as f64).sqrt(),
+        max_target_abs_diff,
+    })
+}
+
+fn logits_to_log_probs(logits: &[f32]) -> Result<Vec<f32>, String> {
+    if logits.is_empty() {
+        return Err("compare-llamacpp-logprobs: empty logits row".to_owned());
+    }
+    let mut max_logit = f64::NEG_INFINITY;
+    for &logit in logits {
+        if !logit.is_finite() {
+            return Err("compare-llamacpp-logprobs: non-finite detllm logit".to_owned());
+        }
+        max_logit = max_logit.max(logit as f64);
+    }
+    let mut sum_exp = 0.0f64;
+    for &logit in logits {
+        sum_exp += (logit as f64 - max_logit).exp();
+    }
+    if sum_exp == 0.0 || !sum_exp.is_finite() {
+        return Err("compare-llamacpp-logprobs: invalid softmax denominator".to_owned());
+    }
+    let log_sum_exp = sum_exp.ln();
+    Ok(logits
+        .iter()
+        .map(|&logit| (logit as f64 - max_logit - log_sum_exp) as f32)
+        .collect())
+}
+
+fn llama_cpp_bos_policy(gguf: &det_gguf::Gguf) -> Result<LlamaCppBosPolicy, String> {
+    let tokenizer_model = gguf
+        .metadata_str("tokenizer.ggml.model")
+        .unwrap_or_default();
+    let add_bos = match optional_metadata_bool(gguf, "tokenizer.ggml.add_bos_token")? {
+        Some(value) => value,
+        None => tokenizer_model == "llama",
+    };
+    let bos_token = match gguf.metadata_u32("tokenizer.ggml.bos_token_id") {
+        Ok(value) => value as usize,
+        Err(det_gguf::GgufError::MetadataNotFound) => 1,
+        Err(e) => return Err(format!("tokenizer.ggml.bos_token_id metadata error: {e:?}")),
+    };
+    Ok(LlamaCppBosPolicy { add_bos, bos_token })
+}
+
+fn optional_metadata_bool(gguf: &det_gguf::Gguf, key: &str) -> Result<Option<bool>, String> {
+    match gguf.metadata_value(key) {
+        Ok(det_gguf::MetadataValue::Bool(value)) => Ok(Some(*value)),
+        Ok(_) => Err(format!("{key} metadata type mismatch")),
+        Err(det_gguf::GgufError::MetadataNotFound) => Ok(None),
+        Err(e) => Err(format!("{key} metadata error: {e:?}")),
+    }
 }
 
 fn codec_round_trip(
@@ -2127,6 +2603,37 @@ mod tests {
         assert!(parse_logits_dump(&[], "empty").is_err());
         assert!(parse_logits_dump(&[0, 1, 2], "short").is_err());
         assert!(parse_logits_dump(&f32::NAN.to_le_bytes(), "nan").is_err());
+    }
+
+    #[test]
+    fn parse_llamacpp_logprob_dump_reads_header_tokens_and_rows() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"_logits_");
+        bytes.extend_from_slice(&4u32.to_le_bytes());
+        bytes.extend_from_slice(&3i32.to_le_bytes());
+        bytes.extend_from_slice(&1i32.to_le_bytes());
+        for token in [0i32, 1, 2, 1] {
+            bytes.extend_from_slice(&token.to_le_bytes());
+        }
+        bytes.extend_from_slice(&0.5f32.to_le_bytes());
+        bytes.extend_from_slice(&(-2.0f32).to_le_bytes());
+        for q in [0u16, 1, 4, 0] {
+            bytes.extend_from_slice(&q.to_le_bytes());
+        }
+
+        let dump = parse_llamacpp_logprob_dump(&bytes, "fixture").expect("dump");
+        assert_eq!(dump.n_ctx, 4);
+        assert_eq!(dump.n_vocab, 3);
+        assert_eq!(dump.n_chunks, 1);
+        assert_eq!(dump.tokens, vec![0, 1, 2, 1]);
+        assert_eq!(dump.rows.len(), 1);
+        assert_eq!(dump.rows[0].chunk, 0);
+        assert_eq!(dump.rows[0].position, 2);
+        assert_eq!(dump.rows[0].target_token, 1);
+        assert_eq!(dump.rows[0].log_probs, vec![-2.0, -1.5, 0.0]);
+
+        bytes.pop();
+        assert!(parse_llamacpp_logprob_dump(&bytes, "truncated").is_err());
     }
 
     #[test]

@@ -49,6 +49,8 @@ cargo run --release -p xtask -- bench-file --model model.gguf --input enwik8 --l
 cargo run -p det-cli -- tokenize -m model.gguf -p "prompt text"
 scripts/reference_logits_transformers.py --model-id TinyLlama/TinyLlama-1.1B-Chat-v1.0 --tokens 1,2,3 --out hf.logits.bin --expected-rows 3 --expected-vocab 32000
 cargo run -p xtask -- compare-logits --actual detllm.logits.bin --reference reference.logits.bin --row-size VOCAB --rows TOKENS --min-cosine 0.999
+llama-perplexity -m model.gguf -p "prompt text long enough for 2*n_ctx tokens" --save-all-logits llama.logits --ctx-size 8 --chunks 2 --batch-size 8
+cargo run --release -p xtask -- compare-llamacpp-logprobs --model model.gguf --reference llama.logits --max-target-abs-diff 0.2
 cargo run -p det-cli -- selftest
 cargo run -p det-cli -- logits -m testdata/tiny-f32.gguf --tokens "$(cat testdata/tiny.tokens.txt)" --hash --chunk-size 3
 cargo run -p det-cli -- logits -m testdata/tiny-qmix.gguf --tokens "$(cat testdata/tiny.tokens.txt)" --hash --chunk-size 3
@@ -80,6 +82,7 @@ the following acceptance evidence is still missing:
   256 input bytes; the tested Unsloth Q8_0 GGUF has 21 missing byte tokens.
 - Broader TinyLlama / Qwen2.5 / SmolLM2 reference-quality checks beyond the
   current minimal smoke.
-- HF transformers or llama.cpp cosine-similarity sanity checks.
+- HF transformers raw-logits cosine-similarity evidence; TinyLlama now has a
+  llama.cpp perplexity-path log-probability sanity check.
 - enwik8 first-1MB compression-rate measurement with `xtask bench-file`.
 - Criterion or equivalent full benchmark results on real target hardware.
