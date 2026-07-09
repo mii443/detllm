@@ -272,6 +272,32 @@ mod tests {
     }
 
     #[test]
+    fn byte_escape_cdf_enforces_symbol_limit() {
+        let max_vocab = MAX_SYMBOLS - BYTE_ESCAPE_SYMBOLS;
+        let mut scratch = CdfScratch::default();
+
+        let uniform = uniform_cdf_with_byte_escapes(max_vocab).expect("max uniform cdf");
+        assert_eq!(uniform.freq.len(), MAX_SYMBOLS);
+        assert_eq!(uniform.total, MAX_SYMBOLS as u64);
+        assert_eq!(
+            uniform_cdf_with_byte_escapes(max_vocab + 1),
+            Err(CdfError::TooManySymbols)
+        );
+
+        let logits = vec![0.0; max_vocab];
+        let cdf = logits_to_cdf_with_byte_escapes(&logits, &mut scratch).expect("max logits cdf");
+        assert_eq!(cdf.freq.len(), MAX_SYMBOLS);
+        assert_eq!(cdf.cum[max_vocab], cdf.total - BYTE_ESCAPE_SYMBOLS as u64);
+        assert!(cdf.freq[max_vocab..].iter().all(|&freq| freq == 1));
+
+        let too_many_logits = vec![0.0; max_vocab + 1];
+        assert_eq!(
+            logits_to_cdf_with_byte_escapes(&too_many_logits, &mut scratch),
+            Err(CdfError::TooManySymbols)
+        );
+    }
+
+    #[test]
     fn logits_to_cdf_matches_scalar_reference_for_large_vocab() {
         let mut state = 0x1234_5678_9abc_def0u64;
         let mut logits = Vec::with_capacity(10_003);
