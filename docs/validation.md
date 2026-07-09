@@ -169,7 +169,10 @@ CLI compression, and `xtask bench-file` use the workspace path. The unit test
 workspace path produces the same logits bits as the default wrapper across a
 multi-token KV-cache run.
 Attention now reads contiguous KV-cache prefixes directly instead of copying
-the key/value window into scratch buffers for every layer/head. The unit test
+the key/value window into scratch buffers for every layer/head. With the
+`parallel` feature, attention scratch is split per head so independent heads
+can run in parallel while each head keeps its score softmax and value
+accumulation order. The unit test
 `kv_cache_prefix_slices_are_contiguous_and_bounds_checked` covers the direct
 prefix-slice layout and rejects malformed prefix requests.
 Size arithmetic for RoPE tables and logits dumps is checked before allocation.
@@ -1077,9 +1080,11 @@ the validated CDF lookup for CDFs built by this codec path, avoiding a full CDF
 validation scan on every decoded token while leaving the public validating
 `symbol_for` helper available for untrusted tables. With the `parallel`
 feature, row-parallel GEMV reuses fixed-size Rayon worker pools keyed by
-`--threads` instead of spawning OS threads for every matrix multiply, and CDF
-construction parallelizes only the independent `exp[i]` fill while keeping `Z`
-and prefix sums single-threaded.
+`--threads` instead of spawning OS threads for every matrix multiply, attention
+parallelizes independent heads with per-head score/prob scratch while keeping
+each head's softmax and value accumulation ordered, and CDF construction
+parallelizes only the independent `exp[i]` fill while keeping `Z` and prefix
+sums single-threaded.
 This is the harness to use for target-model enwik8 first-1MB measurements; the
 bundled fixtures remain smoke and input-scale checks.
 The harness applies the same tokenizer/model vocabulary equality check and

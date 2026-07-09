@@ -867,6 +867,7 @@ impl ForwardWorkspace {
         let head_dim = config.head_dim()?;
         let q_len = checked_len(config.head_count, head_dim)?;
         let kv_len = checked_len(config.head_count_kv, head_dim)?;
+        let attn_scratch_len = checked_len(config.head_count, max_context)?;
         Ok(Self {
             config,
             max_context,
@@ -877,8 +878,8 @@ impl ForwardWorkspace {
             k: vec![0.0; kv_len],
             v: vec![0.0; kv_len],
             attn: vec![0.0; q_len],
-            scores: vec![0.0; max_context],
-            probs: vec![0.0; max_context],
+            scores: vec![0.0; attn_scratch_len],
+            probs: vec![0.0; attn_scratch_len],
             tmp_d: vec![0.0; d],
             gate: vec![0.0; d_ff],
             up: vec![0.0; d_ff],
@@ -897,6 +898,7 @@ impl ForwardWorkspace {
         let head_dim = config.head_dim()?;
         let q_len = checked_len(config.head_count, head_dim)?;
         let kv_len = checked_len(config.head_count_kv, head_dim)?;
+        let attn_scratch_len = checked_len(config.head_count, self.max_context)?;
         if self.config != config
             || self.head_dim != head_dim
             || output_vocab == 0
@@ -907,8 +909,8 @@ impl ForwardWorkspace {
             || self.k.len() != kv_len
             || self.v.len() != kv_len
             || self.attn.len() != q_len
-            || self.scores.len() != self.max_context
-            || self.probs.len() != self.max_context
+            || self.scores.len() != attn_scratch_len
+            || self.probs.len() != attn_scratch_len
             || self.tmp_d.len() != d
             || self.gate.len() != d_ff
             || self.up.len() != d_ff
@@ -1199,29 +1201,17 @@ impl F32Llama {
             )?;
             cache.store(layer_idx, pos, &workspace.k, &workspace.v)?;
 
-            for head in 0..self.config.head_count {
-                let kv_head = head / (self.config.head_count / self.config.head_count_kv);
-                let qh = &workspace.q[head * head_dim..(head + 1) * head_dim];
-                let score_len = pos + 1;
-                let key_window = cache.key_prefix(layer_idx, kv_head, score_len)?;
-                let value_window = cache.value_prefix(layer_idx, kv_head, score_len)?;
-                attention_scores_one_head_scaled(
-                    qh,
-                    key_window,
-                    head_dim,
-                    self.config.attention_scale,
-                    &mut workspace.scores[..score_len],
-                )?;
-                workspace.probs[..score_len].copy_from_slice(&workspace.scores[..score_len]);
-                softmax_in_place(&mut workspace.probs[..score_len])?;
-                let out_head = &mut workspace.attn[head * head_dim..(head + 1) * head_dim];
-                attention_weighted_value(
-                    &workspace.probs[..score_len],
-                    value_window,
-                    head_dim,
-                    out_head,
-                )?;
-            }
+            attention_all_heads(
+                self.config,
+                layer_idx,
+                pos,
+                cache,
+                &workspace.q,
+                &mut workspace.attn,
+                &mut workspace.scores,
+                &mut workspace.probs,
+                workspace.max_context,
+            )?;
 
             layer
                 .wo
@@ -2029,6 +2019,159 @@ pub fn attention_scores_one_head(
     out: &mut [f32],
 ) -> Result<(), ModelError> {
     attention_scores_one_head_scaled(q, keys, head_dim, default_attention_scale(head_dim), out)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn attention_all_heads(
+    config: LlamaConfig,
+    layer_idx: usize,
+    pos: usize,
+    cache: &KvCache,
+    q: &[f32],
+    attn: &mut [f32],
+    scores: &mut [f32],
+    probs: &mut [f32],
+    max_context: usize,
+) -> Result<(), ModelError> {
+    let head_dim = config.head_dim()?;
+    let q_len = checked_len(config.head_count, head_dim)?;
+    let scratch_len = checked_len(config.head_count, max_context)?;
+    if pos >= max_context
+        || q.len() != q_len
+        || attn.len() != q_len
+        || scores.len() != scratch_len
+        || probs.len() != scratch_len
+    {
+        return Err(ModelError::Shape);
+    }
+
+    #[cfg(all(feature = "parallel", not(target_family = "wasm")))]
+    {
+        let threads = requested_thread_count().clamp(1, config.head_count.max(1));
+        if threads > 1 && config.head_count > 1 {
+            return attention_all_heads_parallel(
+                config,
+                layer_idx,
+                pos,
+                cache,
+                q,
+                attn,
+                scores,
+                probs,
+                max_context,
+                threads,
+            );
+        }
+    }
+
+    attention_all_heads_sequential(
+        config,
+        layer_idx,
+        pos,
+        cache,
+        q,
+        attn,
+        scores,
+        probs,
+        max_context,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn attention_all_heads_sequential(
+    config: LlamaConfig,
+    layer_idx: usize,
+    pos: usize,
+    cache: &KvCache,
+    q: &[f32],
+    attn: &mut [f32],
+    scores: &mut [f32],
+    probs: &mut [f32],
+    max_context: usize,
+) -> Result<(), ModelError> {
+    let head_dim = config.head_dim()?;
+    for head in 0..config.head_count {
+        attention_one_head(
+            config,
+            layer_idx,
+            pos,
+            cache,
+            head,
+            &q[head * head_dim..(head + 1) * head_dim],
+            &mut attn[head * head_dim..(head + 1) * head_dim],
+            &mut scores[head * max_context..(head + 1) * max_context],
+            &mut probs[head * max_context..(head + 1) * max_context],
+        )?;
+    }
+    Ok(())
+}
+
+#[cfg(all(feature = "parallel", not(target_family = "wasm")))]
+#[allow(clippy::too_many_arguments)]
+fn attention_all_heads_parallel(
+    config: LlamaConfig,
+    layer_idx: usize,
+    pos: usize,
+    cache: &KvCache,
+    q: &[f32],
+    attn: &mut [f32],
+    scores: &mut [f32],
+    probs: &mut [f32],
+    max_context: usize,
+    threads: usize,
+) -> Result<(), ModelError> {
+    let head_dim = config.head_dim()?;
+    with_rayon_pool(threads, || {
+        attn.par_chunks_mut(head_dim)
+            .zip(scores.par_chunks_mut(max_context))
+            .zip(probs.par_chunks_mut(max_context))
+            .enumerate()
+            .try_for_each(|(head, ((out_head, score_scratch), prob_scratch))| {
+                attention_one_head(
+                    config,
+                    layer_idx,
+                    pos,
+                    cache,
+                    head,
+                    &q[head * head_dim..(head + 1) * head_dim],
+                    out_head,
+                    score_scratch,
+                    prob_scratch,
+                )
+            })
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn attention_one_head(
+    config: LlamaConfig,
+    layer_idx: usize,
+    pos: usize,
+    cache: &KvCache,
+    head: usize,
+    qh: &[f32],
+    out_head: &mut [f32],
+    score_scratch: &mut [f32],
+    prob_scratch: &mut [f32],
+) -> Result<(), ModelError> {
+    let head_dim = config.head_dim()?;
+    let score_len = pos + 1;
+    if score_scratch.len() < score_len || prob_scratch.len() < score_len {
+        return Err(ModelError::Shape);
+    }
+    let kv_head = head / (config.head_count / config.head_count_kv);
+    let key_window = cache.key_prefix(layer_idx, kv_head, score_len)?;
+    let value_window = cache.value_prefix(layer_idx, kv_head, score_len)?;
+    attention_scores_one_head_scaled(
+        qh,
+        key_window,
+        head_dim,
+        config.attention_scale,
+        &mut score_scratch[..score_len],
+    )?;
+    prob_scratch[..score_len].copy_from_slice(&score_scratch[..score_len]);
+    softmax_in_place(&mut prob_scratch[..score_len])?;
+    attention_weighted_value(&prob_scratch[..score_len], value_window, head_dim, out_head)
 }
 
 pub fn attention_scores_one_head_scaled(
