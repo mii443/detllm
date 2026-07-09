@@ -1505,6 +1505,18 @@ checks byte equality. This is an equivalent harness result for the bundled
 fixtures only; target-model and broader hardware benchmark results remain
 separate acceptance evidence.
 
+The manual GitHub Actions `benchmarks.yml` workflow collects the same
+`bench-testdata` fixture benchmark on hosted `x86_64-linux`, `aarch64-linux`,
+and `aarch64-macos` runners without adding benchmark timing noise to push/PR
+CI:
+
+```sh
+gh workflow run benchmarks.yml --repo mii443/detllm --ref main -f iters=100
+```
+
+Each matrix job writes runner OS/architecture, `uname -a`, `rustc --version`,
+the exact command, and the benchmark output to a `bench-testdata-*` artifact.
+
 ## Logits Cosine Compare Harness
 
 Command:
