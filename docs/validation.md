@@ -1861,6 +1861,23 @@ cmp /tmp/detllm-nightly-input.txt /tmp/detllm-nightly-restored.txt
 `check-ci-workflow` validates that this scheduled/manual-only external GGUF
 smoke remains present without adding the multi-GB download to normal push CI.
 
+Manual `workflow_dispatch` evidence: run
+<https://github.com/mii443/detllm/actions/runs/29049241175> on commit
+`9907e3bd41f22287658e1113f57a331b460a96cf` completed successfully on
+2026-07-09, including `nightly-tinyllama` job
+<https://github.com/mii443/detllm/actions/runs/29049241175/job/86225469404>.
+The job downloaded the 1,170,781,568-byte TinyLlama Q8_0 GGUF, observed model
+SHA-256 `a4c9bb1dbaa372f6381a035fa5c02ef087aaa1ff1f843a56a22328114f03fc59`,
+reported `tokenizer status=ok kind=sentencepiece`, `vocab status=ok`, and
+`required-tensors status=ok checked=201 missing=0`, with `shape_mismatch=0`
+and `unsupported_type=0`. The release-mode `logits --hash` smoke for tokens
+`1,2,3` produced
+`c1c6502c2705bc898a6547af2af17e58ce97382438f341abbfb9f37124fb4992`, and the
+`Hi\n` compress/decompress smoke reached `cmp` successfully. Step timings were
+20:49:47Z-20:53:22Z for download, 20:53:22Z-20:54:39Z for `model-info`,
+20:54:39Z-20:54:43Z for release-mode `logits --hash`, and
+20:54:43Z-20:54:57Z for the codec roundtrip.
+
 The GitHub Actions `wasm` job builds `detllm` for `wasm32-wasip1`, runs
 `selftest`, compares fixture `logits --hash` outputs against native execution,
 and compares the quant-kernel hash against native execution. It also runs a

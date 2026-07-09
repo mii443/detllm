@@ -121,7 +121,9 @@ GitHub Actions also includes a `nightly-tinyllama` job that is skipped on
 ordinary push/PR runs and runs only on the scheduled workflow or when
 `workflow_dispatch` is started with `run_nightly_tinyllama=true`; it downloads
 TinyLlama Q8_0 from Hugging Face and runs `model-info`, `logits --hash`, and a
-small compress/decompress smoke.
+small compress/decompress smoke. The manual run
+<https://github.com/mii443/detllm/actions/runs/29049241175> passed this
+external GGUF smoke on commit `9907e3b`.
 `model-info` records a
 lightweight GGUF
 intake summary without loading all weights, including model SHA-256, parsed
