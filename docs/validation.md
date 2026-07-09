@@ -263,7 +263,7 @@ cargo run -p det-cli -- quant-kernel-hash
 Observed hash:
 
 ```text
-6877539a54fd2094f5899b8b373c907b98806ff3004d0bc43a998ffb88d80fff
+b3ecad1b64412ce5f38dcb0945c73dc203021ba536ca9af83f2747e77a484465
 ```
 
 `det-quant` rejects non-finite Q8A activation inputs before quantization.
@@ -283,13 +283,14 @@ returning an unchecked result.
 `det-model` maps those quantized-dot failures to `ModelError::NonFinite`, and
 its GEMV boundary test covers finite Q8/Q4 inputs that overflow during the
 quantized dot path.
-The CLI startup runtime canary also hashes a fixed set of Q8_0/Q4_0/Q6_K block-dot
-outputs before executing normal commands, so a broken selected quantized dot
-backend is caught by `selftest` and by ordinary CLI entry points, not only by
-the separate `quant-kernel-hash` diagnostic command. `quant-kernel-hash`
-itself covers 1,000,000 deterministic Q8_0/Q4_0 block cases plus 4,096
-deterministic Q6_K block cases, and local scalar and AVX2 SIMD runs produced
-the same hash shown above.
+The CLI startup runtime canary also hashes a fixed set of
+Q8_0/Q4_0/Q4_K/Q6_K block-dot outputs before executing normal commands, so a
+broken selected quantized dot backend is caught by `selftest` and by ordinary
+CLI entry points, not only by the separate `quant-kernel-hash` diagnostic
+command. `quant-kernel-hash` itself covers 1,000,000 deterministic Q8_0/Q4_0
+block cases plus 4,096 deterministic Q4_K block cases and 4,096 deterministic
+Q6_K block cases, and local scalar and AVX2 SIMD runs produced the same hash
+shown above.
 The `shared_q8a_path_matches_standalone_quantized_gemv` test fixes the
 `detllm-design.md` §5.2 quantization timing rule: one Q8A activation buffer is
 created for mixed F32/quantized projection groups when any matrix needs it,
@@ -1334,14 +1335,18 @@ XDG_CACHE_HOME=/tmp/detllm-wasmtime-cache wasmtime --dir . target/wasm32-wasip1/
 XDG_CACHE_HOME=/tmp/detllm-wasmtime-cache wasmtime target/wasm32-wasip1/debug/detllm.wasm quant-kernel-hash
 ```
 
-Observed wasm hashes:
+Observed wasm logits hashes from that local run:
 
 | check | hash |
 |---|---|
 | `tiny-f32` logits | `92a0280149c6b1505c84dce0d19486a2093f93b7978b579c220000d12e4ef7e7` |
 | `tiny-qmix` logits | `8a34d3c4a05e9a30b90aadcdca7b6bac91655e6ab67980ccdb6726565d35f3e4` |
-| quant kernel | `6877539a54fd2094f5899b8b373c907b98806ff3004d0bc43a998ffb88d80fff` |
 
 The same local run also compressed and decompressed `testdata/tiny.tokens.txt`
 through wasmtime for both bundled fixtures and verified byte equality with
 `cmp`.
+
+After adding Q4_K to the quant-kernel hash, the native scalar and AVX2 SIMD
+hash is `b3ecad1b64412ce5f38dcb0945c73dc203021ba536ca9af83f2747e77a484465`.
+Local `wasmtime` was not available for this update, so the GitHub Actions
+`wasm` job remains the execution gate for the updated wasm quant-kernel value.

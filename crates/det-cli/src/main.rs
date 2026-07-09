@@ -3,8 +3,8 @@ use std::{env, fs, process::ExitCode};
 use det_num::{run_canary as run_numeric_canary, Sha256};
 
 const RUNTIME_CANARY_EXPECTED: [u8; 32] = [
-    0xc0, 0x11, 0x55, 0xe2, 0x5a, 0xa6, 0x3a, 0xcd, 0xf6, 0xb3, 0xe1, 0x19, 0xd6, 0x78, 0x21, 0x20,
-    0x4c, 0xfc, 0xd9, 0xb8, 0xa9, 0x0c, 0x4d, 0x46, 0x9e, 0xcc, 0x25, 0xaf, 0xd1, 0xd0, 0xb5, 0x9b,
+    0xb3, 0x9c, 0xac, 0x34, 0x0b, 0xd7, 0x15, 0x52, 0x10, 0xd5, 0x56, 0x00, 0x2f, 0x3d, 0x96, 0x2a,
+    0x1a, 0xd7, 0xb8, 0x06, 0x0a, 0xa1, 0x47, 0xa8, 0xc0, 0x2c, 0xde, 0xd5, 0x9c, 0x2e, 0x5c, 0x05,
 ];
 
 fn main() -> ExitCode {
@@ -150,17 +150,22 @@ fn runtime_canary_hash() -> Result<[u8; 32], String> {
         let q8 = q8_block(seed);
         let q4 = q4_block(seed ^ 0xa5a5_5a5a);
         let a = q8a_block(seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223));
+        let q4k = q4k_block(seed ^ 0x9e37_79b9);
+        let a4k = q8a_blocks_for_q4k(seed);
         let q6 = q6_block(seed ^ 0x517c_c1b7);
         let a6 = q8a_blocks_for_q6(seed);
         let y8 = det_quant::dot_q8_0_q8a_block(q8, a);
         let y4 = det_quant::dot_q4_0_q8a_block(q4, a);
+        let y4k = det_quant::dot_q4_k_q8a(&[q4k], &a4k)
+            .map_err(|e| format!("runtime canary Q4_K dot error: {e:?}"))?;
         let y6 = det_quant::dot_q6_k_q8a(&[q6], &a6)
             .map_err(|e| format!("runtime canary Q6_K dot error: {e:?}"))?;
-        if !y8.is_finite() || !y4.is_finite() || !y6.is_finite() {
+        if !y8.is_finite() || !y4.is_finite() || !y4k.is_finite() || !y6.is_finite() {
             return Err("runtime canary quantized dot produced non-finite output".to_owned());
         }
         h.update(&y8.to_bits().to_le_bytes());
         h.update(&y4.to_bits().to_le_bytes());
+        h.update(&y4k.to_bits().to_le_bytes());
         h.update(&y6.to_bits().to_le_bytes());
     }
 
@@ -228,6 +233,7 @@ fn fixture_logits_hash() -> Result<[u8; 32], String> {
 fn quant_kernel_hash() -> Result<[u8; 32], String> {
     let mut h = Sha256::new();
     const CASES: u32 = 1_000_000;
+    const Q4K_CASES: u32 = 4_096;
     const Q6K_CASES: u32 = 4_096;
     for seed in 0..CASES {
         let q8 = q8_block(seed);
@@ -240,6 +246,16 @@ fn quant_kernel_hash() -> Result<[u8; 32], String> {
         }
         h.update(&y8.to_bits().to_le_bytes());
         h.update(&y4.to_bits().to_le_bytes());
+    }
+    for seed in 0..Q4K_CASES {
+        let q4k = q4k_block(seed ^ 0x9e37_79b9);
+        let a4k = q8a_blocks_for_q4k(seed);
+        let y4k = det_quant::dot_q4_k_q8a(&[q4k], &a4k)
+            .map_err(|e| format!("quant Q4_K kernel error: {e:?}"))?;
+        if !y4k.is_finite() {
+            return Err("quant Q4_K kernel produced non-finite output".to_owned());
+        }
+        h.update(&y4k.to_bits().to_le_bytes());
     }
     for seed in 0..Q6K_CASES {
         let q6 = q6_block(seed ^ 0x517c_c1b7);
@@ -295,6 +311,42 @@ fn q4_block(seed: u32) -> det_quant::Q4_0Block {
     }
 }
 
+fn q4k_block(seed: u32) -> det_quant::Q4KBlock {
+    let mut scales = [0u8; 12];
+    let mut qs = [0u8; 128];
+    let mut x = seed;
+    for i in 0..4 {
+        x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let scale = ((x >> 10) & 0x3f) as u8;
+        x = x.wrapping_mul(22_695_477).wrapping_add(1);
+        let min = ((x >> 11) & 0x3f) as u8;
+        scales[i] = scale & 0x3f;
+        scales[i + 4] = min & 0x3f;
+    }
+    for i in 4..8 {
+        x = x.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
+        let scale = ((x >> 8) & 0x3f) as u8;
+        x = x.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+        let min = ((x >> 12) & 0x3f) as u8;
+        scales[i + 4] = (scale & 0x0f) | ((min & 0x0f) << 4);
+        scales[i - 4] |= (scale >> 4) << 6;
+        scales[i] |= (min >> 4) << 6;
+    }
+    for byte in &mut qs {
+        x = x.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+        let lo = ((x >> 16) & 0x0f) as u8;
+        x = x.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
+        let hi = ((x >> 20) & 0x0f) as u8;
+        *byte = lo | (hi << 4);
+    }
+    det_quant::Q4KBlock {
+        d: f32::from_bits(0x3b00_0000 + (seed & 0xff)),
+        dmin: f32::from_bits(0x3a80_0000 + ((seed >> 8) & 0xff)),
+        scales,
+        qs,
+    }
+}
+
 fn q6_block(seed: u32) -> det_quant::Q6KBlock {
     let mut ql = [0u8; 128];
     let mut qh = [0u8; 64];
@@ -318,6 +370,10 @@ fn q6_block(seed: u32) -> det_quant::Q6KBlock {
         qh,
         scales,
     }
+}
+
+fn q8a_blocks_for_q4k(seed: u32) -> [det_quant::Q8ABlock; det_quant::Q4K_BLOCK / det_quant::BLOCK] {
+    core::array::from_fn(|i| q8a_block(seed.wrapping_add((i as u32).wrapping_mul(0x85eb_ca6b))))
 }
 
 fn q8a_blocks_for_q6(seed: u32) -> [det_quant::Q8ABlock; det_quant::Q6K_BLOCK / det_quant::BLOCK] {

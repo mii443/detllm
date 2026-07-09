@@ -12,8 +12,8 @@ Implemented crates:
 
 - `det-num`: fixed-order reductions, deterministic rounding, f16 conversion,
   vendored libm `exp`/`sin`/`cos`/`log`, SHA-256, numeric canary.
-- `det-quant`: `Q8_0`, `Q4_0`, scalar `Q4_K`, `Q6_K`, in-memory `Q8A`, and
-  `simd` feature kernels for the block formats covered by the quant hash.
+- `det-quant`: `Q8_0`, `Q4_0`, scalar `Q4_K`, `Q6_K`, in-memory `Q8A`,
+  `simd` feature kernels, and deterministic quant-kernel hash coverage.
 - `det-gguf`: zero-copy GGUF metadata and tensor parsing for repository
   fixtures.
 - `det-token`: byte fallback, SentencePiece-style, and GPT-2-style tokenizer
