@@ -12,5 +12,10 @@ det-model = { path = "../crates/det-model" }
 det-num = { path = "../crates/det-num" }
 det-token = { path = "../crates/det-token" }
 
+[features]
+default = []
+parallel = ["det-model/parallel"]
+simd = ["det-model/simd"]
+
 [lints]
 workspace = true

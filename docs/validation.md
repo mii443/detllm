@@ -766,9 +766,14 @@ Command:
 
 ```sh
 cargo run --release -p xtask -- bench-file --model testdata/tiny-f32.gguf --input testdata/tiny.tokens.txt --n-ctx 8 --iters 1
-cargo run --release -p xtask -- bench-file --model model.gguf --input enwik8 --limit-bytes 4096 --limit-tokens 512 --n-ctx 2048 --threads 8 --iters 1 --no-warmup
-cargo run --release -p xtask -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --threads 8 --iters 1 --no-warmup
+cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 4096 --limit-tokens 512 --n-ctx 2048 --threads 8 --iters 1 --no-warmup
+cargo run --release -p xtask --features parallel,simd -- bench-file --model model.gguf --input enwik8 --limit-bytes 1048576 --n-ctx 2048 --threads 8 --iters 1 --no-warmup
 ```
+
+Build `xtask` with `--features parallel,simd` for target-model benchmark
+commands. The `parallel` feature forwards to `det-model/parallel`, so
+`--threads N` engages deterministic row-parallel GEMV; `simd` forwards to the
+quantized kernel feature.
 
 Observed smoke output on the bundled token text fixture:
 
@@ -808,24 +813,24 @@ Observed TinyLlama Q8_0 target-model token-prefix smoke on the canonical enwik8
 stream:
 
 ```sh
-cargo run --release -p xtask -- bench-file --model /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf --input /tmp/enwik8 --limit-bytes 1048576 --limit-tokens 16 --n-ctx 64 --threads 8 --iters 1 --no-warmup
+cargo run --release -p xtask --features parallel,simd -- bench-file --model /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf --input /tmp/enwik8 --limit-bytes 1048576 --limit-tokens 16 --n-ctx 64 --threads 8 --iters 1 --no-warmup
 ```
 
 ```text
 bench-file model=/tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=16 iters=1 warmup=false threads=8 n_ctx=64 overlap=16 model_sha256=a4c9bb1dbaa372f6381a035fa5c02ef087aaa1ff1f843a56a22328114f03fc59 input_sha256=516d4b5d16ec0a573a2eaf415abe04b40ca38038fce3531e71bb3f019ff9b6de
-bench-file: source_input_bytes=100000000 measured_input_bytes=47 total_input_bytes=47 tokens=16 total_tokens=16 payload_bytes=33 dtlz_bytes=89 payload_bits_per_byte=5.617021 dtlz_bits_per_byte=15.148936 compression_ratio=1.893617 elapsed_ms=32632.943 input_bytes_per_s=1.440 tokens_per_s=0.490
+bench-file: source_input_bytes=100000000 measured_input_bytes=47 total_input_bytes=47 tokens=16 total_tokens=16 payload_bytes=33 dtlz_bytes=89 payload_bits_per_byte=5.617021 dtlz_bits_per_byte=15.148936 compression_ratio=1.893617 elapsed_ms=29911.665 input_bytes_per_s=1.571 tokens_per_s=0.535
 ```
 
 Observed Qwen2.5 Q8_0 target-model token-prefix smoke on the canonical enwik8
 stream:
 
 ```sh
-cargo run --release -p xtask -- bench-file --model /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --input /tmp/enwik8 --limit-bytes 1048576 --limit-tokens 16 --n-ctx 64 --threads 8 --iters 1 --no-warmup
+cargo run --release -p xtask --features parallel,simd -- bench-file --model /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --input /tmp/enwik8 --limit-bytes 1048576 --limit-tokens 16 --n-ctx 64 --threads 8 --iters 1 --no-warmup
 ```
 
 ```text
 bench-file model=/tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=16 iters=1 warmup=false threads=8 n_ctx=64 overlap=16 model_sha256=d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8 input_sha256=4fe5a21798e43c8258edcf9f3a98fac2df77613b4d2add15a2a3082eedc7b0b2
-bench-file: source_input_bytes=100000000 measured_input_bytes=53 total_input_bytes=53 tokens=16 total_tokens=16 payload_bytes=14 dtlz_bytes=70 payload_bits_per_byte=2.113208 dtlz_bits_per_byte=10.566038 compression_ratio=1.320755 elapsed_ms=50439.929 input_bytes_per_s=1.051 tokens_per_s=0.317
+bench-file: source_input_bytes=100000000 measured_input_bytes=53 total_input_bytes=53 tokens=16 total_tokens=16 payload_bytes=14 dtlz_bytes=70 payload_bits_per_byte=2.113208 dtlz_bits_per_byte=10.566038 compression_ratio=1.320755 elapsed_ms=46230.631 input_bytes_per_s=1.146 tokens_per_s=0.346
 ```
 
 This is input-scale and round-trip evidence for the `bench-file`
