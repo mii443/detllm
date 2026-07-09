@@ -1065,6 +1065,28 @@ bench-file: source_input_bytes=100000000 measured_input_bytes=53 total_input_byt
 bench-file-phases: model_read_ms=2203.318 gguf_parse_ms=30.830 model_load_ms=2247.226 tokenizer_setup_ms=284.216 input_read_ms=118.886 tokenize_ms=913.220 token_prefix_ms=9.846 warmup_ms=0.000 measured_ms=4245.398 total_ms=15570.105
 ```
 
+After `bench-file` learned to read only the requested byte prefix for
+`--limit-bytes`, the same Qwen2.5 path was extended to a 64-token
+encode/decode round-trip:
+
+```sh
+cargo run --release -p xtask --features parallel,simd -- bench-file --model /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --input /tmp/enwik8 --limit-bytes 1048576 --limit-tokens 64 --n-ctx 128 --threads 8 --iters 1 --no-warmup --show-phases --progress-every 16
+```
+
+```text
+bench-file-progress phase=encode tokens_done=16 tokens_total=64 elapsed_ms=2826.319 tokens_per_s=5.661
+bench-file-progress phase=encode tokens_done=32 tokens_total=64 elapsed_ms=5793.098 tokens_per_s=5.524
+bench-file-progress phase=encode tokens_done=48 tokens_total=64 elapsed_ms=8710.002 tokens_per_s=5.511
+bench-file-progress phase=encode tokens_done=64 tokens_total=64 elapsed_ms=11635.372 tokens_per_s=5.500
+bench-file-progress phase=decode tokens_done=16 tokens_total=64 elapsed_ms=2709.283 tokens_per_s=5.906
+bench-file-progress phase=decode tokens_done=32 tokens_total=64 elapsed_ms=5549.411 tokens_per_s=5.766
+bench-file-progress phase=decode tokens_done=48 tokens_total=64 elapsed_ms=8507.142 tokens_per_s=5.642
+bench-file-progress phase=decode tokens_done=64 tokens_total=64 elapsed_ms=11413.044 tokens_per_s=5.608
+bench-file model=/tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=64 iters=1 warmup=false threads=8 n_ctx=128 overlap=32 model_sha256=d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8 input_sha256=b4997b129849e53a0cb6265f2561d8e57ad57003ffbcc1c7357b03918e79b03b
+bench-file: source_input_bytes=100000000 measured_input_bytes=190 total_input_bytes=190 tokens=64 total_tokens=64 payload_bytes=15 dtlz_bytes=71 payload_bits_per_byte=0.631579 dtlz_bits_per_byte=2.989474 compression_ratio=0.373684 elapsed_ms=23201.015 input_bytes_per_s=8.189 tokens_per_s=2.758
+bench-file-phases: model_read_ms=2326.019 gguf_parse_ms=33.568 model_load_ms=2536.310 tokenizer_setup_ms=436.087 input_read_ms=45.359 tokenize_ms=1412.359 token_prefix_ms=0.134 warmup_ms=0.000 measured_ms=23201.015 total_ms=36310.746
+```
+
 This is input-scale and round-trip evidence for the `bench-file`
 implementation on the canonical enwik8 byte stream, not a meaningful language
 model compression-quality result. The tiny fixture has byte tokens and a tiny
