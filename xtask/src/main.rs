@@ -1185,24 +1185,48 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
 
     let start = Instant::now();
     let mut payload_bytes = 0usize;
-    let mut output_payload = None;
+    let mut output_dtlz = None;
     for _ in 0..opts.iters {
         if opts.encode_only {
             let payload =
                 encode_symbols_with_model_progress(&model, &symbols, n_ctx, overlap, &progress)?;
             payload_bytes += payload.len();
             if opts.output_dtlz_path.is_some() {
-                output_payload = Some(payload);
+                output_dtlz = Some(write_bench_file_dtlz_for_payload(
+                    opts.output_dtlz_path.as_deref(),
+                    model_sha256_digest,
+                    n_ctx,
+                    overlap,
+                    input.len(),
+                    &payload,
+                )?);
             }
         } else {
-            let (payload, restored) =
-                codec_round_trip(&model, &tokenizer, &symbols, n_ctx, overlap, &progress)?;
-            if restored != input {
-                return Err("bench-file: benchmark iteration did not round-trip".to_owned());
-            }
+            let payload =
+                encode_symbols_with_model_progress(&model, &symbols, n_ctx, overlap, &progress)?;
             payload_bytes += payload.len();
             if opts.output_dtlz_path.is_some() {
-                output_payload = Some(payload);
+                output_dtlz = Some(write_bench_file_dtlz_for_payload(
+                    opts.output_dtlz_path.as_deref(),
+                    model_sha256_digest,
+                    n_ctx,
+                    overlap,
+                    input.len(),
+                    &payload,
+                )?);
+            }
+            let decoded = decode_symbols_with_model_progress(
+                &model,
+                &payload,
+                symbols.len(),
+                n_ctx,
+                overlap,
+                &progress,
+            )?;
+            let restored = detokenize_codec_symbols(&tokenizer, &decoded, model.output.rows())
+                .map_err(|e| format!("detokenize error: {e:?}"))?;
+            if restored != input {
+                return Err("bench-file: benchmark iteration did not round-trip".to_owned());
             }
         }
     }
@@ -1288,21 +1312,10 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
             total_start.elapsed().as_secs_f64() * 1000.0
         ));
     }
-    if let Some(path) = &opts.output_dtlz_path {
-        let payload = output_payload
-            .as_deref()
-            .ok_or("bench-file: no measured payload available for --output-dtlz")?;
-        let header = det_coder::DtlzHeader {
-            flags: det_coder::FLAG_BYTE_ESCAPES,
-            model_sha256: model_sha256_digest,
-            n_ctx: u32::try_from(n_ctx).map_err(|_| "bench-file: n_ctx does not fit u32")?,
-            overlap: u32::try_from(overlap).map_err(|_| "bench-file: overlap does not fit u32")?,
-            orig_len: input.len() as u64,
-        };
-        let output = write_bench_file_dtlz(path, header, payload)?;
+    if let Some(output) = output_dtlz {
         summary_lines.push(format!(
             "bench-file-output-dtlz path={} bytes={} sha256={}",
-            path, output.bytes, output.sha256
+            output.path, output.bytes, output.sha256
         ));
     }
     for line in &summary_lines {
@@ -1372,8 +1385,28 @@ fn write_bench_file_summary(path: &str, lines: &[String]) -> Result<(), String> 
 
 #[derive(Debug)]
 struct BenchFileDtlzOutput {
+    path: String,
     bytes: usize,
     sha256: String,
+}
+
+fn write_bench_file_dtlz_for_payload(
+    path: Option<&str>,
+    model_sha256: [u8; 32],
+    n_ctx: usize,
+    overlap: usize,
+    orig_len: usize,
+    payload: &[u8],
+) -> Result<BenchFileDtlzOutput, String> {
+    let path = path.ok_or("bench-file: no output path available for --output-dtlz")?;
+    let header = det_coder::DtlzHeader {
+        flags: det_coder::FLAG_BYTE_ESCAPES,
+        model_sha256,
+        n_ctx: u32::try_from(n_ctx).map_err(|_| "bench-file: n_ctx does not fit u32")?,
+        overlap: u32::try_from(overlap).map_err(|_| "bench-file: overlap does not fit u32")?,
+        orig_len: orig_len as u64,
+    };
+    write_bench_file_dtlz(path, header, payload)
 }
 
 fn write_bench_file_dtlz(
@@ -1398,6 +1431,7 @@ fn write_bench_file_dtlz(
     body.extend_from_slice(&header);
     body.extend_from_slice(payload);
     let output = BenchFileDtlzOutput {
+        path: path.display().to_string(),
         bytes: body.len(),
         sha256: sha256_hex(&body),
     };

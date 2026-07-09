@@ -1501,10 +1501,11 @@ detokenization, warmup, measured loop, and total wall time.
 `--summary PATH` writes the final stdout summary lines to a file through a
 same-directory temporary file and rename, which is useful for long target-model
 runs where progress output is noisy or the terminal history is transient.
-`--output-dtlz PATH` similarly writes the final measured iteration's DTLZ file
-through a temporary file and rename. It requires `--iters 1`, matching the
-target-model acceptance run, so a completed encode/decode measurement leaves a
-durable file that can be checked later with the public `decompress` command.
+`--output-dtlz PATH` similarly writes the measured iteration's DTLZ file
+through a temporary file and rename as soon as encode finishes. It requires
+`--iters 1`, matching the target-model acceptance run, so a long round-trip
+run leaves a durable compressed file before the decode verification phase
+starts. That file can be checked later with the public `decompress` command.
 For the final target-model first-1MB run, use:
 
 ```sh
