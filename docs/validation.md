@@ -1593,13 +1593,45 @@ bash -n scripts/run-target-hf-logits-matrix.sh
 scripts/run-target-hf-logits-matrix.sh --help
 ```
 
-This still does not count as the required independent HF raw-logits cosine
-evidence until the wrapper is run in an environment with compatible `torch` and
-`transformers` installed, the requested HF model IDs or local model directories
-available, and the resulting `compare-logits` output recorded here.
-Current host dependency preflight on 2026-07-10: `torch` imports as
-`2.7.1+cu126`, but `transformers` is not installed, so the HF matrix was not
-run in this validation pass.
+The HF matrix was run on 2026-07-10 on the local host with `torch 2.7.1+cu126`,
+`transformers 5.13.0`, `safetensors 0.8.0`, `sentencepiece 0.2.1`,
+`scipy 1.15.3`, `--dtype float32`, `--torch-threads 1`, and detllm commit
+`2ea2d3d`. The command used `--min-cosine 0.0` so all rows would be recorded
+even when the design's `0.999` target was not met:
+
+```sh
+scripts/run-target-hf-logits-matrix.sh \
+  --tinyllama-q8 /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf \
+  --tinyllama-q4 /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf \
+  --qwen25-q8 /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf \
+  --smollm2-q8 /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf \
+  --out /tmp/detllm-hf-logits-matrix-20260710 \
+  --threads 8 \
+  --torch-threads 1 \
+  --dtype float32 \
+  --min-cosine 0.0
+```
+
+Observed HF f32-original comparison results:
+
+| model | case | rows | vocab | overall cosine | min row cosine | max abs diff | rms diff | status |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| TinyLlama Q8_0 | `ids-1-2-3` | 3 | 32000 | 0.998597893 | 0.997304256 | 1.150591612 | 0.157622818 | below `0.999` |
+| TinyLlama Q8_0 | `hello-validation-8` | 8 | 32000 | 0.999140071 | 0.996110549 | 2.072637081 | 0.189306373 | below `0.999` |
+| TinyLlama Q4_0 | `ids-1-2-3` | 3 | 32000 | 0.888001168 | 0.805630281 | 13.091418743 | 1.390802840 | below `0.999` |
+| TinyLlama Q4_0 | `hello-validation-8` | 8 | 32000 | 0.930995510 | 0.689283705 | 13.645533442 | 1.648519377 | below `0.999` |
+| Qwen2.5 Q8_0 | `special-hello-special` | 3 | 151936 | 0.992294342 | 0.987721191 | 2.586650014 | 0.465782622 | below `0.999` |
+| Qwen2.5 Q8_0 | `hello-validation-8` | 8 | 151936 | 0.996246571 | 0.980463056 | 2.738610268 | 0.300313601 | below `0.999` |
+| SmolLM2 Q8_0 | `ids-1-2-3` | 3 | 49152 | 0.974184954 | 0.955967579 | 5.795506358 | 1.019470888 | below `0.999` |
+| SmolLM2 Q8_0 | `hello-validation-8` | 8 | 49152 | 0.986475034 | 0.953664992 | 8.137038231 | 0.536524322 | below `0.999` |
+
+These results are independent HF evidence, but they are not acceptance-pass
+evidence for the `0.999` threshold. They compare quantized target GGUF inference
+against the original HF f32 models, while the same-GGUF llama.cpp raw-logits
+matrix above remains the passing reference check for implementation parity.
+This leaves an explicit follow-up: decide whether HF-original comparisons need
+model-specific quantization-aware thresholds or whether the acceptance gate
+should remain same-GGUF against llama.cpp for quantized models.
 
 TinyLlama Q8_0 llama.cpp raw-logits reference command:
 

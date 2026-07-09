@@ -184,7 +184,17 @@ Transformers raw-logits matrix shape for the same token streams and target
 GGUFs. It expects a Python environment with `torch` and `transformers` plus
 HF model IDs or local model directories, then writes detllm dumps, HF dumps,
 and `compare-logits` logs under `/tmp/detllm-hf-logits-matrix` by default.
-Recorded HF matrix results are still pending.
+The HF f32-original matrix was recorded on 2026-07-10 with
+`torch 2.7.1+cu126` and `transformers 5.13.0`; it is useful negative evidence
+for direct HF-original-vs-quantized-GGUF comparison, because every target-model
+case missed the `0.999` minimum-row threshold. Worst minimum row cosine was:
+
+| check | cases | worst min row cosine |
+|---|---:|---:|
+| TinyLlama Q8_0 | 2 | 0.996110549 |
+| TinyLlama Q4_0 | 2 | 0.689283705 |
+| Qwen2.5 Q8_0 | 2 | 0.980463056 |
+| SmolLM2 Q8_0 | 2 | 0.953664992 |
 
 Target-model longer-context log-probability smoke, using
 `scripts/run-target-logprob-broad-matrix.sh`, checks llama.cpp
@@ -246,9 +256,11 @@ the following acceptance evidence is still missing:
 - Further target-model reference-quality checks are still needed beyond the
   current scripted TinyLlama Q8_0/Q4_0, Qwen2.5 Q8_0, and SmolLM2 Q8_0
   llama.cpp raw-logits broad matrix and short/long log-probability matrices,
-  plus the current llama.cpp PPL reference smoke. A reproducible HF
-  transformers raw-logits matrix wrapper exists, but recorded HF results and
-  broader perplexity-quality checks are still pending.
+  plus the current llama.cpp PPL reference smoke. The HF transformers
+  raw-logits matrix is now recorded as negative evidence for direct
+  HF-original-vs-quantized-GGUF thresholding; broader perplexity-quality checks
+  and an explicit acceptance threshold decision for that HF comparison remain
+  pending.
 - Target-model enwik8 first-1MB compression-rate measurement with
   `xtask bench-file`; the bundled tiny fixture has input-scale enwik8 evidence.
 - Broader benchmark results on real target hardware beyond the current bundled
