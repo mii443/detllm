@@ -2267,6 +2267,7 @@ struct WindowedModelState<'a> {
     context_len: usize,
     rope: det_model::RopeTables,
     cache: det_model::KvCache,
+    workspace: det_model::ForwardWorkspace,
     logits: Vec<f32>,
 }
 
@@ -2276,6 +2277,9 @@ impl<'a> WindowedModelState<'a> {
             .map_err(|e| format!("rope error: {e:?}"))?;
         let cache =
             det_model::KvCache::new(model.config).map_err(|e| format!("cache error: {e:?}"))?;
+        let workspace = model
+            .forward_workspace(n_ctx)
+            .map_err(|e| format!("workspace error: {e:?}"))?;
         Ok(Self {
             model,
             n_ctx,
@@ -2283,6 +2287,7 @@ impl<'a> WindowedModelState<'a> {
             context_len: 0,
             rope,
             cache,
+            workspace,
             logits: vec![0.0f32; model.output.rows()],
         })
     }
@@ -2324,12 +2329,13 @@ impl<'a> WindowedModelState<'a> {
             return Err("context window invariant violated".to_owned());
         }
         self.model
-            .forward_one(
+            .forward_one_with_workspace(
                 token,
                 self.context_len,
                 &self.rope,
                 &mut self.cache,
                 &mut self.logits,
+                &mut self.workspace,
             )
             .map_err(|e| format!("forward error: {e:?}"))?;
         self.context_len += 1;

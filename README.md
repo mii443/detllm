@@ -75,7 +75,9 @@ compression ratio, throughput, optional token-prefix limit, warmup mode, and
 thread override so real enwik8 measurements can be copied directly into the
 validation notes. The codec benchmark path reuses a streaming KV cache inside
 each fixed context window and only replays the configured overlap after window
-rollover. `model-info` records a lightweight GGUF
+rollover; repeated forward calls also reuse `ForwardWorkspace` scratch buffers
+instead of allocating the large model temporaries per token. `model-info`
+records a lightweight GGUF
 intake summary without loading all weights, including model SHA-256, parsed
 config, tokenizer kind, byte coverage, vocabulary/codec compatibility, tensor
 inventory, and required tensor shape/type status.

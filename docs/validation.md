@@ -155,6 +155,14 @@ to use the same pairing as the model config and caller-provided `KvCache` to
 carry the same config as the model. The unit test
 `forward_one_rejects_mismatched_rope_or_cache_config` covers those state
 consistency checks.
+`det-model` also exposes `ForwardWorkspace` so repeated token evaluation can
+reuse the large temporary hidden-state, projection, attention, and feed-forward
+buffers instead of allocating them for every `forward_one` call. The ordinary
+`forward_one` API is retained as a compatibility wrapper, while logits hashing,
+CLI compression, and `xtask bench-file` use the workspace path. The unit test
+`forward_one_workspace_matches_default_forward` verifies that the reusable
+workspace path produces the same logits bits as the default wrapper across a
+multi-token KV-cache run.
 Size arithmetic for RoPE tables and logits dumps is checked before allocation.
 Overflowing table lengths, matrix lengths, or logits byte lengths return
 `ModelError::Shape` instead of panicking. KV-cache allocation and public
@@ -830,8 +838,8 @@ cargo run --release -p xtask --features parallel,simd -- bench-file --model /tmp
 
 ```text
 bench-file model=/tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=16 iters=1 warmup=false threads=8 n_ctx=64 overlap=16 model_sha256=d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8 input_sha256=4fe5a21798e43c8258edcf9f3a98fac2df77613b4d2add15a2a3082eedc7b0b2
-bench-file: source_input_bytes=100000000 measured_input_bytes=53 total_input_bytes=53 tokens=16 total_tokens=16 payload_bytes=14 dtlz_bytes=70 payload_bits_per_byte=2.113208 dtlz_bits_per_byte=10.566038 compression_ratio=1.320755 elapsed_ms=6327.000 input_bytes_per_s=8.377 tokens_per_s=2.529
-bench-file-phases: model_read_ms=1878.882 gguf_parse_ms=25.770 model_load_ms=1934.860 tokenizer_setup_ms=273.114 input_read_ms=107.469 tokenize_ms=813.685 token_prefix_ms=9.829 warmup_ms=0.000 measured_ms=6327.000 total_ms=16785.329
+bench-file: source_input_bytes=100000000 measured_input_bytes=53 total_input_bytes=53 tokens=16 total_tokens=16 payload_bytes=14 dtlz_bytes=70 payload_bits_per_byte=2.113208 dtlz_bits_per_byte=10.566038 compression_ratio=1.320755 elapsed_ms=6171.580 input_bytes_per_s=8.588 tokens_per_s=2.593
+bench-file-phases: model_read_ms=2672.433 gguf_parse_ms=22.779 model_load_ms=1828.234 tokenizer_setup_ms=251.874 input_read_ms=184.334 tokenize_ms=794.129 token_prefix_ms=9.782 warmup_ms=0.000 measured_ms=6171.580 total_ms=17272.357
 ```
 
 This is input-scale and round-trip evidence for the `bench-file`
@@ -869,8 +877,9 @@ an opt-in `bench-file-phases` line for model read/parse/load, tokenizer setup,
 input read, tokenization, token-prefix detokenization, warmup, measured loop,
 and total wall time. The Qwen2.5 prefix run above shows 1MB ByteBPE tokenization
 is below one second; after streaming KV-cache reuse, the 16-token measured
-encode/decode loop is roughly 6.3 seconds instead of repeatedly replaying the
-full context prefix for each CDF.
+encode/decode loop is roughly 6.2 seconds. The model forward path also reuses
+`ForwardWorkspace` scratch buffers across tokens, avoiding per-token allocation
+of the large hidden-state, projection, attention, and feed-forward vectors.
 This is the harness to use for target-model enwik8 first-1MB measurements; the
 bundled fixtures remain smoke and input-scale checks.
 The harness applies the same tokenizer/model vocabulary equality check and

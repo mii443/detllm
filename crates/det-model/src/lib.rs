@@ -117,6 +117,27 @@ pub struct KvCache {
     v: Vec<f32>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForwardWorkspace {
+    config: LlamaConfig,
+    max_context: usize,
+    head_dim: usize,
+    x: Vec<f32>,
+    h: Vec<f32>,
+    q: Vec<f32>,
+    k: Vec<f32>,
+    v: Vec<f32>,
+    attn: Vec<f32>,
+    scores: Vec<f32>,
+    probs: Vec<f32>,
+    key_window: Vec<f32>,
+    value_window: Vec<f32>,
+    tmp_d: Vec<f32>,
+    gate: Vec<f32>,
+    up: Vec<f32>,
+    ff: Vec<f32>,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct F32TensorView<'a> {
     pub info: &'a det_gguf::TensorInfo,
@@ -385,25 +406,39 @@ impl WeightMatrix {
         if row >= self.rows() {
             return Err(ModelError::Shape);
         }
+        let mut out = vec![0.0; self.cols()];
+        self.write_row(row, &mut out)?;
+        Ok(out)
+    }
+
+    fn write_row(&self, row: usize, out: &mut [f32]) -> Result<(), ModelError> {
+        self.validate()?;
+        if row >= self.rows() || out.len() != self.cols() {
+            return Err(ModelError::Shape);
+        }
         match self {
-            Self::F32(m) => Ok(m.row(row)?.to_vec()),
+            Self::F32(m) => {
+                out.copy_from_slice(m.row(row)?);
+                Ok(())
+            }
             Self::Q8_0(m) => {
-                let mut out = Vec::with_capacity(m.cols);
                 let start = row * m.blocks_per_row;
+                let mut dst = 0usize;
                 for block in &m.blocks[start..start + m.blocks_per_row] {
                     for &q in &block.q {
                         let value = block.d * (q as f32);
                         if !value.is_finite() {
                             return Err(ModelError::NonFinite);
                         }
-                        out.push(value);
+                        out[dst] = value;
+                        dst += 1;
                     }
                 }
-                Ok(out)
+                Ok(())
             }
             Self::Q4_0(m) => {
-                let mut out = Vec::with_capacity(m.cols);
                 let start = row * m.blocks_per_row;
+                let mut dst = 0usize;
                 for block in &m.blocks[start..start + m.blocks_per_row] {
                     for i in 0..BLOCK {
                         let byte = block.qs[i / 2];
@@ -412,10 +447,11 @@ impl WeightMatrix {
                         if !value.is_finite() {
                             return Err(ModelError::NonFinite);
                         }
-                        out.push(value);
+                        out[dst] = value;
+                        dst += 1;
                     }
                 }
-                Ok(out)
+                Ok(())
             }
         }
     }
@@ -587,6 +623,80 @@ impl KvCache {
         let offset = self.offset(layer, kv_head, pos)?;
         let end = offset.checked_add(self.head_dim).ok_or(ModelError::Shape)?;
         self.v.get(offset..end).ok_or(ModelError::Shape)
+    }
+}
+
+impl ForwardWorkspace {
+    pub fn new(
+        config: LlamaConfig,
+        output_vocab: usize,
+        max_context: usize,
+    ) -> Result<Self, ModelError> {
+        config.validate()?;
+        if output_vocab == 0 || max_context == 0 || max_context > config.context_length {
+            return Err(ModelError::Shape);
+        }
+        let d = config.embedding_length;
+        let d_ff = config.feed_forward_length;
+        let head_dim = config.head_dim()?;
+        let q_len = checked_len(config.head_count, head_dim)?;
+        let kv_len = checked_len(config.head_count_kv, head_dim)?;
+        let window_len = checked_len(max_context, head_dim)?;
+        Ok(Self {
+            config,
+            max_context,
+            head_dim,
+            x: vec![0.0; d],
+            h: vec![0.0; d],
+            q: vec![0.0; q_len],
+            k: vec![0.0; kv_len],
+            v: vec![0.0; kv_len],
+            attn: vec![0.0; q_len],
+            scores: vec![0.0; max_context],
+            probs: vec![0.0; max_context],
+            key_window: vec![0.0; window_len],
+            value_window: vec![0.0; window_len],
+            tmp_d: vec![0.0; d],
+            gate: vec![0.0; d_ff],
+            up: vec![0.0; d_ff],
+            ff: vec![0.0; d_ff],
+        })
+    }
+
+    fn validate_for(
+        &self,
+        config: LlamaConfig,
+        output_vocab: usize,
+        pos: usize,
+    ) -> Result<(), ModelError> {
+        let d = config.embedding_length;
+        let d_ff = config.feed_forward_length;
+        let head_dim = config.head_dim()?;
+        let q_len = checked_len(config.head_count, head_dim)?;
+        let kv_len = checked_len(config.head_count_kv, head_dim)?;
+        let window_len = checked_len(self.max_context, head_dim)?;
+        if self.config != config
+            || self.head_dim != head_dim
+            || output_vocab == 0
+            || pos >= self.max_context
+            || self.x.len() != d
+            || self.h.len() != d
+            || self.q.len() != q_len
+            || self.k.len() != kv_len
+            || self.v.len() != kv_len
+            || self.attn.len() != q_len
+            || self.scores.len() != self.max_context
+            || self.probs.len() != self.max_context
+            || self.key_window.len() != window_len
+            || self.value_window.len() != window_len
+            || self.tmp_d.len() != d
+            || self.gate.len() != d_ff
+            || self.up.len() != d_ff
+            || self.ff.len() != d_ff
+        {
+            return Err(ModelError::Shape);
+        }
+        Ok(())
     }
 }
 
@@ -776,6 +886,28 @@ impl F32Llama {
         cache: &mut KvCache,
         logits: &mut [f32],
     ) -> Result<(), ModelError> {
+        if pos >= self.config.context_length {
+            return Err(ModelError::Shape);
+        }
+        let max_context = pos.checked_add(1).ok_or(ModelError::Shape)?;
+        let mut workspace = self.forward_workspace(max_context)?;
+        self.forward_one_with_workspace(token, pos, rope, cache, logits, &mut workspace)
+    }
+
+    pub fn forward_workspace(&self, max_context: usize) -> Result<ForwardWorkspace, ModelError> {
+        self.validate()?;
+        ForwardWorkspace::new(self.config, self.output.rows(), max_context)
+    }
+
+    pub fn forward_one_with_workspace(
+        &self,
+        token: usize,
+        pos: usize,
+        rope: &RopeTables,
+        cache: &mut KvCache,
+        logits: &mut [f32],
+        workspace: &mut ForwardWorkspace,
+    ) -> Result<(), ModelError> {
         self.validate()?;
         if pos >= self.config.context_length
             || logits.len() != self.output.rows()
@@ -790,46 +922,53 @@ impl F32Llama {
         {
             return Err(ModelError::Shape);
         }
-        let d = self.config.embedding_length;
         let head_dim = self.config.head_dim()?;
-        let mut x = self.token_embedding.row_to_vec(token)?;
-
-        let mut h = vec![0.0; d];
-        let mut q = vec![0.0; self.config.head_count * head_dim];
-        let mut k = vec![0.0; self.config.head_count_kv * head_dim];
-        let mut v = vec![0.0; self.config.head_count_kv * head_dim];
-        let mut attn = vec![0.0; self.config.head_count * head_dim];
-        let mut scores = vec![0.0; pos + 1];
-        let mut probs = vec![0.0; pos + 1];
-        let mut key_window = vec![0.0; (pos + 1) * head_dim];
-        let mut value_window = vec![0.0; (pos + 1) * head_dim];
-        let mut tmp_d = vec![0.0; d];
-        let mut gate = vec![0.0; self.config.feed_forward_length];
-        let mut up = vec![0.0; self.config.feed_forward_length];
-        let mut ff = vec![0.0; self.config.feed_forward_length];
+        workspace.validate_for(self.config, self.output.rows(), pos)?;
+        self.token_embedding.write_row(token, &mut workspace.x)?;
 
         for (layer_idx, layer) in self.layers.iter().enumerate() {
-            rmsnorm(&x, &layer.attention_norm, self.config.rms_epsilon, &mut h)?;
-            let h_q8a = shared_q8a_if_needed(&h, [&layer.wq, &layer.wk, &layer.wv])?;
+            rmsnorm(
+                &workspace.x,
+                &layer.attention_norm,
+                self.config.rms_epsilon,
+                &mut workspace.h,
+            )?;
+            let h_q8a = shared_q8a_if_needed(&workspace.h, [&layer.wq, &layer.wk, &layer.wv])?;
             layer
                 .wq
-                .gemv_with_optional_q8a(&h, h_q8a.as_deref(), &mut q)?;
-            add_optional_bias(&mut q, layer.attn_q_bias.as_deref())?;
+                .gemv_with_optional_q8a(&workspace.h, h_q8a.as_deref(), &mut workspace.q)?;
+            add_optional_bias(&mut workspace.q, layer.attn_q_bias.as_deref())?;
             layer
                 .wk
-                .gemv_with_optional_q8a(&h, h_q8a.as_deref(), &mut k)?;
-            add_optional_bias(&mut k, layer.attn_k_bias.as_deref())?;
+                .gemv_with_optional_q8a(&workspace.h, h_q8a.as_deref(), &mut workspace.k)?;
+            add_optional_bias(&mut workspace.k, layer.attn_k_bias.as_deref())?;
             layer
                 .wv
-                .gemv_with_optional_q8a(&h, h_q8a.as_deref(), &mut v)?;
-            add_optional_bias(&mut v, layer.attn_v_bias.as_deref())?;
-            apply_rope(&mut q, self.config.head_count, head_dim, pos, rope)?;
-            apply_rope(&mut k, self.config.head_count_kv, head_dim, pos, rope)?;
-            cache.store(layer_idx, pos, &k, &v)?;
+                .gemv_with_optional_q8a(&workspace.h, h_q8a.as_deref(), &mut workspace.v)?;
+            add_optional_bias(&mut workspace.v, layer.attn_v_bias.as_deref())?;
+            apply_rope(
+                &mut workspace.q,
+                self.config.head_count,
+                head_dim,
+                pos,
+                rope,
+            )?;
+            apply_rope(
+                &mut workspace.k,
+                self.config.head_count_kv,
+                head_dim,
+                pos,
+                rope,
+            )?;
+            cache.store(layer_idx, pos, &workspace.k, &workspace.v)?;
 
             for head in 0..self.config.head_count {
                 let kv_head = head / (self.config.head_count / self.config.head_count_kv);
-                let qh = &q[head * head_dim..(head + 1) * head_dim];
+                let qh = &workspace.q[head * head_dim..(head + 1) * head_dim];
+                let score_len = pos + 1;
+                let window_len = score_len.checked_mul(head_dim).ok_or(ModelError::Shape)?;
+                let key_window = &mut workspace.key_window[..window_len];
+                let value_window = &mut workspace.value_window[..window_len];
                 for j in 0..=pos {
                     let dst = j * head_dim;
                     key_window[dst..dst + head_dim]
@@ -839,35 +978,52 @@ impl F32Llama {
                 }
                 attention_scores_one_head_scaled(
                     qh,
-                    &key_window,
+                    key_window,
                     head_dim,
                     self.config.attention_scale,
-                    &mut scores,
+                    &mut workspace.scores[..score_len],
                 )?;
-                probs.copy_from_slice(&scores);
-                softmax_in_place(&mut probs)?;
-                let out_head = &mut attn[head * head_dim..(head + 1) * head_dim];
-                attention_weighted_value(&probs, &value_window, head_dim, out_head)?;
+                workspace.probs[..score_len].copy_from_slice(&workspace.scores[..score_len]);
+                softmax_in_place(&mut workspace.probs[..score_len])?;
+                let out_head = &mut workspace.attn[head * head_dim..(head + 1) * head_dim];
+                attention_weighted_value(
+                    &workspace.probs[..score_len],
+                    value_window,
+                    head_dim,
+                    out_head,
+                )?;
             }
 
-            layer.wo.gemv(&attn, &mut tmp_d)?;
-            residual_add(&mut x, &tmp_d)?;
+            layer.wo.gemv(&workspace.attn, &mut workspace.tmp_d)?;
+            residual_add(&mut workspace.x, &workspace.tmp_d)?;
 
-            rmsnorm(&x, &layer.ffn_norm, self.config.rms_epsilon, &mut h)?;
-            let h_q8a = shared_q8a_if_needed(&h, [&layer.w_gate, &layer.w_up])?;
-            layer
-                .w_gate
-                .gemv_with_optional_q8a(&h, h_q8a.as_deref(), &mut gate)?;
+            rmsnorm(
+                &workspace.x,
+                &layer.ffn_norm,
+                self.config.rms_epsilon,
+                &mut workspace.h,
+            )?;
+            let h_q8a = shared_q8a_if_needed(&workspace.h, [&layer.w_gate, &layer.w_up])?;
+            layer.w_gate.gemv_with_optional_q8a(
+                &workspace.h,
+                h_q8a.as_deref(),
+                &mut workspace.gate,
+            )?;
             layer
                 .w_up
-                .gemv_with_optional_q8a(&h, h_q8a.as_deref(), &mut up)?;
-            swiglu(&gate, &up, &mut ff)?;
-            layer.w_down.gemv(&ff, &mut tmp_d)?;
-            residual_add(&mut x, &tmp_d)?;
+                .gemv_with_optional_q8a(&workspace.h, h_q8a.as_deref(), &mut workspace.up)?;
+            swiglu(&workspace.gate, &workspace.up, &mut workspace.ff)?;
+            layer.w_down.gemv(&workspace.ff, &mut workspace.tmp_d)?;
+            residual_add(&mut workspace.x, &workspace.tmp_d)?;
         }
 
-        rmsnorm(&x, &self.output_norm, self.config.rms_epsilon, &mut h)?;
-        self.output.gemv(&h, logits)?;
+        rmsnorm(
+            &workspace.x,
+            &self.output_norm,
+            self.config.rms_epsilon,
+            &mut workspace.h,
+        )?;
+        self.output.gemv(&workspace.h, logits)?;
         Ok(())
     }
 
@@ -916,11 +1072,19 @@ impl F32Llama {
         self.validate_logits_request(tokens, chunk_size)?;
         let rope = RopeTables::llama(self.config, tokens.len())?;
         let mut cache = KvCache::new(self.config)?;
+        let mut workspace = self.forward_workspace(tokens.len())?;
         let mut logits = vec![0.0f32; self.output.rows()];
         let mut pos = 0usize;
         for chunk in tokens.chunks(chunk_size) {
             for &token in chunk {
-                self.forward_one(token, pos, &rope, &mut cache, &mut logits)?;
+                self.forward_one_with_workspace(
+                    token,
+                    pos,
+                    &rope,
+                    &mut cache,
+                    &mut logits,
+                    &mut workspace,
+                )?;
                 visit(&logits);
                 pos += 1;
             }
@@ -2087,6 +2251,38 @@ mod tests {
             .expect("forward pos1");
         assert!(logits0.iter().chain(logits1.iter()).all(|x| x.is_finite()));
         assert_ne!(logits0.map(f32::to_bits), logits1.map(f32::to_bits));
+    }
+
+    #[test]
+    fn forward_one_workspace_matches_default_forward() {
+        let model = small_valid_model();
+        let rope = RopeTables::identity(model.config.context_length, 2).expect("rope");
+        let mut default_cache = KvCache::new(model.config).expect("cache");
+        let mut workspace_cache = KvCache::new(model.config).expect("cache");
+        let mut workspace = model
+            .forward_workspace(model.config.context_length)
+            .expect("workspace");
+        let mut default_logits = vec![0.0f32; model.output.rows()];
+        let mut workspace_logits = vec![0.0f32; model.output.rows()];
+
+        for (pos, token) in [0usize, 1].into_iter().enumerate() {
+            model
+                .forward_one(token, pos, &rope, &mut default_cache, &mut default_logits)
+                .expect("default forward");
+            model
+                .forward_one_with_workspace(
+                    token,
+                    pos,
+                    &rope,
+                    &mut workspace_cache,
+                    &mut workspace_logits,
+                    &mut workspace,
+                )
+                .expect("workspace forward");
+            let workspace_bits: Vec<u32> = workspace_logits.iter().map(|v| v.to_bits()).collect();
+            let default_bits: Vec<u32> = default_logits.iter().map(|v| v.to_bits()).collect();
+            assert_eq!(workspace_bits, default_bits, "position {pos}");
+        }
     }
 
     #[test]
