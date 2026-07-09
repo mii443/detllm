@@ -1392,10 +1392,12 @@ detokenization, warmup, measured loop, and total wall time.
 byte count, scale factor, measured token throughput, and estimated measured
 loop time for running without the token limit.
 `--progress-every N` emits `bench-file-progress` lines on stderr every N encode
-or decode tokens and at phase completion; the stdout summary lines remain
-stable for copying into this file. The Qwen2.5 prefix run above shows 1MB
+or decode tokens and at phase completion; progress lines include elapsed time,
+tokens/s, remaining seconds, and estimated total seconds for the current
+phase. The stdout summary lines remain stable for copying into this file. The
+Qwen2.5 prefix run above shows 1MB
 ByteBPE tokenization is about 1.5 seconds on this host; the estimate line shows
-the current full 279,472-token measured encode loop is about 14 hours. After streaming
+the current full 279,472-token measured encode loop is roughly 15 hours. After streaming
 KV-cache reuse and validated-model hot-path checks, the current 64-token
 encode-only measured loop is roughly 12 seconds. The model forward path also reuses
 `ForwardWorkspace` scratch buffers across tokens, avoiding per-token allocation

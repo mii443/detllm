@@ -2678,11 +2678,58 @@ fn report_bench_file_progress(
         return;
     }
     let elapsed = start.elapsed();
+    let elapsed_s = elapsed.as_secs_f64();
+    let Some(estimate) = bench_file_progress_estimate(done, total, elapsed_s) else {
+        let tokens_per_s = if elapsed_s.is_finite() && elapsed_s > 0.0 {
+            done as f64 / elapsed_s
+        } else {
+            0.0
+        };
+        eprintln!(
+            "bench-file-progress phase={phase} tokens_done={done} tokens_total={total} elapsed_ms={:.3} tokens_per_s={:.3}",
+            elapsed_s * 1000.0,
+            tokens_per_s
+        );
+        return;
+    };
     eprintln!(
-        "bench-file-progress phase={phase} tokens_done={done} tokens_total={total} elapsed_ms={:.3} tokens_per_s={:.3}",
-        elapsed.as_secs_f64() * 1000.0,
-        done as f64 / elapsed.as_secs_f64()
+        "bench-file-progress phase={phase} tokens_done={done} tokens_total={total} elapsed_ms={:.3} tokens_per_s={:.3} remaining_s={:.3} estimated_total_s={:.3}",
+        elapsed_s * 1000.0,
+        estimate.tokens_per_s,
+        estimate.remaining_s,
+        estimate.estimated_total_s
     );
+}
+
+#[derive(Debug)]
+struct BenchFileProgressEstimate {
+    tokens_per_s: f64,
+    remaining_s: f64,
+    estimated_total_s: f64,
+}
+
+fn bench_file_progress_estimate(
+    done: usize,
+    total: usize,
+    elapsed_s: f64,
+) -> Option<BenchFileProgressEstimate> {
+    if done == 0 || total == 0 || done > total || !elapsed_s.is_finite() || elapsed_s <= 0.0 {
+        return None;
+    }
+    let tokens_per_s = done as f64 / elapsed_s;
+    if !tokens_per_s.is_finite() || tokens_per_s <= 0.0 {
+        return None;
+    }
+    let remaining_s = (total - done) as f64 / tokens_per_s;
+    let estimated_total_s = elapsed_s + remaining_s;
+    if !remaining_s.is_finite() || !estimated_total_s.is_finite() {
+        return None;
+    }
+    Some(BenchFileProgressEstimate {
+        tokens_per_s,
+        remaining_s,
+        estimated_total_s,
+    })
 }
 
 struct WindowedModelState<'a> {
@@ -3505,6 +3552,24 @@ mod tests {
 
         assert!(bench_file_estimate(1_000, 0, 4_096, 1, 10.0).is_none());
         assert!(bench_file_estimate(1_000, 25, 4_096, 1, 0.0).is_none());
+    }
+
+    #[test]
+    fn bench_file_progress_estimate_reports_eta() {
+        let estimate = bench_file_progress_estimate(25, 100, 5.0).expect("valid progress");
+        assert_eq!(estimate.tokens_per_s, 5.0);
+        assert_eq!(estimate.remaining_s, 15.0);
+        assert_eq!(estimate.estimated_total_s, 20.0);
+
+        let done = bench_file_progress_estimate(100, 100, 20.0).expect("complete progress");
+        assert_eq!(done.tokens_per_s, 5.0);
+        assert_eq!(done.remaining_s, 0.0);
+        assert_eq!(done.estimated_total_s, 20.0);
+
+        assert!(bench_file_progress_estimate(0, 100, 5.0).is_none());
+        assert!(bench_file_progress_estimate(101, 100, 5.0).is_none());
+        assert!(bench_file_progress_estimate(25, 100, 0.0).is_none());
+        assert!(bench_file_progress_estimate(25, 100, f64::INFINITY).is_none());
     }
 
     #[test]

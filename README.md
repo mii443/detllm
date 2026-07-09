@@ -84,7 +84,9 @@ real vocabulary tokens; new DTLZ files set the `FLAG_BYTE_ESCAPES` header bit
 so decoders can distinguish this CDF alphabet from legacy token-only payloads.
 Long target-model measurements can use
 `--progress-every N` to emit encode/decode token progress on stderr without
-changing the stdout result lines. The codec benchmark path reuses a
+changing the stdout result lines; progress rows include elapsed time,
+throughput, remaining seconds, and estimated total seconds for the current
+encode/decode phase. The codec benchmark path reuses a
 streaming KV cache inside each
 fixed context window and only replays the configured overlap after window
 rollover; repeated forward calls also reuse `ForwardWorkspace` scratch buffers
