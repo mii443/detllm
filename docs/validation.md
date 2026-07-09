@@ -742,6 +742,13 @@ writes the same row-major little-endian f32 format as `detllm logits --dump`
 and can enforce the expected row count and vocabulary size before writing the
 file.
 
+The helper program
+[`scripts/reference_logits_llamacpp.cpp`](../scripts/reference_logits_llamacpp.cpp)
+generates the same raw row-major little-endian f32 dump through the llama.cpp C
+API when local `llama.h` and `libllama` installations are available. It accepts
+explicit token IDs only, marks every token position for logits output, and can
+enforce row count and vocabulary size before writing the file.
+
 Example TinyLlama command shape:
 
 ```sh
@@ -760,6 +767,23 @@ python3 -B scripts/reference_logits_transformers.py --help
 This still does not count as the required external raw-logits cosine evidence
 until it is run in an environment with compatible `torch` and `transformers`
 installed and the resulting `compare-logits` output is recorded here.
+
+TinyLlama Q8_0 llama.cpp raw-logits reference command:
+
+```sh
+c++ -std=c++17 -O2 -I/usr/local/include scripts/reference_logits_llamacpp.cpp -L/usr/local/lib -Wl,-rpath,/usr/local/lib -lllama -lggml -lggml-cpu -lggml-base -o /tmp/reference_logits_llamacpp
+cargo run --release -p det-cli -- logits -m /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf --tokens 1,2,3 --dump /tmp/detllm-tiny-123.rawlogits.bin --hash --threads 8
+/tmp/reference_logits_llamacpp --model /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf --tokens 1,2,3 --out /tmp/llamacpp-tiny-123.rawlogits.bin --threads 8 --ctx-size 16 --batch-size 16 --expected-vocab 32000 --expected-rows 3 --quiet
+cargo run -p xtask -- compare-logits --actual /tmp/detllm-tiny-123.rawlogits.bin --reference /tmp/llamacpp-tiny-123.rawlogits.bin --row-size 32000 --rows 3 --min-cosine 0.999
+```
+
+Observed output:
+
+```text
+79600ae16f6ba067de254839a0df605a1082b2eb6f75b538411be9403fe9251c
+reference_logits_llamacpp rows=3 vocab=32000 values=96000
+compare-logits values=96000 cosine=0.999815074 max_abs_diff=0.364835739 rms_diff=0.057082669 rows=3 row_size=32000 min_row_cosine=0.999729601
+```
 
 llama.cpp `llama-perplexity --save-all-logits` does not write the same raw f32
 logits matrix as `detllm logits --dump`; the file starts with `_logits_` and
