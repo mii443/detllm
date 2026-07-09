@@ -676,6 +676,23 @@ tokens=1,2,3 chunk-size=1 hash = 691f2b299569cf86d2a8f7a21b9bec1942ff876db0bbcb3
 tokens=1,2,3 chunk-size=3 hash = 691f2b299569cf86d2a8f7a21b9bec1942ff876db0bbcb37087baab6720b25b1
 ```
 
+Raw logits llama.cpp reference:
+
+```sh
+c++ -std=c++17 -O2 -I/usr/local/include scripts/reference_logits_llamacpp.cpp -L/usr/local/lib -Wl,-rpath,/usr/local/lib -lllama -lggml -lggml-cpu -lggml-base -o /tmp/reference_logits_llamacpp
+cargo run --release -p det-cli -- logits -m /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf --tokens 1,2,3 --dump /tmp/detllm-smollm2-123.rawlogits.bin --hash --threads 8
+/tmp/reference_logits_llamacpp --model /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf --tokens 1,2,3 --out /tmp/llamacpp-smollm2-123.rawlogits.bin --threads 8 --ctx-size 16 --batch-size 16 --expected-vocab 49152 --expected-rows 3 --quiet
+cargo run -p xtask -- compare-logits --actual /tmp/detllm-smollm2-123.rawlogits.bin --reference /tmp/llamacpp-smollm2-123.rawlogits.bin --row-size 49152 --rows 3 --min-cosine 0.999
+```
+
+Observed output:
+
+```text
+691f2b299569cf86d2a8f7a21b9bec1942ff876db0bbcb37087baab6720b25b1
+reference_logits_llamacpp rows=3 vocab=49152 values=147456
+compare-logits values=147456 cosine=0.999790574 max_abs_diff=0.446167946 rms_diff=0.097952058 rows=3 row_size=49152 min_row_cosine=0.999759078
+```
+
 Tokenizer-backed CLI paths correctly reject this GGUF for v1 codec use:
 
 ```sh
@@ -689,13 +706,14 @@ detllm: tokenizer error: IncompleteByteFallback
 ```
 
 This is real SmolLM2 GGUF evidence for model config parsing, required tensor
-compatibility on Q8_0, single-token forward, and chunk-size-invariant logits
-hashing on a three-token stream. It also records the blocking codec issue:
-the tested GGUF exposes only 235 of the 256 byte values as single-byte BPE
-seed tokens, so it cannot satisfy `detllm-design.md` §7's arbitrary-byte
-losslessness requirement. Full SmolLM2 codec validation needs a compatible
-GGUF/tokenizer source or a deterministic tokenizer strategy that can represent
-all byte values without changing the model vocabulary.
+compatibility on Q8_0, single-token forward, chunk-size-invariant logits
+hashing on a three-token stream, and a llama.cpp raw-logits cosine check. It
+also records the blocking codec issue: the tested GGUF exposes only 235 of the
+256 byte values as single-byte BPE seed tokens, so it cannot satisfy
+`detllm-design.md` §7's arbitrary-byte losslessness requirement. Full SmolLM2
+codec validation needs a compatible GGUF/tokenizer source or a deterministic
+tokenizer strategy that can represent all byte values without changing the
+model vocabulary.
 
 ## File Codec Bench Harness
 
