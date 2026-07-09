@@ -117,7 +117,7 @@ fn real_main() -> Result<(), String> {
         Some("check-ci-workflow") => check_ci_workflow(),
         Some("check-determinism") => check_determinism(),
         _ => Err(
-            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf [--metadata-prefix]|bench-file --model model.gguf --input file [--limit-bytes N] [--limit-tokens N] [--n-ctx N] [--iters N] [--threads N] [--progress-every N] [--no-warmup] [--show-phases]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
+            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf [--metadata-prefix]|bench-file --model model.gguf --input file [--limit-bytes N] [--limit-tokens N] [--n-ctx N] [--iters N] [--threads N] [--progress-every N] [--no-warmup] [--show-phases]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N] [--worst-rows N] [--top-diffs N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
                 .to_owned(),
         ),
     }
@@ -346,6 +346,8 @@ struct CompareLogitsOpts {
     min_cosine: Option<f64>,
     row_size: Option<usize>,
     rows: Option<usize>,
+    worst_rows: usize,
+    top_diffs: usize,
 }
 
 #[derive(Debug)]
@@ -1198,6 +1200,8 @@ fn parse_compare_logits_opts(args: Vec<String>) -> Result<CompareLogitsOpts, Str
     let mut min_cosine = None;
     let mut row_size = None;
     let mut rows = None;
+    let mut worst_rows = 0usize;
+    let mut top_diffs = 0usize;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
@@ -1248,6 +1252,30 @@ fn parse_compare_logits_opts(args: Vec<String>) -> Result<CompareLogitsOpts, Str
                 }
                 rows = Some(value);
             }
+            "--worst-rows" => {
+                i += 1;
+                let raw = args
+                    .get(i)
+                    .ok_or("compare-logits: missing value for --worst-rows")?;
+                worst_rows = raw
+                    .parse::<usize>()
+                    .map_err(|e| format!("compare-logits: invalid --worst-rows value: {e}"))?;
+                if worst_rows == 0 {
+                    return Err("compare-logits: --worst-rows must be greater than zero".to_owned());
+                }
+            }
+            "--top-diffs" => {
+                i += 1;
+                let raw = args
+                    .get(i)
+                    .ok_or("compare-logits: missing value for --top-diffs")?;
+                top_diffs = raw
+                    .parse::<usize>()
+                    .map_err(|e| format!("compare-logits: invalid --top-diffs value: {e}"))?;
+                if top_diffs == 0 {
+                    return Err("compare-logits: --top-diffs must be greater than zero".to_owned());
+                }
+            }
             other => return Err(format!("unknown compare-logits argument: {other}")),
         }
         i += 1;
@@ -1261,6 +1289,8 @@ fn parse_compare_logits_opts(args: Vec<String>) -> Result<CompareLogitsOpts, Str
         min_cosine,
         row_size,
         rows,
+        worst_rows,
+        top_diffs,
     })
 }
 
@@ -1285,8 +1315,8 @@ fn compare_logits(opts: CompareLogitsOpts) -> Result<(), String> {
         if let Some(row_metrics) = &row_metrics {
             if row_metrics.min_cosine < min_cosine {
                 return Err(format!(
-                    "compare-logits: min row cosine {:.9} is below threshold {:.9}",
-                    row_metrics.min_cosine, min_cosine
+                    "compare-logits: row {} cosine {:.9} is below threshold {:.9}",
+                    row_metrics.min_row, row_metrics.min_cosine, min_cosine
                 ));
             }
         }
@@ -1294,20 +1324,50 @@ fn compare_logits(opts: CompareLogitsOpts) -> Result<(), String> {
     if let Some(row_metrics) = row_metrics {
         validate_expected_rows(&row_metrics, opts.rows)?;
         println!(
-            "compare-logits values={} cosine={:.9} max_abs_diff={:.9} rms_diff={:.9} rows={} row_size={} min_row_cosine={:.9}",
+            "compare-logits values={} cosine={:.9} max_abs_diff={:.9} rms_diff={:.9} rows={} row_size={} min_row={} min_row_cosine={:.9}",
             metrics.values,
             metrics.cosine,
             metrics.max_abs_diff,
             metrics.rms_diff,
             row_metrics.rows,
             row_metrics.row_size,
+            row_metrics.min_row,
             row_metrics.min_cosine
         );
+        if opts.worst_rows > 0 {
+            for row in
+                worst_logits_rows(&actual, &reference, row_metrics.row_size, opts.worst_rows)?
+            {
+                println!(
+                    "compare-logits-worst-row row={} cosine={:.9} max_abs_diff={:.9} rms_diff={:.9}",
+                    row.row, row.metrics.cosine, row.metrics.max_abs_diff, row.metrics.rms_diff
+                );
+            }
+        }
     } else {
         println!(
             "compare-logits values={} cosine={:.9} max_abs_diff={:.9} rms_diff={:.9}",
             metrics.values, metrics.cosine, metrics.max_abs_diff, metrics.rms_diff
         );
+        if opts.worst_rows > 0 {
+            return Err("compare-logits: --worst-rows requires --row-size".to_owned());
+        }
+    }
+    if opts.top_diffs > 0 {
+        for diff in top_logits_diffs(&actual, &reference, opts.row_size, opts.top_diffs)? {
+            println!(
+                "compare-logits-top-diff rank={} index={} row={} col={} actual={:.9} reference={:.9} abs_diff={:.9}",
+                diff.rank,
+                diff.index,
+                diff.row
+                    .map_or_else(|| "none".to_owned(), |row| row.to_string()),
+                diff.col
+                    .map_or_else(|| "none".to_owned(), |col| col.to_string()),
+                diff.actual,
+                diff.reference,
+                diff.abs_diff
+            );
+        }
     }
     Ok(())
 }
@@ -1735,7 +1795,23 @@ struct LogitsCompareMetrics {
 struct LogitsRowMetrics {
     rows: usize,
     row_size: usize,
+    min_row: usize,
     min_cosine: f64,
+}
+
+struct LogitsWorstRow {
+    row: usize,
+    metrics: LogitsCompareMetrics,
+}
+
+struct LogitsTopDiff {
+    rank: usize,
+    index: usize,
+    row: Option<usize>,
+    col: Option<usize>,
+    actual: f32,
+    reference: f32,
+    abs_diff: f64,
 }
 
 #[derive(Clone, Copy)]
@@ -2021,19 +2097,128 @@ fn compare_logits_rows(
         ));
     }
 
+    let mut min_row = 0usize;
     let mut min_cosine = f64::INFINITY;
-    for (actual_row, reference_row) in actual
+    for (row_idx, (actual_row, reference_row)) in actual
         .chunks_exact(row_size)
         .zip(reference.chunks_exact(row_size))
+        .enumerate()
     {
         let row = compare_logits_values(actual_row, reference_row)?;
-        min_cosine = min_cosine.min(row.cosine);
+        if row.cosine < min_cosine {
+            min_row = row_idx;
+            min_cosine = row.cosine;
+        }
     }
     Ok(LogitsRowMetrics {
         rows: actual.len() / row_size,
         row_size,
+        min_row,
         min_cosine,
     })
+}
+
+fn worst_logits_rows(
+    actual: &[f32],
+    reference: &[f32],
+    row_size: usize,
+    limit: usize,
+) -> Result<Vec<LogitsWorstRow>, String> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    if actual.len() != reference.len() {
+        return Err(format!(
+            "compare-logits: length mismatch actual={} reference={}",
+            actual.len(),
+            reference.len()
+        ));
+    }
+    if actual.is_empty() || actual.len() % row_size != 0 {
+        return Err(format!(
+            "compare-logits: value count {} is not divisible by row size {}",
+            actual.len(),
+            row_size
+        ));
+    }
+
+    let mut rows = Vec::new();
+    for (row, (actual_row, reference_row)) in actual
+        .chunks_exact(row_size)
+        .zip(reference.chunks_exact(row_size))
+        .enumerate()
+    {
+        rows.push(LogitsWorstRow {
+            row,
+            metrics: compare_logits_values(actual_row, reference_row)?,
+        });
+    }
+    rows.sort_by(|a, b| {
+        a.metrics
+            .cosine
+            .total_cmp(&b.metrics.cosine)
+            .then_with(|| b.metrics.max_abs_diff.total_cmp(&a.metrics.max_abs_diff))
+            .then_with(|| a.row.cmp(&b.row))
+    });
+    rows.truncate(limit.min(rows.len()));
+    Ok(rows)
+}
+
+fn top_logits_diffs(
+    actual: &[f32],
+    reference: &[f32],
+    row_size: Option<usize>,
+    limit: usize,
+) -> Result<Vec<LogitsTopDiff>, String> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    if actual.len() != reference.len() {
+        return Err(format!(
+            "compare-logits: length mismatch actual={} reference={}",
+            actual.len(),
+            reference.len()
+        ));
+    }
+    if actual.is_empty() {
+        return Err("compare-logits: no values to compare".to_owned());
+    }
+    if let Some(row_size) = row_size {
+        if row_size == 0 || actual.len() % row_size != 0 {
+            return Err(format!(
+                "compare-logits: value count {} is not divisible by row size {}",
+                actual.len(),
+                row_size
+            ));
+        }
+    }
+
+    let mut top: Vec<LogitsTopDiff> = Vec::new();
+    for (index, (&actual_value, &reference_value)) in actual.iter().zip(reference).enumerate() {
+        let abs_diff = ((actual_value as f64) - (reference_value as f64)).abs();
+        let (row, col) = row_size
+            .map(|row_size| (Some(index / row_size), Some(index % row_size)))
+            .unwrap_or((None, None));
+        top.push(LogitsTopDiff {
+            rank: 0,
+            index,
+            row,
+            col,
+            actual: actual_value,
+            reference: reference_value,
+            abs_diff,
+        });
+        top.sort_by(|a, b| {
+            b.abs_diff
+                .total_cmp(&a.abs_diff)
+                .then_with(|| a.index.cmp(&b.index))
+        });
+        top.truncate(limit);
+    }
+    for (idx, diff) in top.iter_mut().enumerate() {
+        diff.rank = idx + 1;
+    }
+    Ok(top)
 }
 
 fn compare_llamacpp_logprob_values(
@@ -2989,7 +3174,28 @@ mod tests {
         let rows = compare_logits_rows(&actual, &reference, 2).expect("rows");
         assert_eq!(rows.rows, 2);
         assert_eq!(rows.row_size, 2);
+        assert_eq!(rows.min_row, 1);
         assert!((rows.min_cosine - core::f64::consts::FRAC_1_SQRT_2).abs() < 1e-12);
+    }
+
+    #[test]
+    fn compare_logits_reports_worst_rows_and_top_diffs() {
+        let actual = [1.0f32, 0.0, 0.0, 1.0, 5.0, -3.0];
+        let reference = [1.0f32, 0.0, 1.0, 1.0, 3.0, -3.5];
+
+        let worst = worst_logits_rows(&actual, &reference, 2, 2).expect("worst rows");
+        assert_eq!(worst.len(), 2);
+        assert_eq!(worst[0].row, 1);
+        assert!(worst[0].metrics.cosine < worst[1].metrics.cosine);
+
+        let top = top_logits_diffs(&actual, &reference, Some(2), 2).expect("top diffs");
+        assert_eq!(top.len(), 2);
+        assert_eq!(top[0].rank, 1);
+        assert_eq!(top[0].index, 4);
+        assert_eq!(top[0].row, Some(2));
+        assert_eq!(top[0].col, Some(0));
+        assert_eq!(top[0].abs_diff, 2.0);
+        assert_eq!(top[1].index, 2);
     }
 
     #[test]
@@ -3003,10 +3209,16 @@ mod tests {
             "256".to_owned(),
             "--rows".to_owned(),
             "6".to_owned(),
+            "--worst-rows".to_owned(),
+            "2".to_owned(),
+            "--top-diffs".to_owned(),
+            "3".to_owned(),
         ])
         .expect("compare-logits options");
         assert_eq!(opts.row_size, Some(256));
         assert_eq!(opts.rows, Some(6));
+        assert_eq!(opts.worst_rows, 2);
+        assert_eq!(opts.top_diffs, 3);
 
         let err = parse_compare_logits_opts(vec![
             "--actual".to_owned(),
@@ -3038,6 +3250,7 @@ mod tests {
         let rows = LogitsRowMetrics {
             rows: 2,
             row_size: 256,
+            min_row: 1,
             min_cosine: 1.0,
         };
         validate_expected_rows(&rows, Some(2)).expect("matching rows");

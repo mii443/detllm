@@ -853,7 +853,7 @@ sequence, so it is not caused by multi-token KV-cache accumulation:
 ```sh
 cargo run --release -p det-cli -- logits -m /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf --tokens 19556 --dump /tmp/detllm-smollm2-19556.rawlogits.bin --hash --threads 8
 /tmp/reference_logits_llamacpp --model /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf --tokens 19556 --out /tmp/llamacpp-smollm2-19556.rawlogits.bin --threads 8 --ctx-size 16 --batch-size 16 --expected-vocab 49152 --expected-rows 1 --sequential --quiet
-cargo run --release -p xtask -- compare-logits --actual /tmp/detllm-smollm2-19556.rawlogits.bin --reference /tmp/llamacpp-smollm2-19556.rawlogits.bin --row-size 49152 --rows 1 --min-cosine 0.0
+cargo run --release -p xtask -- compare-logits --actual /tmp/detllm-smollm2-19556.rawlogits.bin --reference /tmp/llamacpp-smollm2-19556.rawlogits.bin --row-size 49152 --rows 1 --min-cosine 0.0 --worst-rows 1 --top-diffs 5
 ```
 
 Observed output:
@@ -861,7 +861,13 @@ Observed output:
 ```text
 cd6ecb7a6204975dbb4ff284044381a3626d77fdbbafc26d107b2e7e54be54d8
 reference_logits_llamacpp rows=1 vocab=49152 values=49152
-compare-logits values=49152 cosine=0.998830694 max_abs_diff=1.400400162 rms_diff=0.231572242 rows=1 row_size=49152 min_row_cosine=0.998830694
+compare-logits values=49152 cosine=0.998830694 max_abs_diff=1.400400162 rms_diff=0.231572242 rows=1 row_size=49152 min_row=0 min_row_cosine=0.998830694
+compare-logits-worst-row row=0 cosine=0.998830694 max_abs_diff=1.400400162 rms_diff=0.231572242
+compare-logits-top-diff rank=1 index=7370 row=0 col=7370 actual=-14.188291550 reference=-15.588691711 abs_diff=1.400400162
+compare-logits-top-diff rank=2 index=7359 row=0 col=7359 actual=-9.997969627 reference=-11.300146103 abs_diff=1.302176476
+compare-logits-top-diff rank=3 index=41150 row=0 col=41150 actual=-11.929577827 reference=-13.226449966 abs_diff=1.296872139
+compare-logits-top-diff rank=4 index=44956 row=0 col=44956 actual=-11.395421028 reference=-12.628348351 abs_diff=1.232927322
+compare-logits-top-diff rank=5 index=7910 row=0 col=7910 actual=-8.055624962 reference=-9.281610489 abs_diff=1.225985527
 ```
 
 Tokenizer-backed text paths can use bytes that are present in the partial BPE
@@ -1244,7 +1250,7 @@ Command:
 ```sh
 cargo run -p det-cli -- tokenize -m model.gguf -p "prompt text"
 scripts/reference_logits_transformers.py --model-id HF_MODEL_ID --tokens TOKENS --out reference.logits.bin --expected-rows TOKENS --expected-vocab VOCAB
-cargo run -p xtask -- compare-logits --actual detllm.logits.bin --reference reference.logits.bin --row-size VOCAB --rows TOKENS --min-cosine 0.999
+cargo run -p xtask -- compare-logits --actual detllm.logits.bin --reference reference.logits.bin --row-size VOCAB --rows TOKENS --min-cosine 0.999 --worst-rows 3 --top-diffs 10
 ```
 
 `detllm tokenize` emits the comma-separated token IDs produced by the same
@@ -1254,13 +1260,16 @@ record next to an external HF transformers or llama.cpp reference dump.
 `compare-logits` reads two little-endian f32 logits dumps, rejects malformed
 lengths and non-finite values, then reports global cosine similarity, maximum
 absolute difference, and RMS difference. With `--row-size`, it also reports
-the minimum row cosine across token positions and applies `--min-cosine` to
-both the global cosine and minimum row cosine. With `--rows`, it rejects dumps
-whose row count does not match the expected number of token positions, which
-prevents comparing different prompt lengths or a single final-token dump
-against a full-position detllm dump. This is the harness for the HF
-transformers raw-logits cosine-similarity sanity check required by
-`detllm-design.md` once an external reference dump is available.
+the minimum row index and cosine across token positions and applies
+`--min-cosine` to both the global cosine and minimum row cosine. With
+`--rows`, it rejects dumps whose row count does not match the expected number
+of token positions, which prevents comparing different prompt lengths or a
+single final-token dump against a full-position detllm dump. `--worst-rows`
+prints the lowest-cosine rows, and `--top-diffs` prints the largest absolute
+logit differences with row/column coordinates when `--row-size` is present.
+This is the harness for the HF transformers raw-logits cosine-similarity
+sanity check required by `detllm-design.md` once an external reference dump is
+available.
 
 The helper script
 [`scripts/reference_logits_transformers.py`](../scripts/reference_logits_transformers.py)
