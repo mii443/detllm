@@ -1092,14 +1092,23 @@ the current target-model codec path emits the same payload with
 The target-model determinism matrix checks that the current external GGUF set
 keeps identical logits bytes across deterministic chunking and thread-count
 settings. It uses the same tokenizer-backed 8-token streams as the raw-logits
-reference matrix and compares the public `detllm logits --hash` output for
+reference matrix and compares the public `detllm logits --hash` output across
+both a default scalar build and a `parallel,simd` build, with
 `threads=1,2,7,16` and `chunk-size=1,3,8`. The `chunk-size=8` setting is the
-full-stream prefill case for these 8-token streams.
+full-stream prefill case for these 8-token streams. `--extra-bin LABEL=PATH`
+adds another binary to the same comparison, so the script can cover the
+`detllm-design.md` §9.2 backend set without relying on separate manual runs.
 
 Command:
 
 ```sh
+cargo build --release -p det-cli
+cp target/release/detllm /tmp/detllm-scalar
+cargo build --release -p det-cli --features parallel,simd
+cp target/release/detllm /tmp/detllm-parallel-simd
 scripts/run-target-determinism-matrix.sh \
+  --bin /tmp/detllm-scalar \
+  --extra-bin parallel-simd=/tmp/detllm-parallel-simd \
   --tinyllama-q8 /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf \
   --tinyllama-q4 /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf \
   --qwen25-q8 /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf \
@@ -1110,15 +1119,15 @@ Observed output summary:
 
 | model | invariant settings | logits hash |
 |---|---:|---|
-| TinyLlama Q8_0 | 12 | `ded3a5204a66f58e529101511fe8d2e051fe9d71897d930ea49ec57372f3001a` |
-| TinyLlama Q4_0 | 12 | `da312ede8d5c3ac7599987204c7ba954f3d86315c259c7f6c3838040cf95efb5` |
-| Qwen2.5 Q8_0 | 12 | `22a98865d5bd6c45a2ae4c1a29e8b37db58a78a6c7c8caedb53a3d6baee33088` |
-| SmolLM2 Q8_0 | 12 | `f9b3942c20f3a4177f8d41544a918af6cc6ec90a51c085f1f69cc73cf9f6683a` |
+| TinyLlama Q8_0 | 24 | `ded3a5204a66f58e529101511fe8d2e051fe9d71897d930ea49ec57372f3001a` |
+| TinyLlama Q4_0 | 24 | `da312ede8d5c3ac7599987204c7ba954f3d86315c259c7f6c3838040cf95efb5` |
+| Qwen2.5 Q8_0 | 24 | `22a98865d5bd6c45a2ae4c1a29e8b37db58a78a6c7c8caedb53a3d6baee33088` |
+| SmolLM2 Q8_0 | 24 | `f9b3942c20f3a4177f8d41544a918af6cc6ec90a51c085f1f69cc73cf9f6683a` |
 
-Each row passed all `4 thread counts * 3 chunk sizes` combinations
-bit-for-bit. This broadens the target-model evidence for DET-2, M5, and M8,
-but it is not a cross-platform target-model run; CI cross-platform hash
-checking still uses the bundled fixtures.
+Each row passed all `2 binary builds * 4 thread counts * 3 chunk sizes`
+combinations bit-for-bit. This broadens the target-model evidence for DET-2,
+M5, M6, and M8, but it is not a cross-platform target-model run; CI
+cross-platform hash checking still uses the bundled fixtures.
 
 ## File Codec Bench Harness
 
