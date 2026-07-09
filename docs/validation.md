@@ -54,7 +54,7 @@ can differ in later rows.
 | TinyLlama 1.1B Chat Q8_0 | `10994,3186,515,1439,645,112,8845,49` | 32000 | 0.999914931 | 0.999809620 | passes `--min-cosine 0.999` |
 | Qwen2.5 1.5B Instruct Q8_0 | `9707,1879,504,3392,654,76,10519,13` | 151936 | 0.999840330 | 0.999647692 | passes `--min-cosine 0.999` |
 | SmolLM2 1.7B Instruct Q8_0 | `19556,905,429,964,764,93,13132,30` | 49152 | 0.999467131 | 0.999227139 | passes `--min-cosine 0.999` |
-| TinyLlama 1.1B Chat Q4_0 | `10994,3186,515,1439,645,112,8845,49` | 32000 | 0.999846114 | 0.998892643 | follow-up needed |
+| TinyLlama 1.1B Chat Q4_0 | `10994,3186,515,1439,645,112,8845,49` | 32000 | 0.999836229 | 0.999521848 | passes `--min-cosine 0.999` |
 
 Representative command shape:
 
@@ -546,7 +546,7 @@ Source:
 
 The Q4_0 file contains one `Q6_K` tensor for `output.weight`, so it exercises
 both the corrected GGML Q4_0 low-half/high-half nibble order and the scalar
-Q6_K output projection path.
+Q6_K output projection path with Q8_K activation quantization.
 
 Observed Q4_0 intake result:
 
@@ -571,9 +571,9 @@ cargo run --release -p det-cli -- logits -m /tmp/detllm-external/tinyllama-1.1b-
 Observed output:
 
 ```text
-tokens=1 hash = 7c363b2f787ac063c88c756554075e201d022843058375ff4d548e7d2b8d4468
-tokens=1,2,3 chunk-size=1 hash = c4dfabb1dfbafb4dca04a24f63ee4e7f3be1f39e98c0c46bbe68d02c2ee173ca
-tokens=1,2,3 chunk-size=3 hash = c4dfabb1dfbafb4dca04a24f63ee4e7f3be1f39e98c0c46bbe68d02c2ee173ca
+tokens=1 hash = e3908cc604210dac0ad8c31543c40eaebc34862e9e7cdcb38d2503b44a3944b0
+tokens=1,2,3 chunk-size=1 hash = 450bf34ee63249f042cde2156643a53261034a4fa04bf47721da9d865ada9251
+tokens=1,2,3 chunk-size=3 hash = 450bf34ee63249f042cde2156643a53261034a4fa04bf47721da9d865ada9251
 ```
 
 Q4_0 raw logits llama.cpp reference:
@@ -587,9 +587,9 @@ cargo run -p xtask -- compare-logits --actual /tmp/detllm-tinyllama-q4-123.rawlo
 Observed output:
 
 ```text
-c4dfabb1dfbafb4dca04a24f63ee4e7f3be1f39e98c0c46bbe68d02c2ee173ca
+450bf34ee63249f042cde2156643a53261034a4fa04bf47721da9d865ada9251
 reference_logits_llamacpp rows=3 vocab=32000 values=96000
-compare-logits values=96000 cosine=0.999642502 max_abs_diff=0.399452567 rms_diff=0.064845670 rows=3 row_size=32000 min_row_cosine=0.999283806
+compare-logits values=96000 cosine=0.999667056 max_abs_diff=0.416365802 rms_diff=0.064927172 rows=3 row_size=32000 min_row=2 min_row_cosine=0.999624876
 ```
 
 Observed Unsloth Q8_0 intake result:
@@ -1362,9 +1362,9 @@ cargo run --release -p xtask -- compare-logits --actual /tmp/detllm-tinyllama-q4
 Observed output:
 
 ```text
-c4dfabb1dfbafb4dca04a24f63ee4e7f3be1f39e98c0c46bbe68d02c2ee173ca
+450bf34ee63249f042cde2156643a53261034a4fa04bf47721da9d865ada9251
 reference_logits_llamacpp rows=3 vocab=32000 values=96000
-compare-logits values=96000 cosine=0.999642502 max_abs_diff=0.399452567 rms_diff=0.064845670 rows=3 row_size=32000 min_row_cosine=0.999283806
+compare-logits values=96000 cosine=0.999667056 max_abs_diff=0.416365802 rms_diff=0.064927172 rows=3 row_size=32000 min_row=2 min_row_cosine=0.999624876
 ```
 
 TinyLlama Q8_0 longer 8-token text raw-logits reference command:

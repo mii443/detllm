@@ -12,7 +12,7 @@ Implemented crates:
 
 - `det-num`: fixed-order reductions, deterministic rounding, f16 conversion,
   vendored libm `exp`/`sin`/`cos`/`log`, SHA-256, numeric canary.
-- `det-quant`: `Q8_0`, `Q4_0`, scalar `Q4_K`, `Q6_K`, in-memory `Q8A`,
+- `det-quant`: `Q8_0`, `Q4_0`, scalar `Q4_K`, `Q6_K`, in-memory `Q8A`/`Q8_K`,
   `simd` feature kernels, and deterministic quant-kernel hash coverage.
 - `det-gguf`: zero-copy GGUF metadata and tensor parsing for repository
   fixtures.
@@ -126,11 +126,10 @@ The implementation is not yet complete against the full design. In particular,
 the following acceptance evidence is still missing:
 
 - Broader target-model reference-quality checks are still needed beyond the
-  current TinyLlama/Qwen2.5/SmolLM2 Q8_0 tokenizer-backed 8-token raw-logits
-  evidence, logits/log-probability smoke evidence, and TinyLlama Q8/Q4,
-  Qwen2.5, plus SmolLM2 mixed-byte round-trip smoke. TinyLlama Q4_0 8-token
-  raw-logits evidence is close but still has one row below the 0.999 per-row
-  cosine threshold.
+  current TinyLlama Q8_0/Q4_0, Qwen2.5 Q8_0, and SmolLM2 Q8_0
+  tokenizer-backed 8-token raw-logits evidence, logits/log-probability smoke
+  evidence, and TinyLlama Q8/Q4, Qwen2.5, plus SmolLM2 mixed-byte round-trip
+  smoke.
 - Target-model enwik8 first-1MB compression-rate measurement with
   `xtask bench-file`; the bundled tiny fixture has input-scale enwik8 evidence.
 - Broader benchmark results on real target hardware beyond the current bundled

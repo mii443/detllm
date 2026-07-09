@@ -3,9 +3,10 @@ use det_num::{
     sum_f32_ref, sum_squares_f32_ref, Sha256,
 };
 use det_quant::{
-    dot_q4_0_q8a, dot_q4_k_q8a, dot_q6_k_q8a, dot_q8_0_q8a, q4_0_block_from_gguf,
+    dot_q4_0_q8a, dot_q4_k_q8a, dot_q6_k_q8k, dot_q8_0_q8a, q4_0_block_from_gguf,
     q4_k_block_from_gguf, q4_k_value, q6_k_block_from_gguf, q6_k_value, q8_0_block_from_gguf,
-    quantize_q8a, Q4KBlock, Q4_0Block, Q6KBlock, Q8ABlock, Q8_0Block, BLOCK, Q4K_BLOCK, Q6K_BLOCK,
+    quantize_q8a, quantize_q8k, Q4KBlock, Q4_0Block, Q6KBlock, Q8ABlock, Q8_0Block, BLOCK,
+    Q4K_BLOCK, Q6K_BLOCK,
 };
 #[cfg(all(feature = "parallel", not(target_family = "wasm")))]
 use rayon::prelude::*;
@@ -472,21 +473,18 @@ impl WeightMatrix {
                 })
             }
             Self::Q6K(m) => {
-                let qx = quantize_q8a(x).map_err(map_quant_error)?;
+                let qx = quantize_q8k(x).map_err(map_quant_error)?;
                 gemv_rows(m.rows, out, |r| {
                     let start = r * m.blocks_per_row;
                     let end = start + m.blocks_per_row;
-                    dot_q6_k_q8a(&m.blocks[start..end], &qx).map_err(map_quant_error)
+                    dot_q6_k_q8k(&m.blocks[start..end], &qx).map_err(map_quant_error)
                 })
             }
         }
     }
 
     fn needs_q8a(&self) -> bool {
-        matches!(
-            self,
-            Self::Q8_0(_) | Self::Q4_0(_) | Self::Q4K(_) | Self::Q6K(_)
-        )
+        matches!(self, Self::Q8_0(_) | Self::Q4_0(_) | Self::Q4K(_))
     }
 
     fn gemv_with_optional_q8a(
@@ -536,14 +534,11 @@ impl WeightMatrix {
                 })
             }
             Self::Q6K(m) => {
-                let qx = qx.ok_or(ModelError::Shape)?;
-                if qx.len() != m.blocks_per_row * (Q6K_BLOCK / BLOCK) {
-                    return Err(ModelError::Shape);
-                }
+                let qx = quantize_q8k(x).map_err(map_quant_error)?;
                 gemv_rows(m.rows, out, |r| {
                     let start = r * m.blocks_per_row;
                     let end = start + m.blocks_per_row;
-                    dot_q6_k_q8a(&m.blocks[start..end], qx).map_err(map_quant_error)
+                    dot_q6_k_q8k(&m.blocks[start..end], &qx).map_err(map_quant_error)
                 })
             }
         }
@@ -3254,19 +3249,15 @@ mod tests {
             blocks: vec![q6_block_for_test(0), q6_block_for_test(1)],
         });
         let x6: Vec<f32> = (0..256).map(|i| ((i as f32) - 128.0) / 64.0).collect();
-        let shared6 = shared_q8a_if_needed(&x6, [&q6])
+        assert!(shared_q8a_if_needed(&x6, [&q6])
             .expect("q6 shared")
-            .expect("q6 q8a");
+            .is_none());
         let mut y6_standalone = [0.0f32; 2];
         let mut y6_shared = [0.0f32; 2];
         q6.gemv(&x6, &mut y6_standalone).expect("q6 standalone");
-        q6.gemv_with_optional_q8a(&x6, Some(&shared6), &mut y6_shared)
-            .expect("q6 shared");
+        q6.gemv_with_optional_q8a(&x6, None, &mut y6_shared)
+            .expect("q6 optional");
         assert_eq!(y6_shared.map(f32::to_bits), y6_standalone.map(f32::to_bits));
-        assert_eq!(
-            q6.gemv_with_optional_q8a(&x6, Some(&shared), &mut y6_shared),
-            Err(ModelError::Shape)
-        );
 
         let q4k = WeightMatrix::Q4K(Q4KMatrix {
             rows: 2,

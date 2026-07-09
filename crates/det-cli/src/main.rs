@@ -3,8 +3,8 @@ use std::{env, fs, process::ExitCode};
 use det_num::{run_canary as run_numeric_canary, Sha256};
 
 const RUNTIME_CANARY_EXPECTED: [u8; 32] = [
-    0xb3, 0x9c, 0xac, 0x34, 0x0b, 0xd7, 0x15, 0x52, 0x10, 0xd5, 0x56, 0x00, 0x2f, 0x3d, 0x96, 0x2a,
-    0x1a, 0xd7, 0xb8, 0x06, 0x0a, 0xa1, 0x47, 0xa8, 0xc0, 0x2c, 0xde, 0xd5, 0x9c, 0x2e, 0x5c, 0x05,
+    0x05, 0x5d, 0x04, 0xe3, 0x36, 0xf7, 0x48, 0x12, 0x9f, 0x5d, 0x80, 0x25, 0x0f, 0xe9, 0x45, 0xeb,
+    0xa6, 0xc8, 0x28, 0x93, 0xc2, 0x89, 0xce, 0x28, 0x4d, 0xc0, 0x9e, 0xcb, 0xc8, 0x03, 0x50, 0x95,
 ];
 
 fn main() -> ExitCode {
@@ -153,12 +153,12 @@ fn runtime_canary_hash() -> Result<[u8; 32], String> {
         let q4k = q4k_block(seed ^ 0x9e37_79b9);
         let a4k = q8a_blocks_for_q4k(seed);
         let q6 = q6_block(seed ^ 0x517c_c1b7);
-        let a6 = q8a_blocks_for_q6(seed);
+        let a6 = q8k_block_for_q6(seed);
         let y8 = det_quant::dot_q8_0_q8a_block(q8, a);
         let y4 = det_quant::dot_q4_0_q8a_block(q4, a);
         let y4k = det_quant::dot_q4_k_q8a(&[q4k], &a4k)
             .map_err(|e| format!("runtime canary Q4_K dot error: {e:?}"))?;
-        let y6 = det_quant::dot_q6_k_q8a(&[q6], &a6)
+        let y6 = det_quant::dot_q6_k_q8k(&[q6], &[a6])
             .map_err(|e| format!("runtime canary Q6_K dot error: {e:?}"))?;
         if !y8.is_finite() || !y4.is_finite() || !y4k.is_finite() || !y6.is_finite() {
             return Err("runtime canary quantized dot produced non-finite output".to_owned());
@@ -259,8 +259,8 @@ fn quant_kernel_hash() -> Result<[u8; 32], String> {
     }
     for seed in 0..Q6K_CASES {
         let q6 = q6_block(seed ^ 0x517c_c1b7);
-        let a6 = q8a_blocks_for_q6(seed);
-        let y6 = det_quant::dot_q6_k_q8a(&[q6], &a6)
+        let a6 = q8k_block_for_q6(seed);
+        let y6 = det_quant::dot_q6_k_q8k(&[q6], &[a6])
             .map_err(|e| format!("quant Q6_K kernel error: {e:?}"))?;
         if !y6.is_finite() {
             return Err("quant Q6_K kernel produced non-finite output".to_owned());
@@ -376,8 +376,15 @@ fn q8a_blocks_for_q4k(seed: u32) -> [det_quant::Q8ABlock; det_quant::Q4K_BLOCK /
     core::array::from_fn(|i| q8a_block(seed.wrapping_add((i as u32).wrapping_mul(0x85eb_ca6b))))
 }
 
-fn q8a_blocks_for_q6(seed: u32) -> [det_quant::Q8ABlock; det_quant::Q6K_BLOCK / det_quant::BLOCK] {
-    core::array::from_fn(|i| q8a_block(seed.wrapping_add((i as u32).wrapping_mul(0x9e37_79b9))))
+fn q8k_block_for_q6(seed: u32) -> det_quant::Q8KBlock {
+    let input: [f32; det_quant::Q6K_BLOCK] = core::array::from_fn(|i| {
+        let x = seed
+            .wrapping_add((i as u32).wrapping_mul(0x9e37_79b9))
+            .wrapping_mul(747_796_405)
+            .wrapping_add(2_891_336_453);
+        (((x >> 9) as i32 % 4093) - 2046) as f32 / 257.0
+    });
+    det_quant::quantize_q8k_block(&input)
 }
 
 fn fixture_model() -> Result<det_model::F32Llama, String> {

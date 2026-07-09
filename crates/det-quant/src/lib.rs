@@ -24,6 +24,13 @@ pub struct Q8ABlock {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Q8KBlock {
+    pub d: f32,
+    pub q: [i8; Q6K_BLOCK],
+    pub bsums: [i16; Q6K_BLOCK / 16],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Q8_0Block {
     pub d: f32,
     pub q: [i8; BLOCK],
@@ -66,6 +73,21 @@ pub fn quantize_q8a_block(input: &[f32]) -> Q8ABlock {
     try_quantize_q8a_block(input).expect("Q8A input must be finite and exactly one block")
 }
 
+pub fn quantize_q8k(input: &[f32]) -> Result<alloc::vec::Vec<Q8KBlock>, QuantError> {
+    if input.is_empty() || input.len() % Q6K_BLOCK != 0 {
+        return Err(QuantError::InvalidBlockLength);
+    }
+    let mut out = alloc::vec::Vec::with_capacity(input.len() / Q6K_BLOCK);
+    for chunk in input.chunks_exact(Q6K_BLOCK) {
+        out.push(try_quantize_q8k_block(chunk)?);
+    }
+    Ok(out)
+}
+
+pub fn quantize_q8k_block(input: &[f32]) -> Q8KBlock {
+    try_quantize_q8k_block(input).expect("Q8K input must be finite and exactly one block")
+}
+
 pub fn try_quantize_q8a_block(input: &[f32]) -> Result<Q8ABlock, QuantError> {
     if input.len() != BLOCK {
         return Err(QuantError::InvalidBlockLength);
@@ -94,6 +116,41 @@ pub fn try_quantize_q8a_block(input: &[f32]) -> Result<Q8ABlock, QuantError> {
     Ok(Q8ABlock { d, q })
 }
 
+pub fn try_quantize_q8k_block(input: &[f32]) -> Result<Q8KBlock, QuantError> {
+    if input.len() != Q6K_BLOCK {
+        return Err(QuantError::InvalidBlockLength);
+    }
+    let mut amax = 0.0f32;
+    let mut max = 0.0f32;
+    for &x in input {
+        if !x.is_finite() {
+            return Err(QuantError::NonFiniteInput);
+        }
+        let ax = if x < 0.0 { -x } else { x };
+        if ax > amax {
+            amax = ax;
+            max = x;
+        }
+    }
+
+    let mut q = [0i8; Q6K_BLOCK];
+    let mut bsums = [0i16; Q6K_BLOCK / 16];
+    if amax == 0.0 {
+        return Ok(Q8KBlock { d: 0.0, q, bsums });
+    }
+
+    let iscale = -127.0 / max;
+    for (dst, &x) in q.iter_mut().zip(input) {
+        let rounded = nearest_i32_ggml(iscale * x).min(127);
+        *dst = rounded as i8;
+    }
+    for (sum, chunk) in bsums.iter_mut().zip(q.chunks_exact(16)) {
+        *sum = chunk.iter().map(|&v| v as i16).sum();
+    }
+    let d = 1.0 / iscale;
+    Ok(Q8KBlock { d, q, bsums })
+}
+
 #[inline]
 fn round_half_away_from_zero_i32(x: f32) -> i32 {
     if x < 0.0 {
@@ -101,6 +158,12 @@ fn round_half_away_from_zero_i32(x: f32) -> i32 {
     } else {
         (x + 0.5) as i32
     }
+}
+
+#[inline]
+fn nearest_i32_ggml(x: f32) -> i32 {
+    let val = x + 12_582_912.0;
+    ((val.to_bits() as i32) & 0x007f_ffff) - 0x0040_0000
 }
 
 pub fn q8_0_block_from_gguf(scale_f16: u16, q: [i8; BLOCK]) -> Result<Q8_0Block, QuantError> {
@@ -267,6 +330,54 @@ pub fn dot_q6_k_q8a(blocks_w: &[Q6KBlock], blocks_a: &[Q8ABlock]) -> Result<f32,
     Ok(sum)
 }
 
+pub fn dot_q6_k_q8k(blocks_w: &[Q6KBlock], blocks_a: &[Q8KBlock]) -> Result<f32, QuantError> {
+    if blocks_w.len() != blocks_a.len() {
+        return Err(QuantError::LengthMismatch);
+    }
+    if blocks_w.is_empty() {
+        return Err(QuantError::InvalidBlockLength);
+    }
+    let mut sums = [0.0f32; 8];
+    for (w, a) in blocks_w.iter().zip(blocks_a) {
+        if !w.d.is_finite() || !a.d.is_finite() {
+            return Err(QuantError::NonFiniteScale);
+        }
+        let mut q6 = [0i8; Q6K_BLOCK];
+        for (i, dst) in q6.iter_mut().enumerate() {
+            *dst = q6_k_quant(*w, i);
+        }
+        let mut aux32 = [0i32; 8];
+        let mut offset = 0usize;
+        for &scale in &w.scales {
+            let scale = scale as i32;
+            for _ in 0..2 {
+                for lane in 0..8 {
+                    aux32[lane] += scale * (a.q[offset + lane] as i32) * (q6[offset + lane] as i32);
+                }
+                offset += 8;
+            }
+        }
+        let d = w.d * a.d;
+        if !d.is_finite() {
+            return Err(QuantError::NonFiniteOutput);
+        }
+        for lane in 0..8 {
+            sums[lane] += d * (aux32[lane] as f32);
+            if !sums[lane].is_finite() {
+                return Err(QuantError::NonFiniteOutput);
+            }
+        }
+    }
+    let mut sum = 0.0f32;
+    for lane_sum in sums {
+        sum += lane_sum;
+        if !sum.is_finite() {
+            return Err(QuantError::NonFiniteOutput);
+        }
+    }
+    Ok(sum)
+}
+
 fn ensure_finite_scales(weight: f32, activation: f32) -> Result<(), QuantError> {
     if !weight.is_finite() || !activation.is_finite() {
         return Err(QuantError::NonFiniteScale);
@@ -389,23 +500,41 @@ fn q4_k_scale_min(scales: [u8; 12], index: usize) -> (u8, u8) {
 
 pub fn q6_k_value(w: Q6KBlock, index: usize) -> f32 {
     debug_assert!(index < Q6K_BLOCK);
+    (w.d * (w.scales[q6_k_scale_index(index)] as f32)) * (q6_k_quant(w, index) as f32)
+}
+
+fn q6_k_quant(w: Q6KBlock, index: usize) -> i8 {
+    debug_assert!(index < Q6K_BLOCK);
     let half = index / 128;
     let within = index % 128;
     let l = within % 32;
     let part = within / 32;
     let ql_base = half * 64;
     let qh_base = half * 32;
-    let sc_base = half * 8;
-    let (ql, shift, scale_index) = match part {
-        0 => (w.ql[ql_base + l] & 0x0f, 0, sc_base + l / 16),
-        1 => (w.ql[ql_base + l + 32] & 0x0f, 2, sc_base + l / 16 + 2),
-        2 => (w.ql[ql_base + l] >> 4, 4, sc_base + l / 16 + 4),
-        3 => (w.ql[ql_base + l + 32] >> 4, 6, sc_base + l / 16 + 6),
+    let (ql, shift) = match part {
+        0 => (w.ql[ql_base + l] & 0x0f, 0),
+        1 => (w.ql[ql_base + l + 32] & 0x0f, 2),
+        2 => (w.ql[ql_base + l] >> 4, 4),
+        3 => (w.ql[ql_base + l + 32] >> 4, 6),
         _ => unreachable!(),
     };
     let high = ((w.qh[qh_base + l] >> shift) & 0x03) << 4;
-    let q = ((ql | high) as i32) - 32;
-    (w.d * (w.scales[scale_index] as f32)) * (q as f32)
+    ((ql | high) as i8) - 32
+}
+
+fn q6_k_scale_index(index: usize) -> usize {
+    let half = index / 128;
+    let within = index % 128;
+    let l = within % 32;
+    let part = within / 32;
+    let sc_base = half * 8;
+    match part {
+        0 => sc_base + l / 16,
+        1 => sc_base + l / 16 + 2,
+        2 => sc_base + l / 16 + 4,
+        3 => sc_base + l / 16 + 6,
+        _ => unreachable!(),
+    }
 }
 
 #[cfg(all(feature = "simd", target_arch = "x86_64", target_feature = "avx2"))]
@@ -654,6 +783,7 @@ mod tests {
         assert_eq!(dot_q4_0_q8a(&[], &[]), Err(QuantError::InvalidBlockLength));
         assert_eq!(dot_q4_k_q8a(&[], &[]), Err(QuantError::InvalidBlockLength));
         assert_eq!(dot_q6_k_q8a(&[], &[]), Err(QuantError::InvalidBlockLength));
+        assert_eq!(dot_q6_k_q8k(&[], &[]), Err(QuantError::InvalidBlockLength));
     }
 
     #[test]
@@ -672,6 +802,11 @@ mod tests {
         };
         let q4k = q4k_block_with(0.5, 0.25, 1, 0, 0);
         let q6 = q6_block_with(0.5, 0, 1);
+        let a6k = Q8KBlock {
+            d: 0.25,
+            q: [2; Q6K_BLOCK],
+            bsums: [32; Q6K_BLOCK / 16],
+        };
 
         let mut bad_a = a;
         bad_a.d = f32::NAN;
@@ -689,6 +824,12 @@ mod tests {
         );
         assert_eq!(
             dot_q6_k_q8a(&[q6], &[bad_a; Q6K_BLOCK / BLOCK]),
+            Err(QuantError::NonFiniteScale)
+        );
+        let mut bad_a6k = a6k;
+        bad_a6k.d = f32::NAN;
+        assert_eq!(
+            dot_q6_k_q8k(&[q6], &[bad_a6k]),
             Err(QuantError::NonFiniteScale)
         );
 
@@ -726,6 +867,10 @@ mod tests {
             dot_q6_k_q8a(&[bad_q6], &[a; Q6K_BLOCK / BLOCK]),
             Err(QuantError::NonFiniteScale)
         );
+        assert_eq!(
+            dot_q6_k_q8k(&[bad_q6], &[a6k]),
+            Err(QuantError::NonFiniteScale)
+        );
     }
 
     #[test]
@@ -744,6 +889,11 @@ mod tests {
         };
         let q4k = q4k_block_with(2.0, 0.0, 63, 0, 0xff);
         let q6 = q6_block_with(2.0, 63, 127);
+        let huge_a6k = Q8KBlock {
+            d: f32::MAX,
+            q: [127; Q6K_BLOCK],
+            bsums: [2032; Q6K_BLOCK / 16],
+        };
 
         assert_eq!(
             dot_q8_0_q8a(&[q8], &[huge_a]),
@@ -759,6 +909,10 @@ mod tests {
         );
         assert_eq!(
             dot_q6_k_q8a(&[q6], &[huge_a; Q6K_BLOCK / BLOCK]),
+            Err(QuantError::NonFiniteOutput)
+        );
+        assert_eq!(
+            dot_q6_k_q8k(&[q6], &[huge_a6k]),
             Err(QuantError::NonFiniteOutput)
         );
 
@@ -861,7 +1015,7 @@ mod tests {
     }
 
     #[test]
-    fn q6_k_dequantizes_and_dots_q8a() {
+    fn q6_k_dequantizes_and_dots_quantized_activations() {
         let w = q6_block_with(1.0, 0, 1);
         assert_eq!(q6_k_value(w, 0).to_bits(), (-32.0f32).to_bits());
         assert_eq!(q6_k_value(w, 127).to_bits(), (-32.0f32).to_bits());
@@ -881,6 +1035,22 @@ mod tests {
             dot_q6_k_q8a(&[w], &[a; Q6K_BLOCK / BLOCK - 1]),
             Err(QuantError::LengthMismatch)
         );
+
+        let a8k = Q8KBlock {
+            d: 1.0,
+            q: [1; Q6K_BLOCK],
+            bsums: [16; Q6K_BLOCK / 16],
+        };
+        assert_eq!(dot_q6_k_q8k(&[w], &[a8k]).expect("q6 q8k dot"), -8192.0);
+        assert_eq!(dot_q6_k_q8k(&[w], &[]), Err(QuantError::LengthMismatch));
+
+        let mut input = [0.0f32; Q6K_BLOCK];
+        input[0] = 2.0;
+        input[1] = -1.0;
+        let q = quantize_q8k_block(&input);
+        assert!(q.d.is_sign_negative());
+        assert_eq!(q.q[0], -127);
+        assert_eq!(q.bsums[0], q.q[..16].iter().map(|&v| v as i16).sum::<i16>());
     }
 
     #[test]
