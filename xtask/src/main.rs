@@ -2513,13 +2513,8 @@ fn encode_symbols_with_model_progress(
     let start = Instant::now();
     for (pos, &symbol) in symbols.iter().enumerate() {
         state.sync(context_tokens.len(), &context_tokens, overlap)?;
-        let cdf = state.cdf()?;
-        let (&cum, &freq) = cdf
-            .cum
-            .get(symbol)
-            .zip(cdf.freq.get(symbol))
-            .ok_or_else(|| format!("symbol {symbol} is outside codec alphabet"))?;
-        enc.encode(cum, freq as u64, cdf.total)
+        let range = state.symbol_range(symbol)?;
+        enc.encode(range.cum, range.freq as u64, range.total)
             .map_err(|e| format!("range encode error: {e:?}"))?;
         if det_token::Tokenizer::codec_symbol_is_token(symbol, vocab_len) {
             context_tokens.push(symbol);
@@ -2675,6 +2670,19 @@ impl<'a> WindowedModelState<'a> {
             det_coder::logits_to_cdf_with_byte_escapes(&self.logits, &mut self.cdf_scratch)
                 .map_err(|e| format!("CDF error: {e:?}"))
         }
+    }
+
+    fn symbol_range(&mut self, symbol: usize) -> Result<det_coder::SymbolRange, String> {
+        if self.context_len == 0 {
+            return det_coder::uniform_symbol_range(symbol, self.uniform_cdf.freq.len())
+                .map_err(|e| format!("CDF symbol range error: {e:?}"));
+        }
+        det_coder::logits_to_symbol_range_with_byte_escapes(
+            &self.logits,
+            symbol,
+            &mut self.cdf_scratch,
+        )
+        .map_err(|e| format!("CDF symbol range error: {e:?}"))
     }
 
     fn advance(&mut self, token: usize) -> Result<(), String> {

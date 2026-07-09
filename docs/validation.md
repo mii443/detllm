@@ -1207,15 +1207,18 @@ of the large hidden-state, projection, attention, feed-forward, Q8A, and Q8_K
 activation buffers, and uses layout checks for already-loaded models instead
 of re-scanning all weight tensors on every token and GEMV. Attention reads
 KV-cache prefix slices directly instead of copying per-head key/value windows.
-The codec CDF path also reuses the exp, frequency, and cumulative buffers
-across tokens; tests verify the scratch API is bit-for-bit equivalent to the
-owned `logits_to_cdf` API and
-that streaming codec payloads still match the direct replay rule. Decode uses
-the validated CDF lookup for CDFs built by this codec path, avoiding a full CDF
-validation scan on every decoded token while leaving the public validating
-`symbol_for` helper available for untrusted tables. With the `parallel`
-feature, row-parallel GEMV reuses fixed-size Rayon worker pools keyed by
-`--threads` instead of spawning OS threads for every matrix multiply, attention
+Codec encode computes only the selected symbol's range-coder interval from the
+logits and no longer materializes full frequency/cumulative CDF vectors per
+token; tests verify this symbol-range API matches the full CDF exactly,
+including byte-escape tails. Decode still materializes the CDF, reuses the exp,
+frequency, and cumulative buffers across tokens, and uses the validated CDF
+lookup for CDFs built by this codec path, avoiding a full CDF validation scan
+on every decoded token while leaving the public validating `symbol_for` helper
+available for untrusted tables. The tests also verify the scratch API is
+bit-for-bit equivalent to the owned `logits_to_cdf` API and that streaming
+codec payloads still match the direct replay rule. With the `parallel` feature,
+row-parallel GEMV reuses fixed-size Rayon worker pools keyed by `--threads`
+instead of spawning OS threads for every matrix multiply, attention
 parallelizes independent heads with per-head score/prob scratch for larger
 attention windows while keeping each head's softmax and value accumulation
 ordered, and CDF construction parallelizes only the independent `exp[i]` fill

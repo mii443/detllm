@@ -85,9 +85,10 @@ streaming KV cache inside each
 fixed context window and only replays the configured overlap after window
 rollover; repeated forward calls also reuse `ForwardWorkspace` scratch buffers
 instead of allocating the large model temporaries or quantized activation
-buffers per token, and the codec CDF
-path reuses frequency/cumulative buffers across tokens while decode skips the
-full validation scan for CDFs built by the codec path. The hot forward path
+buffers per token, and codec encode computes only the selected symbol's
+range-coder interval instead of materializing a full frequency/cumulative CDF
+per token. Decode still reuses frequency/cumulative buffers across tokens and
+skips the full validation scan for CDFs built by the codec path. The hot forward path
 uses layout checks for already-loaded models instead of re-scanning all weight
 tensors on every token and GEMV. With the `parallel` feature, row-parallel
 GEMV reuses fixed-size Rayon worker pools keyed by `--threads` instead of

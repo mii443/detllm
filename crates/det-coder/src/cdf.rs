@@ -11,6 +11,7 @@ pub enum CdfError {
     Empty,
     Malformed,
     NonFiniteLogit,
+    SymbolOutOfRange,
     TooManySymbols,
     TotalTooLarge,
 }
@@ -26,6 +27,13 @@ pub struct Cdf {
 pub struct CdfScratch {
     exp: Vec<f32>,
     cdf: Cdf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SymbolRange {
+    pub cum: u64,
+    pub freq: u32,
+    pub total: u64,
 }
 
 pub fn logits_to_cdf(logits: &[f32]) -> Result<Cdf, CdfError> {
@@ -87,6 +95,85 @@ pub fn logits_to_cdf_with_byte_escapes<'a>(
     logits_to_cdf_with_scratch(logits, scratch)?;
     append_uniform_tail(&mut scratch.cdf, BYTE_ESCAPE_SYMBOLS, 1)?;
     Ok(&scratch.cdf)
+}
+
+pub fn logits_to_symbol_range_with_scratch(
+    logits: &[f32],
+    symbol: usize,
+    scratch: &mut CdfScratch,
+) -> Result<SymbolRange, CdfError> {
+    logits_to_symbol_range_impl(logits, symbol, 0, scratch)
+}
+
+pub fn logits_to_symbol_range_with_byte_escapes(
+    logits: &[f32],
+    symbol: usize,
+    scratch: &mut CdfScratch,
+) -> Result<SymbolRange, CdfError> {
+    logits_to_symbol_range_impl(logits, symbol, BYTE_ESCAPE_SYMBOLS, scratch)
+}
+
+fn logits_to_symbol_range_impl(
+    logits: &[f32],
+    symbol: usize,
+    tail_symbols: usize,
+    scratch: &mut CdfScratch,
+) -> Result<SymbolRange, CdfError> {
+    if logits.is_empty() {
+        return Err(CdfError::Empty);
+    }
+    if logits.len().saturating_add(tail_symbols) > MAX_SYMBOLS {
+        return Err(CdfError::TooManySymbols);
+    }
+    if symbol >= logits.len().saturating_add(tail_symbols) {
+        return Err(CdfError::SymbolOutOfRange);
+    }
+    let mut max = f32::NEG_INFINITY;
+    for &x in logits {
+        if !x.is_finite() {
+            return Err(CdfError::NonFiniteLogit);
+        }
+        if x > max {
+            max = x;
+        }
+    }
+
+    fill_exp_scratch(logits, max, &mut scratch.exp);
+    let z = sum_f32_ref(&scratch.exp);
+
+    let mut total = 0u64;
+    let mut range = None;
+    for (idx, &ei) in scratch.exp.iter().enumerate() {
+        let p = ei / z;
+        let g = (p * M) as u32;
+        let f = g + 1;
+        if idx == symbol {
+            range = Some(SymbolRange {
+                cum: total,
+                freq: f,
+                total: 0,
+            });
+        }
+        total += f as u64;
+    }
+
+    if symbol >= logits.len() {
+        range = Some(SymbolRange {
+            cum: total + (symbol - logits.len()) as u64,
+            freq: 1,
+            total: 0,
+        });
+    }
+    total = total
+        .checked_add(tail_symbols as u64)
+        .ok_or(CdfError::TotalTooLarge)?;
+    if total >= (1u64 << 31) {
+        return Err(CdfError::TotalTooLarge);
+    }
+
+    let mut range = range.ok_or(CdfError::SymbolOutOfRange)?;
+    range.total = total;
+    Ok(range)
 }
 
 pub fn uniform_cdf_with_byte_escapes(vocab_len: usize) -> Result<Cdf, CdfError> {
@@ -162,6 +249,27 @@ pub fn uniform_cdf(symbols: usize) -> Result<Cdf, CdfError> {
         cum.push(i as u64);
     }
     Ok(Cdf { freq, cum, total })
+}
+
+pub fn uniform_symbol_range(symbol: usize, symbols: usize) -> Result<SymbolRange, CdfError> {
+    if symbols == 0 {
+        return Err(CdfError::Empty);
+    }
+    if symbols > MAX_SYMBOLS {
+        return Err(CdfError::TooManySymbols);
+    }
+    if symbol >= symbols {
+        return Err(CdfError::SymbolOutOfRange);
+    }
+    let total = symbols as u64;
+    if total >= (1u64 << 31) {
+        return Err(CdfError::TotalTooLarge);
+    }
+    Ok(SymbolRange {
+        cum: symbol as u64,
+        freq: 1,
+        total,
+    })
 }
 
 impl Cdf {
@@ -253,6 +361,51 @@ mod tests {
         assert_eq!(second.freq.len(), 2);
         assert_eq!(second.cum.len(), 2);
         assert_eq!(second.total, second.freq.iter().map(|&f| f as u64).sum());
+    }
+
+    #[test]
+    fn symbol_range_matches_full_cdf() {
+        let logits = [1.0, 0.25, -2.0, 3.5];
+        let mut scratch = CdfScratch::default();
+        let cdf = logits_to_cdf_with_byte_escapes(&logits, &mut scratch)
+            .expect("escape cdf")
+            .clone();
+        for symbol in 0..cdf.freq.len() {
+            let range = logits_to_symbol_range_with_byte_escapes(&logits, symbol, &mut scratch)
+                .expect("escape symbol range");
+            assert_eq!(range.cum, cdf.cum[symbol]);
+            assert_eq!(range.freq, cdf.freq[symbol]);
+            assert_eq!(range.total, cdf.total);
+        }
+
+        let cdf = logits_to_cdf_with_scratch(&logits, &mut scratch)
+            .expect("base cdf")
+            .clone();
+        for symbol in 0..cdf.freq.len() {
+            let range = logits_to_symbol_range_with_scratch(&logits, symbol, &mut scratch)
+                .expect("base symbol range");
+            assert_eq!(range.cum, cdf.cum[symbol]);
+            assert_eq!(range.freq, cdf.freq[symbol]);
+            assert_eq!(range.total, cdf.total);
+        }
+    }
+
+    #[test]
+    fn symbol_range_rejects_bad_symbol_and_matches_uniform_cdf() {
+        let mut scratch = CdfScratch::default();
+        assert_eq!(
+            logits_to_symbol_range_with_scratch(&[0.0, 1.0], 2, &mut scratch),
+            Err(CdfError::SymbolOutOfRange)
+        );
+        assert_eq!(
+            uniform_symbol_range(3, 5).expect("uniform range"),
+            SymbolRange {
+                cum: 3,
+                freq: 1,
+                total: 5
+            }
+        );
+        assert_eq!(uniform_symbol_range(5, 5), Err(CdfError::SymbolOutOfRange));
     }
 
     #[test]

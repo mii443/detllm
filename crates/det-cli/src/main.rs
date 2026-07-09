@@ -534,8 +534,9 @@ fn encode_symbols_with_model(
     let vocab_len = model.output.rows();
     for &symbol in symbols {
         state.sync(context_tokens.len(), &context_tokens, overlap)?;
-        let cdf = state.cdf()?;
-        encode_symbol(&mut enc, cdf, symbol)?;
+        let range = state.symbol_range(symbol)?;
+        enc.encode(range.cum, range.freq as u64, range.total)
+            .map_err(|e| format!("range encode error: {e:?}"))?;
         if use_byte_escapes && !det_token::Tokenizer::codec_symbol_is_token(symbol, vocab_len) {
             continue;
         }
@@ -713,6 +714,27 @@ impl<'a> WindowedModelState<'a> {
         }
     }
 
+    fn symbol_range(&mut self, symbol: usize) -> Result<det_coder::SymbolRange, String> {
+        if self.context_len == 0 {
+            return det_coder::uniform_symbol_range(symbol, self.uniform_cdf.freq.len())
+                .map_err(|e| format!("CDF symbol range error: {e:?}"));
+        }
+        if self.use_byte_escapes {
+            det_coder::logits_to_symbol_range_with_byte_escapes(
+                &self.logits,
+                symbol,
+                &mut self.cdf_scratch,
+            )
+        } else {
+            det_coder::logits_to_symbol_range_with_scratch(
+                &self.logits,
+                symbol,
+                &mut self.cdf_scratch,
+            )
+        }
+        .map_err(|e| format!("CDF symbol range error: {e:?}"))
+    }
+
     fn advance(&mut self, token: usize) -> Result<(), String> {
         if self.context_len >= self.n_ctx {
             return Err("context window invariant violated".to_owned());
@@ -787,6 +809,7 @@ fn validate_window(n_ctx: usize, overlap: usize, model_ctx: usize) -> Result<(),
     Ok(())
 }
 
+#[cfg(test)]
 fn encode_symbol(
     enc: &mut det_coder::RangeEncoder,
     cdf: &det_coder::Cdf,
