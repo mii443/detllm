@@ -712,6 +712,7 @@ Command:
 
 ```sh
 cargo run -p det-cli -- tokenize -m model.gguf -p "prompt text"
+scripts/reference_logits_transformers.py --model-id HF_MODEL_ID --tokens TOKENS --out reference.logits.bin --expected-rows TOKENS --expected-vocab VOCAB
 cargo run -p xtask -- compare-logits --actual detllm.logits.bin --reference reference.logits.bin --row-size VOCAB --rows TOKENS --min-cosine 0.999
 ```
 
@@ -729,6 +730,35 @@ prevents comparing different prompt lengths or a single final-token dump
 against a full-position detllm dump. This is the harness for the HF
 transformers or llama.cpp cosine-similarity sanity check required by
 `detllm-design.md` once an external reference dump is available.
+
+The helper script
+[`scripts/reference_logits_transformers.py`](../scripts/reference_logits_transformers.py)
+generates that reference dump from an HF Transformers causal LM without adding
+Python dependencies to the Rust workspace. It accepts either explicit token IDs
+or a prompt; for external validation, prefer explicit IDs produced by
+`detllm tokenize` so both systems evaluate the same token stream. The script
+writes the same row-major little-endian f32 format as `detllm logits --dump`
+and can enforce the expected row count and vocabulary size before writing the
+file.
+
+Example TinyLlama command shape:
+
+```sh
+cargo run --release -p det-cli -- logits -m /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf --tokens 1,2,3 --dump detllm.logits.bin --hash --threads 8
+scripts/reference_logits_transformers.py --model-id TinyLlama/TinyLlama-1.1B-Chat-v1.0 --tokens 1,2,3 --out reference.logits.bin --expected-rows 3 --expected-vocab 32000 --threads 1 --dtype float32
+cargo run -p xtask -- compare-logits --actual detllm.logits.bin --reference reference.logits.bin --row-size 32000 --rows 3 --min-cosine 0.999
+```
+
+The script's syntax and argument parser were checked locally without writing
+bytecode with:
+
+```sh
+python3 -B scripts/reference_logits_transformers.py --help
+```
+
+This still does not count as the required external cosine evidence until it is
+run in an environment with compatible `torch` and `transformers` installed and
+the resulting `compare-logits` output is recorded here.
 
 Local smoke using the same `testdata/tiny-f32.gguf` dump as both actual and
 reference reported:
