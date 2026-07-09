@@ -3,9 +3,9 @@ use det_num::{
     sum_f32_ref, sum_squares_f32_ref, Sha256,
 };
 use det_quant::{
-    dot_q4_0_q8a, dot_q6_k_q8a, dot_q8_0_q8a, q4_0_block_from_gguf, q6_k_block_from_gguf,
-    q6_k_value, q8_0_block_from_gguf, quantize_q8a, Q4_0Block, Q6KBlock, Q8ABlock, Q8_0Block,
-    BLOCK, Q6K_BLOCK,
+    dot_q4_0_q8a, dot_q4_k_q8a, dot_q6_k_q8a, dot_q8_0_q8a, q4_0_block_from_gguf,
+    q4_k_block_from_gguf, q4_k_value, q6_k_block_from_gguf, q6_k_value, q8_0_block_from_gguf,
+    quantize_q8a, Q4KBlock, Q4_0Block, Q6KBlock, Q8ABlock, Q8_0Block, BLOCK, Q4K_BLOCK, Q6K_BLOCK,
 };
 
 static THREAD_COUNT_OVERRIDE: core::sync::atomic::AtomicUsize =
@@ -83,6 +83,7 @@ pub enum WeightMatrix {
     F32(F32Matrix),
     Q8_0(Q8Matrix),
     Q4_0(Q4Matrix),
+    Q4K(Q4KMatrix),
     Q6K(Q6KMatrix),
 }
 
@@ -100,6 +101,14 @@ pub struct Q4Matrix {
     pub cols: usize,
     pub blocks_per_row: usize,
     pub blocks: Vec<Q4_0Block>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Q4KMatrix {
+    pub rows: usize,
+    pub cols: usize,
+    pub blocks_per_row: usize,
+    pub blocks: Vec<Q4KBlock>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -310,6 +319,7 @@ impl WeightMatrix {
             Self::F32(m) => m.rows,
             Self::Q8_0(m) => m.rows,
             Self::Q4_0(m) => m.rows,
+            Self::Q4K(m) => m.rows,
             Self::Q6K(m) => m.rows,
         }
     }
@@ -319,6 +329,7 @@ impl WeightMatrix {
             Self::F32(m) => m.cols,
             Self::Q8_0(m) => m.cols,
             Self::Q4_0(m) => m.cols,
+            Self::Q4K(m) => m.cols,
             Self::Q6K(m) => m.cols,
         }
     }
@@ -336,6 +347,22 @@ impl WeightMatrix {
             Self::Q4_0(m) => {
                 validate_quant_matrix_shape(m.rows, m.cols, m.blocks_per_row, m.blocks.len())?;
                 if m.blocks.iter().any(|block| !block.d.is_finite()) {
+                    return Err(ModelError::NonFinite);
+                }
+                Ok(())
+            }
+            Self::Q4K(m) => {
+                validate_quant_matrix_shape_with_block(
+                    m.rows,
+                    m.cols,
+                    m.blocks_per_row,
+                    m.blocks.len(),
+                    Q4K_BLOCK,
+                )?;
+                if m.blocks
+                    .iter()
+                    .any(|block| !block.d.is_finite() || !block.dmin.is_finite())
+                {
                     return Err(ModelError::NonFinite);
                 }
                 Ok(())
@@ -380,6 +407,14 @@ impl WeightMatrix {
                     dot_q4_0_q8a(&m.blocks[start..end], &qx).map_err(map_quant_error)
                 })
             }
+            Self::Q4K(m) => {
+                let qx = quantize_q8a(x).map_err(map_quant_error)?;
+                gemv_rows(m.rows, out, |r| {
+                    let start = r * m.blocks_per_row;
+                    let end = start + m.blocks_per_row;
+                    dot_q4_k_q8a(&m.blocks[start..end], &qx).map_err(map_quant_error)
+                })
+            }
             Self::Q6K(m) => {
                 let qx = quantize_q8a(x).map_err(map_quant_error)?;
                 gemv_rows(m.rows, out, |r| {
@@ -392,7 +427,10 @@ impl WeightMatrix {
     }
 
     fn needs_q8a(&self) -> bool {
-        matches!(self, Self::Q8_0(_) | Self::Q4_0(_) | Self::Q6K(_))
+        matches!(
+            self,
+            Self::Q8_0(_) | Self::Q4_0(_) | Self::Q4K(_) | Self::Q6K(_)
+        )
     }
 
     fn gemv_with_optional_q8a(
@@ -427,6 +465,17 @@ impl WeightMatrix {
                     let start = r * m.blocks_per_row;
                     let end = start + m.blocks_per_row;
                     dot_q4_0_q8a(&m.blocks[start..end], qx).map_err(map_quant_error)
+                })
+            }
+            Self::Q4K(m) => {
+                let qx = qx.ok_or(ModelError::Shape)?;
+                if qx.len() != m.blocks_per_row * (Q4K_BLOCK / BLOCK) {
+                    return Err(ModelError::Shape);
+                }
+                gemv_rows(m.rows, out, |r| {
+                    let start = r * m.blocks_per_row;
+                    let end = start + m.blocks_per_row;
+                    dot_q4_k_q8a(&m.blocks[start..end], qx).map_err(map_quant_error)
                 })
             }
             Self::Q6K(m) => {
@@ -489,6 +538,21 @@ impl WeightMatrix {
                             block.qs[i - BLOCK / 2] >> 4
                         };
                         let value = block.d * ((nibble as i32 - 8) as f32);
+                        if !value.is_finite() {
+                            return Err(ModelError::NonFinite);
+                        }
+                        out[dst] = value;
+                        dst += 1;
+                    }
+                }
+                Ok(())
+            }
+            Self::Q4K(m) => {
+                let start = row * m.blocks_per_row;
+                let mut dst = 0usize;
+                for block in &m.blocks[start..start + m.blocks_per_row] {
+                    for i in 0..Q4K_BLOCK {
+                        let value = q4_k_value(*block, i);
                         if !value.is_finite() {
                             return Err(ModelError::NonFinite);
                         }
@@ -1517,6 +1581,9 @@ fn read_weight_matrix(
         det_gguf::GgmlType::Q4_0 => {
             read_q4_matrix(gguf, bytes, name, rows, cols).map(WeightMatrix::Q4_0)
         }
+        det_gguf::GgmlType::Q4K => {
+            read_q4k_matrix(gguf, bytes, name, rows, cols).map(WeightMatrix::Q4K)
+        }
         det_gguf::GgmlType::Q6K => {
             read_q6k_matrix(gguf, bytes, name, rows, cols).map(WeightMatrix::Q6K)
         }
@@ -1585,6 +1652,42 @@ fn read_q4_matrix(
         blocks.push(q4_0_block_from_gguf(scale, qs).map_err(|_| ModelError::NonFinite)?);
     }
     Ok(Q4Matrix {
+        rows,
+        cols,
+        blocks_per_row,
+        blocks,
+    })
+}
+
+fn read_q4k_matrix(
+    gguf: &det_gguf::Gguf,
+    bytes: &[u8],
+    name: &str,
+    rows: usize,
+    cols: usize,
+) -> Result<Q4KMatrix, ModelError> {
+    if cols % Q4K_BLOCK != 0 {
+        return Err(ModelError::Shape);
+    }
+    let data = gguf
+        .tensor_data(bytes, name)
+        .map_err(|_| ModelError::Gguf)?;
+    let blocks_per_row = cols / Q4K_BLOCK;
+    let expected_blocks = checked_len(rows, blocks_per_row)?;
+    if data.len() != checked_byte_len(expected_blocks, 144)? {
+        return Err(ModelError::Shape);
+    }
+    let mut blocks = Vec::with_capacity(expected_blocks);
+    for chunk in data.chunks_exact(144) {
+        let scale = u16::from_le_bytes([chunk[0], chunk[1]]);
+        let min = u16::from_le_bytes([chunk[2], chunk[3]]);
+        let mut scales = [0u8; 12];
+        scales.copy_from_slice(&chunk[4..16]);
+        let mut qs = [0u8; 128];
+        qs.copy_from_slice(&chunk[16..144]);
+        blocks.push(q4_k_block_from_gguf(scale, min, scales, qs).map_err(map_quant_error)?);
+    }
+    Ok(Q4KMatrix {
         rows,
         cols,
         blocks_per_row,
@@ -2802,6 +2905,15 @@ mod tests {
         let mut bytes = Vec::new();
         push_q8_tensor(&mut tensors, &mut bytes, "q8.weight", 2, 32, 0x3c00, 2);
         push_q4_tensor(&mut tensors, &mut bytes, "q4.weight", 2, 32, 0x3c00, 0x99);
+        push_q4k_tensor(
+            &mut tensors,
+            &mut bytes,
+            "q4k.weight",
+            (2, 256),
+            (0x3c00, 0x0000),
+            3,
+            2,
+        );
         push_q6k_tensor(
             &mut tensors,
             &mut bytes,
@@ -2814,6 +2926,7 @@ mod tests {
         let gguf = det_gguf::Gguf::from_parts(3, BTreeMap::new(), tensors, 0, bytes.len());
         let q8 = read_weight_matrix(&gguf, &bytes, "q8.weight", 2, 32).expect("q8");
         let q4 = read_weight_matrix(&gguf, &bytes, "q4.weight", 2, 32).expect("q4");
+        let q4k = read_weight_matrix(&gguf, &bytes, "q4k.weight", 2, 256).expect("q4k");
         let q6 = read_weight_matrix(&gguf, &bytes, "q6.weight", 2, 256).expect("q6");
 
         let x = vec![1.0f32; 32];
@@ -2821,19 +2934,25 @@ mod tests {
         let mut y4 = [0.0f32; 2];
         q8.gemv(&x, &mut y8).expect("q8 gemv");
         q4.gemv(&x, &mut y4).expect("q4 gemv");
+        let x4k = vec![1.0f32; 256];
+        let mut y4k = [0.0f32; 2];
+        q4k.gemv(&x4k, &mut y4k).expect("q4k gemv");
         let x6 = vec![1.0f32; 256];
         let mut y6 = [0.0f32; 2];
         q6.gemv(&x6, &mut y6).expect("q6 gemv");
         assert_eq!(q8.row_to_vec(0).expect("row").len(), 32);
         assert_eq!(q4.row_to_vec(0).expect("row").len(), 32);
+        assert_eq!(q4k.row_to_vec(0).expect("row").len(), 256);
         assert_eq!(q6.row_to_vec(0).expect("row").len(), 256);
         assert!(y8
             .iter()
             .chain(y4.iter())
+            .chain(y4k.iter())
             .chain(y6.iter())
             .all(|v| v.is_finite()));
         assert_ne!(y8.map(f32::to_bits), [0u32; 2]);
         assert_ne!(y4.map(f32::to_bits), [0u32; 2]);
+        assert_ne!(y4k.map(f32::to_bits), [0u32; 2]);
         assert_ne!(y6.map(f32::to_bits), [0u32; 2]);
     }
 
@@ -2902,6 +3021,29 @@ mod tests {
             q6.gemv_with_optional_q8a(&x6, Some(&shared), &mut y6_shared),
             Err(ModelError::Shape)
         );
+
+        let q4k = WeightMatrix::Q4K(Q4KMatrix {
+            rows: 2,
+            cols: 256,
+            blocks_per_row: 1,
+            blocks: vec![q4k_block_for_test(0), q4k_block_for_test(1)],
+        });
+        let shared4k = shared_q8a_if_needed(&x6, [&q4k])
+            .expect("q4k shared")
+            .expect("q4k q8a");
+        let mut y4k_standalone = [0.0f32; 2];
+        let mut y4k_shared = [0.0f32; 2];
+        q4k.gemv(&x6, &mut y4k_standalone).expect("q4k standalone");
+        q4k.gemv_with_optional_q8a(&x6, Some(&shared4k), &mut y4k_shared)
+            .expect("q4k shared");
+        assert_eq!(
+            y4k_shared.map(f32::to_bits),
+            y4k_standalone.map(f32::to_bits)
+        );
+        assert_eq!(
+            q4k.gemv_with_optional_q8a(&x6, Some(&shared), &mut y4k_shared),
+            Err(ModelError::Shape)
+        );
     }
 
     #[cfg(all(feature = "parallel", not(target_family = "wasm")))]
@@ -2948,6 +3090,18 @@ mod tests {
         let expected_q4: Vec<f32> = (0..rows)
             .map(|r| dot_q4_0_q8a(&q4.blocks[r..r + 1], &qx).expect("q4 dot"))
             .collect();
+        let cols_k = 256;
+        let xk: Vec<f32> = (0..cols_k).map(|i| ((i as f32) - 127.0) / 33.0).collect();
+        let qxk = quantize_q8a(&xk).expect("q8a k");
+        let q4k = Q4KMatrix {
+            rows,
+            cols: cols_k,
+            blocks_per_row: 1,
+            blocks: (0..rows).map(q4k_block_for_test).collect(),
+        };
+        let expected_q4k: Vec<f32> = (0..rows)
+            .map(|r| dot_q4_k_q8a(&q4k.blocks[r..r + 1], &qxk).expect("q4k dot"))
+            .collect();
 
         for threads in [1usize, 2, 7, 16] {
             let mut out_q8 = vec![0.0f32; rows];
@@ -2969,6 +3123,16 @@ mod tests {
             )
             .expect("parallel q4");
             assert_eq!(bits(&out_q4), bits(&expected_q4));
+
+            let mut out_q4k = vec![0.0f32; rows];
+            gemv_rows_parallel(
+                rows,
+                &mut out_q4k,
+                |r| dot_q4_k_q8a(&q4k.blocks[r..r + 1], &qxk).map_err(map_quant_error),
+                threads,
+            )
+            .expect("parallel q4k");
+            assert_eq!(bits(&out_q4k), bits(&expected_q4k));
         }
     }
 
@@ -2995,6 +3159,35 @@ mod tests {
             *byte = lo | (hi << 4);
         }
         Q4_0Block { d: 0.25, qs }
+    }
+
+    fn q4k_block_for_test(row: usize) -> Q4KBlock {
+        let mut scales = [0u8; 12];
+        for i in 0..4 {
+            let scale = ((row + i + 1) % 16) as u8;
+            let min = ((row + i + 2) % 16) as u8;
+            scales[i] = scale;
+            scales[i + 4] = min;
+        }
+        for i in 4..8 {
+            let scale = ((row + i + 1) % 64) as u8;
+            let min = ((row + i + 2) % 64) as u8;
+            scales[i + 4] = (scale & 0x0f) | ((min & 0x0f) << 4);
+            scales[i - 4] |= (scale >> 4) << 6;
+            scales[i] |= (min >> 4) << 6;
+        }
+        let mut qs = [0u8; 128];
+        for (i, byte) in qs.iter_mut().enumerate() {
+            let lo = ((row * 7 + i) % 16) as u8;
+            let hi = ((row * 11 + i + 3) % 16) as u8;
+            *byte = lo | (hi << 4);
+        }
+        Q4KBlock {
+            d: 0.03125,
+            dmin: 0.015625,
+            scales,
+            qs,
+        }
     }
 
     fn q6_block_for_test(row: usize) -> Q6KBlock {
@@ -3663,6 +3856,41 @@ mod tests {
             bytes.extend_from_slice(&scale_f16.to_le_bytes());
             for _ in 0..16 {
                 bytes.push(packed);
+            }
+        }
+    }
+
+    fn push_q4k_tensor(
+        tensors: &mut Vec<det_gguf::TensorInfo>,
+        bytes: &mut Vec<u8>,
+        name: &str,
+        shape: (usize, usize),
+        scales_f16: (u16, u16),
+        scale: u8,
+        quant: u8,
+    ) {
+        let (rows, cols) = shape;
+        let offset = bytes.len() as u64;
+        tensors.push(det_gguf::TensorInfo {
+            name: name.to_owned(),
+            dimensions: vec![cols as u64, rows as u64],
+            ty: det_gguf::GgmlType::Q4K,
+            offset,
+        });
+        for _ in 0..rows * (cols / Q4K_BLOCK) {
+            bytes.extend_from_slice(&scales_f16.0.to_le_bytes());
+            bytes.extend_from_slice(&scales_f16.1.to_le_bytes());
+            for _ in 0..4 {
+                bytes.push(scale & 0x3f);
+            }
+            for _ in 0..4 {
+                bytes.push(0);
+            }
+            for _ in 0..4 {
+                bytes.push(scale & 0x0f);
+            }
+            for _ in 0..128 {
+                bytes.push((quant & 0x0f) | ((quant & 0x0f) << 4));
             }
         }
     }

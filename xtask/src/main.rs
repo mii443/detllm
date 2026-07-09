@@ -803,6 +803,7 @@ fn tensor_type_supported_for(kind: ExpectedTensorKind, ty: det_gguf::GgmlType) -
                 | det_gguf::GgmlType::F16
                 | det_gguf::GgmlType::Q8_0
                 | det_gguf::GgmlType::Q4_0
+                | det_gguf::GgmlType::Q4K
                 | det_gguf::GgmlType::Q6K
         ),
     }
@@ -3044,6 +3045,14 @@ mod tests {
         assert!(text.contains("model-info tokenizer status=ok kind=byte_fallback"));
         assert!(text.contains(
             "model-info required-tensors status=ok checked=12 missing=0 shape_mismatch=0 unsupported_type=0 tied_output=false"
+        ));
+    }
+
+    #[test]
+    fn model_info_treats_q4k_as_supported_weight_matrix() {
+        assert!(tensor_type_supported_for(
+            ExpectedTensorKind::WeightMatrix,
+            det_gguf::GgmlType::Q4K
         ));
     }
 

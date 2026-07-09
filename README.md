@@ -3,8 +3,8 @@
 `detllm` is a deterministic Rust LLM inference and lossless compression
 prototype based on the normative design in [detllm-design.md](detllm-design.md).
 The current implementation focuses on bit-identical CPU logits/CDF generation
-for a Llama-style decoder model, GGUF `F32` / `Q8_0` / `Q4_0` / `Q6_K`
-tensor loading, and a range-coder-backed `compress` / `decompress` CLI.
+for a Llama-style decoder model, GGUF `F32` / `Q8_0` / `Q4_0` / `Q4_K` /
+`Q6_K` tensor loading, and a range-coder-backed `compress` / `decompress` CLI.
 
 ## Current Status
 
@@ -12,15 +12,15 @@ Implemented crates:
 
 - `det-num`: fixed-order reductions, deterministic rounding, f16 conversion,
   vendored libm `exp`/`sin`/`cos`/`log`, SHA-256, numeric canary.
-- `det-quant`: `Q8_0`, `Q4_0`, `Q6_K`, in-memory `Q8A`, scalar and `simd`
-  feature kernels with bit-hash coverage.
+- `det-quant`: `Q8_0`, `Q4_0`, scalar `Q4_K`, `Q6_K`, in-memory `Q8A`, and
+  `simd` feature kernels for the block formats covered by the quant hash.
 - `det-gguf`: zero-copy GGUF metadata and tensor parsing for repository
   fixtures.
 - `det-token`: byte fallback, SentencePiece-style, and GPT-2-style tokenizer
   paths used by the v1 target models.
 - `det-model`: deterministic Llama-style single-token forward pass, RMSNorm,
-  RoPE, GQA attention, SwiGLU, F32/Q8/Q4/Q6_K GEMV, `parallel` feature row
-  partitioning, and logits hashing.
+  RoPE, GQA attention, SwiGLU, F32/Q8/Q4/Q4_K/Q6_K GEMV, `parallel` feature
+  row partitioning, and logits hashing.
 - `det-coder`: logits-to-CDF conversion, 64-bit range coder, and DTLZ header.
 - `det-cli`: `selftest`, `gguf-dump`, `sha256`, `tokenize`, `logits`,
   `compress`, and `decompress`.
@@ -108,7 +108,8 @@ the following acceptance evidence is still missing:
 
 - SmolLM2 full codec validation with a tokenizer/model source that covers all
   256 input bytes; tested Unsloth, bartowski, and HuggingFaceTB GGUFs expose
-  21 missing byte tokens.
+  21 missing byte tokens. HuggingFaceTB Q4_K_M tensor types now pass
+  `model-info --metadata-prefix`; byte coverage remains the blocker.
 - Further SmolLM2 reference-quality work remains: three-token raw-logits
   evidence passes the 0.999 cosine threshold, and 8-token log-probability target
   checks pass, but the current 8-token raw-logits comparison is below the 0.999

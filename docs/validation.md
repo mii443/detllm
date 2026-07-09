@@ -138,6 +138,11 @@ ambiguous byte region.
 dense tensor byte-length checks, quantized block counts, and public GGUF GEMV
 shape checks use checked `usize` arithmetic and return `ModelError::Shape` on
 overflow.
+GGUF `Q4_K` weight matrices are accepted alongside `Q8_0`, `Q4_0`, and `Q6_K`.
+The scalar Q4_K path follows the GGML 256-value block layout (`d`, `dmin`,
+12-byte scale/min table, and 128 packed quant bytes), and unit tests cover the
+scale/min bit unpacking, Q8A dot path, row dequantization, shared-Q8A GEMV, and
+parallel row partitioning invariance.
 
 ## RoPE Kernel Order
 
@@ -733,11 +738,22 @@ Observed HuggingFaceTB Q4_K_M prefix result:
 
 ```text
 model-info path=/tmp/smollm2-hftb-q4-prefix.gguf bytes=4194304 sha256=278ab31551e6bef87bdbdfdb6d283c7515e5059016f19dee4cc4c26d2d4ed8ae metadata_prefix=true gguf_version=3 metadata=34 tensors=218 data_offset=1782464
+model-info metadata key=general.architecture string=llama
 model-info metadata key=general.name string=Smollm2 1.7B 8k Mix7 Ep2 v2
+model-info metadata key=tokenizer.ggml.model string=gpt2
+model-info metadata key=llama.vocab_size u32=49152
+model-info metadata key=tokenizer.ggml.add_bos_token bool=false
+model-info metadata key=tokenizer.ggml.bos_token_id u32=1
+model-info metadata key=tokenizer.ggml.eos_token_id u32=2
+model-info metadata key=tokenizer.ggml.tokens array<string>[49152]
+model-info metadata key=tokenizer.ggml.merges array<string>[48900]
+model-info metadata key=tokenizer.ggml.token_type array<i32>[49152]
 model-info tokenizer status=error error=IncompleteByteFallback
 model-info byte-coverage tokens=49152 single_byte=235 emittable_single_byte=235 missing=21 missing_emittable=21 missing_first=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,... missing_emittable_first=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,...
+model-info config status=ok block_count=24 embedding_length=2048 feed_forward_length=8192 head_count=32 head_count_kv=32 context_length=8192 rope_dimension_count=64 rope_pairing=Adjacent rope_freq_base=130000.0 rms_epsilon=1e-5 attention_scale=0.125
 model-info tensor-inventory total=218 encoded_bytes=1053827072 encoded_len_errors=0 F32=49 Q4_K=144 Q6_K=25
-model-info required-tensors status=error checked=218 missing=0 shape_mismatch=0 unsupported_type=169 tied_output=true
+model-info vocab status=ok tokenizer=49152 model=49152 codec_max_symbols=262144
+model-info required-tensors status=ok checked=218 missing=0 shape_mismatch=0 unsupported_type=0 tied_output=true
 ```
 
 Minimal logits smoke:
