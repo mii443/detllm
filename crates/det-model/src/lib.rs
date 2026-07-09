@@ -2168,6 +2168,10 @@ fn attention_one_head(
     let kv_head = head / (config.head_count / config.head_count_kv);
     let key_window = cache.key_prefix(layer_idx, kv_head, score_len)?;
     let value_window = cache.value_prefix(layer_idx, kv_head, score_len)?;
+    if score_len == 1 {
+        out_head.copy_from_slice(value_window);
+        return Ok(());
+    }
     attention_scores_one_head_scaled(
         qh,
         key_window,
@@ -2248,6 +2252,10 @@ pub fn attention_weighted_value(
     if p.iter().chain(values).any(|v| !v.is_finite()) {
         return Err(ModelError::NonFinite);
     }
+    if p.len() == 1 {
+        out.copy_from_slice(values);
+        return Ok(());
+    }
     out.fill(0.0);
     for (j, value) in values.chunks_exact(head_dim).enumerate() {
         let pj = p[j];
@@ -2309,6 +2317,16 @@ mod tests {
         let z = det_num::sum_f32_ref(&x);
         assert!((z - 1.0).abs() < 0.000001);
         assert_eq!(x[3].to_bits(), x[5].to_bits());
+    }
+
+    #[test]
+    fn single_value_attention_copies_value_bits() {
+        let values = [1.25f32, -0.0, f32::from_bits(0x3eaaaaab), -8.5];
+        let mut out = [0.0; 4];
+        attention_weighted_value(&[1.0], &values, 4, &mut out).expect("weighted value");
+        let got = out.map(f32::to_bits);
+        let expected = values.map(f32::to_bits);
+        assert_eq!(got, expected);
     }
 
     #[test]
