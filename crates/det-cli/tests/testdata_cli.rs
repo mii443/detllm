@@ -33,7 +33,7 @@ fn logits_hash_matches_testdata_golden_through_cli() {
         ),
     ] {
         let expected = fs::read_to_string(root.join(hash)).expect("golden hash");
-        for threads in ["1", "7"] {
+        for threads in ["1", "2", "7", "16"] {
             for chunk_size in ["1", "2", "3", "6"] {
                 let output = Command::new(detllm())
                     .current_dir(&root)
