@@ -181,6 +181,15 @@ Qwen2.5 Q8_0 64-token encode-only preflight with `--estimate-full-run` reports
 279,472 full tokens for the first 1MB and estimates the measured encode loop at
 about 52,926 seconds, or roughly 15 hours, on this host.
 
+Production-shape prefix round-trip on the same host, using
+`scripts/run-target-full-bench.sh`, enwik8 first-1MB tokenization,
+`--limit-tokens 512`, `--n-ctx 2048`, `--threads 8`, and default round-trip
+mode:
+
+| check | measured bytes | payload bpb | DTLZ bpb | round-trip throughput |
+|---|---:|---:|---:|---:|
+| Qwen2.5 Q8_0 | 1702 | 0.390129 | 0.653349 | 2.554 tokens/s |
+
 Target-model raw-logits reference smoke, using
 `scripts/run-target-logits-broad-matrix.sh`, checks the same four external GGUFs
 against llama.cpp on both a short low-level token stream and the tokenizer-backed

@@ -1359,6 +1359,31 @@ This is target-model throughput and prefix compression smoke evidence for the
 current GGUF matrix. Because `--limit-tokens 64` is set, it is not the final
 M4 enwik8 first-1MB compression-rate acceptance measurement.
 
+Production-shape Qwen2.5 Q8_0 prefix round-trip with `n_ctx=2048`:
+
+```sh
+scripts/run-target-full-bench.sh --model /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --input /tmp/enwik8 --name qwen25-q8-first1m-c512-roundtrip --limit-tokens 512 --n-ctx 2048 --threads 8 --progress-every 64
+```
+
+Completed locally on 2026-07-10. The wrapper wrote the combined progress log
+to `/tmp/detllm-target-bench/qwen25-q8-first1m-c512-roundtrip.log` and the
+stable summary to
+`/tmp/detllm-target-bench/qwen25-q8-first1m-c512-roundtrip.summary`.
+
+```text
+bench-file-progress phase=encode tokens_done=512 tokens_total=512 elapsed_ms=99892.145 tokens_per_s=5.126 remaining_s=0.000 estimated_total_s=99.892
+bench-file-progress phase=decode tokens_done=512 tokens_total=512 elapsed_ms=100346.083 tokens_per_s=5.102 remaining_s=0.000 estimated_total_s=100.346
+bench-file model=/tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=512 iters=1 warmup=false mode=round-trip threads=8 n_ctx=2048 overlap=512 model_sha256=d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8 input_sha256=00474457a0a2b7dab617ddacdab2d0b84ae7de61080c41c57aea1250c7a8413a
+bench-file: source_input_bytes=100000000 measured_input_bytes=1702 total_input_bytes=1702 tokenized_tokens=279472 tokens=512 total_tokens=512 payload_bytes=83 dtlz_bytes=139 payload_bits_per_byte=0.390129 dtlz_bits_per_byte=0.653349 compression_ratio=0.081669 elapsed_ms=200446.456 input_bytes_per_s=8.491 tokens_per_s=2.554
+bench-file-phases: model_read_ms=3148.833 gguf_parse_ms=26.912 model_load_ms=2167.147 tokenizer_setup_ms=372.169 input_read_ms=31.223 tokenize_ms=1497.431 token_prefix_ms=0.246 warmup_ms=0.000 measured_ms=200446.456 total_ms=213782.146
+```
+
+This run uses the final wrapper's production context shape and default
+round-trip verification, so it proves byte equality for a larger first-1MB
+prefix than the 64-token encode-only matrix. Because `--limit-tokens 512` is
+still set, it remains prefix evidence rather than the final full-token M4
+compression-rate measurement.
+
 Current-format Qwen2.5 preflight with a one-token measured prefix records the
 full first-1MB tokenization size:
 
