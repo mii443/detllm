@@ -51,6 +51,7 @@ cargo run --release -p xtask --features parallel,simd -- bench-file --model mode
 scripts/run-target-bench-smoke.sh --input /tmp/enwik8 --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
 scripts/run-target-determinism-matrix.sh --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
 scripts/run-target-codec-determinism-matrix.sh --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
+scripts/run-target-logprob-matrix.sh --tinyllama-q8 tinyllama-q8.gguf --tinyllama-q4 tinyllama-q4.gguf --qwen25-q8 qwen25-q8.gguf --smollm2-q8 smollm2-q8.gguf
 cargo run -p det-cli -- tokenize -m model.gguf -p "prompt text"
 scripts/reference_logits_transformers.py --model-id TinyLlama/TinyLlama-1.1B-Chat-v1.0 --tokens 1,2,3 --out hf.logits.bin --expected-rows 3 --expected-vocab 32000
 c++ -std=c++17 -O2 -I/usr/local/include scripts/reference_logits_llamacpp.cpp -L/usr/local/lib -Wl,-rpath,/usr/local/lib -lllama -lggml -lggml-cpu -lggml-base -o /tmp/reference_logits_llamacpp
@@ -178,8 +179,8 @@ the following acceptance evidence is still missing:
 
 - Broader target-model reference-quality checks are still needed beyond the
   current scripted TinyLlama Q8_0/Q4_0, Qwen2.5 Q8_0, and SmolLM2 Q8_0
-  tokenizer-backed 8-token raw-logits matrix, logits/log-probability smoke
-  evidence, and the scripted target-model
+  tokenizer-backed 8-token raw-logits and llama.cpp log-probability matrices,
+  plus the scripted target-model
   empty/multilingual/binary/context-spanning round-trip and
   logits/thread/chunk-size and codec/thread determinism matrices.
 - Target-model enwik8 first-1MB compression-rate measurement with

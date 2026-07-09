@@ -1544,6 +1544,32 @@ full-distribution and target-token differences. Because llama.cpp clips the
 saved distribution tail to a 16-nat band before uint16 encoding, the target
 token metric is the thresholded reference check for perplexity-path parity.
 
+The reproducible target-model wrapper is:
+
+```sh
+scripts/run-target-logprob-matrix.sh --tinyllama-q8 /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf --tinyllama-q4 /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf --qwen25-q8 /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --smollm2-q8 /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf
+```
+
+It runs `llama-perplexity --save-all-logits` for each model with the same
+two-chunk validation prompt used below, then checks each dump with `xtask
+compare-llamacpp-logprobs --max-target-abs-diff 0.2`. This makes the
+perplexity-path reference-quality evidence reproducible in the same style as
+the raw-logits, round-trip, logits determinism, codec determinism, and
+bench-file target-model matrices.
+
+Observed scripted matrix output:
+
+```text
+== tinyllama-q8 ==
+compare-llamacpp-logprobs chunks=2 n_ctx=8 vocab=32000 rows=6 values=192000 add_bos=true bos_token=1 max_abs_diff=10.164945602 rms_diff=0.897793605 max_target_abs_diff=0.046883583
+== tinyllama-q4 ==
+compare-llamacpp-logprobs chunks=2 n_ctx=8 vocab=32000 rows=6 values=192000 add_bos=true bos_token=1 max_abs_diff=11.470438004 rms_diff=1.231016547 max_target_abs_diff=0.110750198
+== qwen25-q8 ==
+compare-llamacpp-logprobs chunks=2 n_ctx=8 vocab=151936 rows=6 values=911616 add_bos=false bos_token=151643 max_abs_diff=9.196472168 rms_diff=1.153243597 max_target_abs_diff=0.111948490
+== smollm2-q8 ==
+compare-llamacpp-logprobs chunks=2 n_ctx=8 vocab=49152 rows=6 values=294912 add_bos=false bos_token=1 max_abs_diff=12.659570694 rms_diff=0.653486127 max_target_abs_diff=0.076397419
+```
+
 TinyLlama Q8_0 llama.cpp reference command:
 
 ```sh
