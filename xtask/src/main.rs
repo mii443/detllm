@@ -1818,15 +1818,15 @@ fn validate_ci_workflow_text(text: &str) -> Result<(), String> {
         ),
         (
             "nightly TinyLlama logits smoke",
-            "cargo run -p det-cli -- logits -m \"$TINYLLAMA_GGUF\" --tokens 1,2,3 --hash --threads 2",
+            "cargo run --release -p det-cli -- logits -m \"$TINYLLAMA_GGUF\" --tokens 1,2,3 --hash --threads 2",
         ),
         (
             "nightly TinyLlama compress smoke",
-            "cargo run -p det-cli -- compress -m \"$TINYLLAMA_GGUF\"",
+            "cargo run --release -p det-cli -- compress -m \"$TINYLLAMA_GGUF\"",
         ),
         (
             "nightly TinyLlama decompress smoke",
-            "cargo run -p det-cli -- decompress -m \"$TINYLLAMA_GGUF\"",
+            "cargo run --release -p det-cli -- decompress -m \"$TINYLLAMA_GGUF\"",
         ),
         ("native x86_64-linux target", "name: x86_64-linux"),
         ("native aarch64-macos target", "name: aarch64-macos"),
@@ -4081,9 +4081,9 @@ jobs:
     steps:
       - run: curl -fL --retry 10 --retry-all-errors --retry-delay 10 --retry-max-time 900 https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q8_0.gguf -o "$TINYLLAMA_GGUF"
       - run: cargo run -p xtask -- model-info --model "$TINYLLAMA_GGUF"
-      - run: cargo run -p det-cli -- logits -m "$TINYLLAMA_GGUF" --tokens 1,2,3 --hash --threads 2
-      - run: cargo run -p det-cli -- compress -m "$TINYLLAMA_GGUF" -i /tmp/detllm-nightly-input.txt -o /tmp/detllm-nightly-output.dtlz --n-ctx 16 --threads 2
-      - run: cargo run -p det-cli -- decompress -m "$TINYLLAMA_GGUF" -i /tmp/detllm-nightly-output.dtlz -o /tmp/detllm-nightly-restored.txt --threads 2
+      - run: cargo run --release -p det-cli -- logits -m "$TINYLLAMA_GGUF" --tokens 1,2,3 --hash --threads 2
+      - run: cargo run --release -p det-cli -- compress -m "$TINYLLAMA_GGUF" -i /tmp/detllm-nightly-input.txt -o /tmp/detllm-nightly-output.dtlz --n-ctx 8 --threads 2
+      - run: cargo run --release -p det-cli -- decompress -m "$TINYLLAMA_GGUF" -i /tmp/detllm-nightly-output.dtlz -o /tmp/detllm-nightly-restored.txt --threads 2
 "#
     }
 

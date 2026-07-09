@@ -1851,9 +1851,10 @@ runs only from the nightly `schedule` trigger or from `workflow_dispatch` when
 
 ```sh
 cargo run -p xtask -- model-info --model "$TINYLLAMA_GGUF"
-cargo run -p det-cli -- logits -m "$TINYLLAMA_GGUF" --tokens 1,2,3 --hash --threads 2
-cargo run -p det-cli -- compress -m "$TINYLLAMA_GGUF" -i /tmp/detllm-nightly-input.txt -o /tmp/detllm-nightly-output.dtlz --n-ctx 16 --threads 2
-cargo run -p det-cli -- decompress -m "$TINYLLAMA_GGUF" -i /tmp/detllm-nightly-output.dtlz -o /tmp/detllm-nightly-restored.txt --threads 2
+cargo run --release -p det-cli -- logits -m "$TINYLLAMA_GGUF" --tokens 1,2,3 --hash --threads 2
+printf 'Hi\n' > /tmp/detllm-nightly-input.txt
+cargo run --release -p det-cli -- compress -m "$TINYLLAMA_GGUF" -i /tmp/detllm-nightly-input.txt -o /tmp/detllm-nightly-output.dtlz --n-ctx 8 --threads 2
+cargo run --release -p det-cli -- decompress -m "$TINYLLAMA_GGUF" -i /tmp/detllm-nightly-output.dtlz -o /tmp/detllm-nightly-restored.txt --threads 2
 cmp /tmp/detllm-nightly-input.txt /tmp/detllm-nightly-restored.txt
 ```
 
