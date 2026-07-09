@@ -803,6 +803,7 @@ fn tensor_type_supported_for(kind: ExpectedTensorKind, ty: det_gguf::GgmlType) -
                 | det_gguf::GgmlType::F16
                 | det_gguf::GgmlType::Q8_0
                 | det_gguf::GgmlType::Q4_0
+                | det_gguf::GgmlType::Q6K
         ),
     }
 }

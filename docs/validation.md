@@ -258,7 +258,7 @@ cargo run -p det-cli -- quant-kernel-hash
 Observed hash:
 
 ```text
-00e322328d3715795f4dddd8a658e60f9955d1356d5e4da7c65c2c7bfae5cdd8
+6877539a54fd2094f5899b8b373c907b98806ff3004d0bc43a998ffb88d80fff
 ```
 
 `det-quant` rejects non-finite Q8A activation inputs before quantization.
@@ -278,12 +278,13 @@ returning an unchecked result.
 `det-model` maps those quantized-dot failures to `ModelError::NonFinite`, and
 its GEMV boundary test covers finite Q8/Q4 inputs that overflow during the
 quantized dot path.
-The CLI startup runtime canary also hashes a fixed set of Q8_0/Q4_0 block-dot
+The CLI startup runtime canary also hashes a fixed set of Q8_0/Q4_0/Q6_K block-dot
 outputs before executing normal commands, so a broken selected quantized dot
 backend is caught by `selftest` and by ordinary CLI entry points, not only by
 the separate `quant-kernel-hash` diagnostic command. `quant-kernel-hash`
-itself covers 1,000,000 deterministic Q8_0/Q4_0 block cases, and local scalar
-and AVX2 SIMD runs produced the same hash shown above.
+itself covers 1,000,000 deterministic Q8_0/Q4_0 block cases plus 4,096
+deterministic Q6_K block cases, and local scalar and AVX2 SIMD runs produced
+the same hash shown above.
 The `shared_q8a_path_matches_standalone_quantized_gemv` test fixes the
 `detllm-design.md` §5.2 quantization timing rule: one Q8A activation buffer is
 created for mixed F32/quantized projection groups when any matrix needs it,
@@ -495,23 +496,39 @@ Source:
 - Repository: <https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF>
 - Supported model file:
   `tinyllama-1.1b-chat-v1.0.Q8_0.gguf`
-- Incompatible intake probe:
+- Additional supported model file:
   `tinyllama-1.1b-chat-v1.0.Q4_0.gguf`
 
-The Q4_0 file was useful for parser coverage but is not a v1 inference target:
-it contains one `Q6_K` tensor for `output.weight`. `det-gguf` now knows the
-standard GGML K-quant tensor block sizes so `model-info` can parse and report
-this accurately, while `det-model` still rejects the tensor for inference
-because `detllm-design.md` v1 only supports `F32`, `F16` dense loading,
-`Q8_0`, and `Q4_0` inference tensors.
+The Q4_0 file contains one `Q6_K` tensor for `output.weight`, so it exercises
+both the corrected GGML Q4_0 low-half/high-half nibble order and the scalar
+Q6_K output projection path.
 
 Observed Q4_0 intake result:
 
 ```text
 model-info path=/tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf bytes=637699456 sha256=da3087fb14aede55fde6eb81a0e55e886810e43509ec82ecdc7aa5d62a03b556 metadata_prefix=false gguf_version=3 metadata=23 tensors=201 data_offset=1709440
+model-info tokenizer status=ok kind=sentencepiece
+model-info byte-coverage tokens=32000 single_byte=488 emittable_single_byte=488 missing=0 missing_emittable=0 missing_first=none missing_emittable_first=none
+model-info config status=ok block_count=22 embedding_length=2048 feed_forward_length=5632 head_count=32 head_count_kv=4 context_length=2048 rope_dimension_count=64 rope_pairing=Adjacent rope_freq_base=10000.0 rms_epsilon=1e-5 attention_scale=0.125
 model-info tensor-inventory total=201 encoded_bytes=635990016 encoded_len_errors=0 F32=45 Q4_0=155 Q6_K=1
-model-info tensor-issue name=output.weight issue=unsupported_type type=Q6_K
-model-info required-tensors status=error checked=201 missing=0 shape_mismatch=0 unsupported_type=1 tied_output=false
+model-info vocab status=ok tokenizer=32000 model=32000 codec_max_symbols=262144
+model-info required-tensors status=ok checked=201 missing=0 shape_mismatch=0 unsupported_type=0 tied_output=false
+```
+
+Observed Q4_0 logits smoke:
+
+```sh
+cargo run --release -p det-cli -- logits -m /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf --tokens 1 --hash --threads 8
+cargo run --release -p det-cli -- logits -m /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf --tokens 1,2,3 --hash --chunk-size 1 --threads 8
+cargo run --release -p det-cli -- logits -m /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf --tokens 1,2,3 --hash --chunk-size 3 --threads 8
+```
+
+Observed output:
+
+```text
+tokens=1 hash = 7c363b2f787ac063c88c756554075e201d022843058375ff4d548e7d2b8d4468
+tokens=1,2,3 chunk-size=1 hash = c4dfabb1dfbafb4dca04a24f63ee4e7f3be1f39e98c0c46bbe68d02c2ee173ca
+tokens=1,2,3 chunk-size=3 hash = c4dfabb1dfbafb4dca04a24f63ee4e7f3be1f39e98c0c46bbe68d02c2ee173ca
 ```
 
 Observed Unsloth Q8_0 intake result:
@@ -805,9 +822,10 @@ changing the model vocabulary.
 
 ### Target-Model Mixed-Byte Round-Trip Smoke
 
-TinyLlama Q8_0 and Qwen2.5 Q8_0 both expose complete byte coverage, so they can
-exercise the public `compress` / `decompress` CLI on byte data that is not just
-plain UTF-8 text. The smoke input includes `00 ff c0 04` bytes:
+TinyLlama Q8_0, TinyLlama Q4_0, and Qwen2.5 Q8_0 expose complete byte
+coverage, so they can exercise the public `compress` / `decompress` CLI on
+byte data that is not just plain UTF-8 text. The smoke input includes
+`00 ff c0 04` bytes:
 
 ```sh
 mkdir -p /tmp/detllm-roundtrip
@@ -846,6 +864,26 @@ Observed output:
 115 total
 ```
 
+TinyLlama Q4_0:
+
+```sh
+cargo run --release -p det-cli -- compress -m /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf -i /tmp/detllm-roundtrip/mixed.bin -o /tmp/detllm-roundtrip/tinyllama-q4-mixed.dtlz --n-ctx 32 --threads 8
+cargo run --release -p det-cli -- decompress -m /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf -i /tmp/detllm-roundtrip/tinyllama-q4-mixed.dtlz -o /tmp/detllm-roundtrip/tinyllama-q4-mixed.restored --threads 8
+cmp /tmp/detllm-roundtrip/mixed.bin /tmp/detllm-roundtrip/tinyllama-q4-mixed.restored
+sha256sum /tmp/detllm-roundtrip/tinyllama-q4-mixed.dtlz /tmp/detllm-roundtrip/tinyllama-q4-mixed.restored
+wc -c /tmp/detllm-roundtrip/tinyllama-q4-mixed.dtlz /tmp/detllm-roundtrip/tinyllama-q4-mixed.restored
+```
+
+Observed output:
+
+```text
+2e5f0f59a807442a66f4a55e3d9922af909f07ad9a25b15d40d051cdf3ad5826  /tmp/detllm-roundtrip/tinyllama-q4-mixed.dtlz
+458b71a7d9440b62ec2e34688a788980d90a4d872151d0634bb8e5402108b5a8  /tmp/detllm-roundtrip/tinyllama-q4-mixed.restored
+ 86 /tmp/detllm-roundtrip/tinyllama-q4-mixed.dtlz
+ 28 /tmp/detllm-roundtrip/tinyllama-q4-mixed.restored
+114 total
+```
+
 Qwen2.5 Q8_0:
 
 ```sh
@@ -866,8 +904,8 @@ f299ca7a17cf05bbb081f6c044b5c054fdce0c34d96ee7002f9784d66c60515e  /tmp/detllm-ro
 113 total
 ```
 
-This is target-model arbitrary-byte round-trip smoke evidence for two complete
-byte-coverage GGUFs. It does not replace the larger §9.7 matrix over empty,
+This is target-model arbitrary-byte round-trip smoke evidence for three
+complete byte-coverage GGUFs. It does not replace the larger §9.7 matrix over empty,
 multilingual, binary-mixed, and context-spanning inputs for every target model
 and quantization.
 
@@ -1105,6 +1143,22 @@ reference_logits_llamacpp rows=3 vocab=32000 values=96000
 compare-logits values=96000 cosine=0.999815074 max_abs_diff=0.364835739 rms_diff=0.057082669 rows=3 row_size=32000 min_row_cosine=0.999729601
 ```
 
+TinyLlama Q4_0 llama.cpp raw-logits reference command:
+
+```sh
+cargo run --release -p det-cli -- logits -m /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf --tokens 1,2,3 --dump /tmp/detllm-tinyllama-q4-123.rawlogits.bin --hash --threads 8
+/tmp/reference_logits_llamacpp --model /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf --tokens 1,2,3 --out /tmp/llamacpp-tinyllama-q4-123.rawlogits.bin --threads 8 --ctx-size 16 --batch-size 16 --expected-vocab 32000 --expected-rows 3 --quiet
+cargo run --release -p xtask -- compare-logits --actual /tmp/detllm-tinyllama-q4-123.rawlogits.bin --reference /tmp/llamacpp-tinyllama-q4-123.rawlogits.bin --row-size 32000 --rows 3 --min-cosine 0.999
+```
+
+Observed output:
+
+```text
+c4dfabb1dfbafb4dca04a24f63ee4e7f3be1f39e98c0c46bbe68d02c2ee173ca
+reference_logits_llamacpp rows=3 vocab=32000 values=96000
+compare-logits values=96000 cosine=0.999642502 max_abs_diff=0.399452567 rms_diff=0.064845670 rows=3 row_size=32000 min_row_cosine=0.999283806
+```
+
 TinyLlama Q8_0 longer 8-token text raw-logits reference command:
 
 ```sh
@@ -1270,7 +1324,7 @@ Observed wasm hashes:
 |---|---|
 | `tiny-f32` logits | `92a0280149c6b1505c84dce0d19486a2093f93b7978b579c220000d12e4ef7e7` |
 | `tiny-qmix` logits | `8a34d3c4a05e9a30b90aadcdca7b6bac91655e6ab67980ccdb6726565d35f3e4` |
-| quant kernel | `00e322328d3715795f4dddd8a658e60f9955d1356d5e4da7c65c2c7bfae5cdd8` |
+| quant kernel | `6877539a54fd2094f5899b8b373c907b98806ff3004d0bc43a998ffb88d80fff` |
 
 The same local run also compressed and decompressed `testdata/tiny.tokens.txt`
 through wasmtime for both bundled fixtures and verified byte equality with

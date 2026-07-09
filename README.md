@@ -3,8 +3,8 @@
 `detllm` is a deterministic Rust LLM inference and lossless compression
 prototype based on the normative design in [detllm-design.md](detllm-design.md).
 The current implementation focuses on bit-identical CPU logits/CDF generation
-for a Llama-style decoder model, GGUF `F32` / `Q8_0` / `Q4_0` tensor loading,
-and a range-coder-backed `compress` / `decompress` CLI.
+for a Llama-style decoder model, GGUF `F32` / `Q8_0` / `Q4_0` / `Q6_K`
+tensor loading, and a range-coder-backed `compress` / `decompress` CLI.
 
 ## Current Status
 
@@ -12,14 +12,14 @@ Implemented crates:
 
 - `det-num`: fixed-order reductions, deterministic rounding, f16 conversion,
   vendored libm `exp`/`sin`/`cos`/`log`, SHA-256, numeric canary.
-- `det-quant`: `Q8_0`, `Q4_0`, in-memory `Q8A`, scalar and `simd` feature
-  kernels with bit-hash coverage.
+- `det-quant`: `Q8_0`, `Q4_0`, `Q6_K`, in-memory `Q8A`, scalar and `simd`
+  feature kernels with bit-hash coverage.
 - `det-gguf`: zero-copy GGUF metadata and tensor parsing for repository
   fixtures.
 - `det-token`: byte fallback, SentencePiece-style, and GPT-2-style tokenizer
   paths used by the v1 target models.
 - `det-model`: deterministic Llama-style single-token forward pass, RMSNorm,
-  RoPE, GQA attention, SwiGLU, F32/Q8/Q4 GEMV, `parallel` feature row
+  RoPE, GQA attention, SwiGLU, F32/Q8/Q4/Q6_K GEMV, `parallel` feature row
   partitioning, and logits hashing.
 - `det-coder`: logits-to-CDF conversion, 64-bit range coder, and DTLZ header.
 - `det-cli`: `selftest`, `gguf-dump`, `sha256`, `tokenize`, `logits`,
@@ -114,7 +114,7 @@ the following acceptance evidence is still missing:
   checks pass, but the current 8-token raw-logits comparison is below the 0.999
   per-row cosine target. Broader target-model checks are also still needed
   beyond the current TinyLlama/Qwen2.5/SmolLM2 logits/log-probability smoke
-  evidence and TinyLlama/Qwen2.5 mixed-byte round-trip smoke.
+  evidence and TinyLlama Q8/Q4 plus Qwen2.5 mixed-byte round-trip smoke.
 - Target-model enwik8 first-1MB compression-rate measurement with
   `xtask bench-file`; the bundled tiny fixture has input-scale enwik8 evidence.
 - Broader benchmark results on real target hardware beyond the current bundled
