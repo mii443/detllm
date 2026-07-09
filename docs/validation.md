@@ -171,8 +171,8 @@ multi-token KV-cache run.
 Attention now reads contiguous KV-cache prefixes directly instead of copying
 the key/value window into scratch buffers for every layer/head. With the
 `parallel` feature, attention scratch is split per head so independent heads
-can run in parallel while each head keeps its score softmax and value
-accumulation order. The unit test
+can run in parallel for larger attention windows while each head keeps its
+score softmax and value accumulation order. The unit test
 `kv_cache_prefix_slices_are_contiguous_and_bounds_checked` covers the direct
 prefix-slice layout and rejects malformed prefix requests.
 Size arithmetic for RoPE tables and logits dumps is checked before allocation.
@@ -1020,13 +1020,13 @@ cargo run --release -p xtask --features parallel,simd -- bench-file --model /tmp
 ```
 
 ```text
-bench-file-progress phase=encode tokens_done=8 tokens_total=16 elapsed_ms=1207.522 tokens_per_s=6.625
-bench-file-progress phase=encode tokens_done=16 tokens_total=16 elapsed_ms=2332.724 tokens_per_s=6.859
-bench-file-progress phase=decode tokens_done=8 tokens_total=16 elapsed_ms=1100.265 tokens_per_s=7.271
-bench-file-progress phase=decode tokens_done=16 tokens_total=16 elapsed_ms=2213.938 tokens_per_s=7.227
+bench-file-progress phase=encode tokens_done=8 tokens_total=16 elapsed_ms=1024.279 tokens_per_s=7.810
+bench-file-progress phase=encode tokens_done=16 tokens_total=16 elapsed_ms=2068.217 tokens_per_s=7.736
+bench-file-progress phase=decode tokens_done=8 tokens_total=16 elapsed_ms=1035.963 tokens_per_s=7.722
+bench-file-progress phase=decode tokens_done=16 tokens_total=16 elapsed_ms=2049.644 tokens_per_s=7.806
 bench-file model=/tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=16 iters=1 warmup=false threads=8 n_ctx=64 overlap=16 model_sha256=d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8 input_sha256=4fe5a21798e43c8258edcf9f3a98fac2df77613b4d2add15a2a3082eedc7b0b2
-bench-file: source_input_bytes=100000000 measured_input_bytes=53 total_input_bytes=53 tokens=16 total_tokens=16 payload_bytes=14 dtlz_bytes=70 payload_bits_per_byte=2.113208 dtlz_bits_per_byte=10.566038 compression_ratio=1.320755 elapsed_ms=4663.093 input_bytes_per_s=11.366 tokens_per_s=3.431
-bench-file-phases: model_read_ms=1642.065 gguf_parse_ms=21.957 model_load_ms=2151.760 tokenizer_setup_ms=265.591 input_read_ms=104.848 tokenize_ms=962.157 token_prefix_ms=9.883 warmup_ms=0.000 measured_ms=4663.093 total_ms=15459.201
+bench-file: source_input_bytes=100000000 measured_input_bytes=53 total_input_bytes=53 tokens=16 total_tokens=16 payload_bytes=14 dtlz_bytes=70 payload_bits_per_byte=2.113208 dtlz_bits_per_byte=10.566038 compression_ratio=1.320755 elapsed_ms=4245.398 input_bytes_per_s=12.484 tokens_per_s=3.769
+bench-file-phases: model_read_ms=2203.318 gguf_parse_ms=30.830 model_load_ms=2247.226 tokenizer_setup_ms=284.216 input_read_ms=118.886 tokenize_ms=913.220 token_prefix_ms=9.846 warmup_ms=0.000 measured_ms=4245.398 total_ms=15570.105
 ```
 
 This is input-scale and round-trip evidence for the `bench-file`
@@ -1067,7 +1067,7 @@ stderr every N encode/decode tokens and at phase completion; the stdout summary
 lines remain stable for copying into this file. The Qwen2.5 prefix run above
 shows 1MB ByteBPE tokenization is below one second; after streaming KV-cache
 reuse and validated-model hot-path checks, the 16-token measured encode/decode
-loop is roughly 4.7 seconds. The model forward path also reuses
+loop is roughly 4.2 seconds. The model forward path also reuses
 `ForwardWorkspace` scratch buffers across tokens, avoiding per-token allocation
 of the large hidden-state, projection, attention, and feed-forward vectors, and
 uses layout checks for already-loaded models instead of re-scanning all weight
@@ -1081,10 +1081,10 @@ validation scan on every decoded token while leaving the public validating
 `symbol_for` helper available for untrusted tables. With the `parallel`
 feature, row-parallel GEMV reuses fixed-size Rayon worker pools keyed by
 `--threads` instead of spawning OS threads for every matrix multiply, attention
-parallelizes independent heads with per-head score/prob scratch while keeping
-each head's softmax and value accumulation ordered, and CDF construction
-parallelizes only the independent `exp[i]` fill while keeping `Z` and prefix
-sums single-threaded.
+parallelizes independent heads with per-head score/prob scratch for larger
+attention windows while keeping each head's softmax and value accumulation
+ordered, and CDF construction parallelizes only the independent `exp[i]` fill
+while keeping `Z` and prefix sums single-threaded.
 This is the harness to use for target-model enwik8 first-1MB measurements; the
 bundled fixtures remain smoke and input-scale checks.
 The harness applies the same tokenizer/model vocabulary equality check and

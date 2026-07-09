@@ -19,6 +19,8 @@ static THREAD_COUNT_OVERRIDE: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(0);
 #[cfg(all(feature = "parallel", not(target_family = "wasm")))]
 static RAYON_POOLS: OnceLock<Mutex<BTreeMap<usize, Arc<rayon::ThreadPool>>>> = OnceLock::new();
+#[cfg(all(feature = "parallel", not(target_family = "wasm")))]
+const MIN_PARALLEL_ATTENTION_WORK: usize = 32_768;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LlamaConfig {
@@ -2048,7 +2050,11 @@ fn attention_all_heads(
     #[cfg(all(feature = "parallel", not(target_family = "wasm")))]
     {
         let threads = requested_thread_count().clamp(1, config.head_count.max(1));
-        if threads > 1 && config.head_count > 1 {
+        let attention_work = config
+            .head_count
+            .saturating_mul(pos + 1)
+            .saturating_mul(head_dim);
+        if threads > 1 && config.head_count > 1 && attention_work >= MIN_PARALLEL_ATTENTION_WORK {
             return attention_all_heads_parallel(
                 config,
                 layer_idx,

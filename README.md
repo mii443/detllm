@@ -85,9 +85,10 @@ uses layout checks for already-loaded models instead of re-scanning all weight
 tensors on every token and GEMV. With the `parallel` feature, row-parallel
 GEMV reuses fixed-size Rayon worker pools keyed by `--threads` instead of
 spawning OS threads per matrix multiply; attention uses per-head score/prob
-scratch so independent heads can run in parallel while each head keeps its
-softmax and value accumulation order; and CDF construction parallelizes only
-the independent `exp[i]` fill while keeping `Z` and prefix sums single-threaded.
+scratch so larger attention windows can run independent heads in parallel
+while each head keeps its softmax and value accumulation order; and CDF
+construction parallelizes only the independent `exp[i]` fill while keeping `Z`
+and prefix sums single-threaded.
 `model-info` records a
 lightweight GGUF
 intake summary without loading all weights, including model SHA-256, parsed
