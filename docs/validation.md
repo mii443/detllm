@@ -1067,7 +1067,9 @@ the scratch API is bit-for-bit equivalent to the owned `logits_to_cdf` API and
 that streaming codec payloads still match the direct replay rule. Decode uses
 the validated CDF lookup for CDFs built by this codec path, avoiding a full CDF
 validation scan on every decoded token while leaving the public validating
-`symbol_for` helper available for untrusted tables.
+`symbol_for` helper available for untrusted tables. With the `parallel`
+feature, row-parallel GEMV reuses fixed-size Rayon worker pools keyed by
+`--threads` instead of spawning OS threads for every matrix multiply.
 This is the harness to use for target-model enwik8 first-1MB measurements; the
 bundled fixtures remain smoke and input-scale checks.
 The harness applies the same tokenizer/model vocabulary equality check and

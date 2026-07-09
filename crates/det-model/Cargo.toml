@@ -10,10 +10,11 @@ det-num = { path = "../det-num" }
 det-coder = { path = "../det-coder" }
 det-gguf = { path = "../det-gguf" }
 det-quant = { path = "../det-quant" }
+rayon = { version = "=1.10.0", optional = true }
 
 [features]
 default = []
-parallel = []
+parallel = ["rayon"]
 simd = ["det-quant/simd"]
 
 [lib]

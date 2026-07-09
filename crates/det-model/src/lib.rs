@@ -7,9 +7,18 @@ use det_quant::{
     q4_k_block_from_gguf, q4_k_value, q6_k_block_from_gguf, q6_k_value, q8_0_block_from_gguf,
     quantize_q8a, Q4KBlock, Q4_0Block, Q6KBlock, Q8ABlock, Q8_0Block, BLOCK, Q4K_BLOCK, Q6K_BLOCK,
 };
+#[cfg(all(feature = "parallel", not(target_family = "wasm")))]
+use rayon::prelude::*;
+#[cfg(all(feature = "parallel", not(target_family = "wasm")))]
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Mutex, OnceLock},
+};
 
 static THREAD_COUNT_OVERRIDE: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(0);
+#[cfg(all(feature = "parallel", not(target_family = "wasm")))]
+static RAYON_POOLS: OnceLock<Mutex<BTreeMap<usize, Arc<rayon::ThreadPool>>>> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LlamaConfig {
@@ -279,12 +288,11 @@ where
     }
 
     let chunk_len = rows.div_ceil(threads);
-    std::thread::scope(|scope| {
-        let mut handles = Vec::new();
-        for (chunk_index, chunk) in out.chunks_mut(chunk_len).enumerate() {
-            let start = chunk_index * chunk_len;
-            let f = &f;
-            handles.push(scope.spawn(move || {
+    with_rayon_pool(threads, || {
+        out.par_chunks_mut(chunk_len)
+            .enumerate()
+            .try_for_each(|(chunk_index, chunk)| {
+                let start = chunk_index * chunk_len;
                 for (offset, dst) in chunk.iter_mut().enumerate() {
                     let value = f(start + offset)?;
                     if !value.is_finite() {
@@ -293,18 +301,32 @@ where
                     *dst = value;
                 }
                 Ok(())
-            }));
-        }
-
-        for handle in handles {
-            match handle.join() {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => return Err(e),
-                Err(_) => return Err(ModelError::ThreadPanicked),
-            }
-        }
-        Ok(())
+            })
     })
+}
+
+#[cfg(all(feature = "parallel", not(target_family = "wasm")))]
+fn with_rayon_pool<R, F>(threads: usize, f: F) -> Result<R, ModelError>
+where
+    F: FnOnce() -> Result<R, ModelError> + Send,
+    R: Send,
+{
+    let pools = RAYON_POOLS.get_or_init(|| Mutex::new(BTreeMap::new()));
+    let mut guard = pools.lock().map_err(|_| ModelError::ThreadPanicked)?;
+    let pool = match guard.entry(threads) {
+        std::collections::btree_map::Entry::Occupied(entry) => Arc::clone(entry.get()),
+        std::collections::btree_map::Entry::Vacant(entry) => {
+            let pool = Arc::new(
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(threads)
+                    .build()
+                    .map_err(|_| ModelError::ThreadPanicked)?,
+            );
+            Arc::clone(entry.insert(pool))
+        }
+    };
+    drop(guard);
+    pool.install(f)
 }
 
 impl From<F32Matrix> for WeightMatrix {
