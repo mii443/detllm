@@ -5,9 +5,15 @@ usage() {
   cat <<'USAGE'
 usage: scripts/run-target-hf-logits-matrix.sh --tinyllama-q8 PATH --tinyllama-q4 PATH --qwen25-q8 PATH --smollm2-q8 PATH [--bin target/release/detllm] [--out DIR] [--python python3] [--threads N] [--torch-threads N] [--device cpu] [--dtype float32] [--min-cosine X] [--tinyllama-hf MODEL] [--qwen25-hf MODEL] [--smollm2-hf MODEL] [--trust-remote-code]
 
-Runs target-model raw-logits cosine checks against HF Transformers. HF model
-arguments may be either Hugging Face model IDs or local model directories. Each
-row writes detllm dumps, HF dumps, and compare-logits logs under --out.
+Runs target-model raw-logits cosine diagnostics against HF Transformers. HF
+model arguments may be either Hugging Face model IDs or local model
+directories. Each row writes detllm dumps, HF dumps, and compare-logits logs
+under --out.
+
+The default --min-cosine is 0.0 so quantized GGUF vs original HF f32 model
+comparisons are recorded instead of treated as acceptance failures. Use an
+explicit threshold, for example --min-cosine 0.999, only when comparing an
+equivalent f32 path or intentionally checking a calibrated threshold.
 
 This wrapper requires a Python environment with torch and transformers installed
 and enough local cache/network access for the requested HF model IDs.
@@ -21,7 +27,7 @@ threads="8"
 torch_threads="1"
 device="cpu"
 dtype="float32"
-min_cosine="0.999"
+min_cosine="0.0"
 trust_remote_code=()
 tinyllama_hf="TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 qwen25_hf="Qwen/Qwen2.5-1.5B-Instruct"

@@ -1564,9 +1564,11 @@ of token positions, which prevents comparing different prompt lengths or a
 single final-token dump against a full-position detllm dump. `--worst-rows`
 prints the lowest-cosine rows, and `--top-diffs` prints the largest absolute
 logit differences with row/column coordinates when `--row-size` is present.
-This is the harness for the HF transformers raw-logits cosine-similarity
-sanity check required by `detllm-design.md` once an external reference dump is
-available.
+For quantized target GGUFs, the acceptance raw-logits cosine gate is the
+same-GGUF llama.cpp comparison at `--min-cosine 0.999`. HF Transformers dumps
+from the original f32 model are still useful diagnostics, but they are not the
+fixed-threshold acceptance reference for Q8_0/Q4_0 GGUFs unless a
+model-specific quantization-aware threshold is deliberately chosen.
 
 The helper script
 [`scripts/reference_logits_transformers.py`](../scripts/reference_logits_transformers.py)
@@ -1618,6 +1620,10 @@ TinyLlama Q8_0/Q4_0 against
 `HuggingFaceTB/SmolLM2-1.7B-Instruct`. Each row writes a detllm dump, an HF
 Transformers dump, and a `compare-logits` report under `--out`. The HF model
 arguments can also point at local model directories for offline validation.
+The wrapper defaults to `--min-cosine 0.0` so quantized-GGUF-vs-HF-original
+comparisons record every row. Pass an explicit threshold, such as
+`--min-cosine 0.999`, only when comparing an equivalent f32 path or a calibrated
+model-specific threshold.
 
 The script's syntax and argument parser were checked locally without writing
 bytecode with:
@@ -1664,9 +1670,10 @@ These results are independent HF evidence, but they are not acceptance-pass
 evidence for the `0.999` threshold. They compare quantized target GGUF inference
 against the original HF f32 models, while the same-GGUF llama.cpp raw-logits
 matrix above remains the passing reference check for implementation parity.
-This leaves an explicit follow-up: decide whether HF-original comparisons need
-model-specific quantization-aware thresholds or whether the acceptance gate
-should remain same-GGUF against llama.cpp for quantized models.
+The acceptance decision is to keep the quantized-model raw-logits gate on that
+same-GGUF llama.cpp comparison. HF-original comparisons remain diagnostic
+negative evidence unless a future model-specific quantization-aware threshold is
+added deliberately.
 
 TinyLlama Q8_0 llama.cpp raw-logits reference command:
 

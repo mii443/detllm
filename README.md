@@ -211,6 +211,11 @@ case missed the `0.999` minimum-row threshold. Worst minimum row cosine was:
 | Qwen2.5 Q8_0 | 2 | 0.980463056 |
 | SmolLM2 Q8_0 | 2 | 0.953664992 |
 
+For quantized target GGUFs, the acceptance raw-logits gate is therefore the
+same-GGUF llama.cpp comparison at `--min-cosine 0.999`. The HF f32-original
+matrix is kept as a diagnostic and defaults to recording all rows rather than
+failing at a fixed threshold.
+
 Target-model longer-context log-probability smoke, using
 `scripts/run-target-logprob-broad-matrix.sh`, checks llama.cpp
 `llama-perplexity --save-all-logits` references with `ctx-size=16`,
@@ -271,11 +276,9 @@ the following acceptance evidence is still missing:
 - Further target-model reference-quality checks are still needed beyond the
   current scripted TinyLlama Q8_0/Q4_0, Qwen2.5 Q8_0, and SmolLM2 Q8_0
   llama.cpp raw-logits broad matrix and short/long log-probability matrices,
-  plus the current llama.cpp PPL reference smoke. The HF transformers
-  raw-logits matrix is now recorded as negative evidence for direct
-  HF-original-vs-quantized-GGUF thresholding; broader perplexity-quality checks
-  and an explicit acceptance threshold decision for that HF comparison remain
-  pending.
+  plus the current llama.cpp PPL reference smoke. Broader perplexity-quality
+  checks remain pending; direct HF-original-vs-quantized-GGUF thresholding is
+  recorded as diagnostic negative evidence rather than an acceptance gate.
 - Target-model enwik8 first-1MB compression-rate measurement with
   `xtask bench-file`; the bundled tiny fixture has input-scale enwik8 evidence.
 - Broader benchmark results on real target-model hardware beyond the current
