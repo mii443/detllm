@@ -40,6 +40,30 @@ position, it compares logits from one continuous KV-cache run against logits
 from replaying the prefix into a fresh cache. This runs for both `tiny-f32`
 and `tiny-qmix`.
 
+## Target-Model Raw Logits
+
+The following local checks compare `detllm logits --dump` output against
+llama.cpp C API logits from `scripts/reference_logits_llamacpp.cpp` using the
+same tokenizer-backed prompt, `"Hello world from detllm validation."`. The
+llama.cpp reference is run with `--sequential` so it matches detllm's
+single-token KV-cache evaluation order; llama.cpp batched and sequential logits
+can differ in later rows.
+
+| model | tokens | vocab | overall cosine | min row cosine | status |
+|---|---|---:|---:|---:|---|
+| TinyLlama 1.1B Chat Q8_0 | `10994,3186,515,1439,645,112,8845,49` | 32000 | 0.999914931 | 0.999809620 | passes `--min-cosine 0.999` |
+| Qwen2.5 1.5B Instruct Q8_0 | `9707,1879,504,3392,654,76,10519,13` | 151936 | 0.999840330 | 0.999647692 | passes `--min-cosine 0.999` |
+| SmolLM2 1.7B Instruct Q8_0 | `19556,905,429,964,764,93,13132,30` | 49152 | 0.999467131 | 0.999227139 | passes `--min-cosine 0.999` |
+| TinyLlama 1.1B Chat Q4_0 | `10994,3186,515,1439,645,112,8845,49` | 32000 | 0.999846114 | 0.998892643 | follow-up needed |
+
+Representative command shape:
+
+```sh
+cargo run -p det-cli -- logits -m model.gguf --tokens TOKENS --hash --dump detllm.logits.bin
+/tmp/reference_logits_llamacpp --model model.gguf --tokens TOKENS --out llama.logits.bin --expected-rows 8 --expected-vocab VOCAB --sequential --quiet
+cargo run -p xtask -- compare-logits --actual detllm.logits.bin --reference llama.logits.bin --row-size VOCAB --rows 8 --min-cosine 0.999 --worst-rows 8 --top-diffs 5
+```
+
 ## Architecture Metadata Compatibility
 
 `det-model` has a synthetic GGUF test for `general.architecture = "qwen2"`
