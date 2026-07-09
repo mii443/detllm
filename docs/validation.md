@@ -626,9 +626,9 @@ construction, `qwen2` metadata parsing, split-half RoPE configuration, full
 required tensor compatibility on Q8_0, optional attention projection bias
 loading, single-token forward, chunk-size-invariant logits hashing on a
 three-token stream, a llama.cpp raw-logits cosine check, and an end-to-end codec
-round-trip on a tiny byte input. It is not a substitute for a Qwen2.5
-llama.cpp log-probability check or the enwik8 first-1MB compression
-measurement.
+round-trip on a tiny byte input, and a llama.cpp perplexity-path
+log-probability check. It is not a substitute for the enwik8 first-1MB
+compression measurement.
 
 ### SmolLM2 External Smoke
 
@@ -849,6 +849,19 @@ Observed output:
 
 ```text
 compare-llamacpp-logprobs chunks=2 n_ctx=8 vocab=32000 rows=6 values=192000 add_bos=true bos_token=1 max_abs_diff=10.154125214 rms_diff=0.902546679 max_target_abs_diff=0.104429245
+```
+
+Qwen2.5 Q8_0 llama.cpp reference command:
+
+```sh
+llama-perplexity -m /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf -p "Hello world from detllm validation. Hello world from detllm validation. Hello world from detllm validation. Hello world from detllm validation." --save-all-logits /tmp/llama-qwen-ppl-c8.logits --chunks 2 --threads 8 --ctx-size 8 --batch-size 8 --no-mmap --log-disable
+cargo run --release -p xtask -- compare-llamacpp-logprobs --model /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --reference /tmp/llama-qwen-ppl-c8.logits --threads 8 --max-target-abs-diff 0.2
+```
+
+Observed output:
+
+```text
+compare-llamacpp-logprobs chunks=2 n_ctx=8 vocab=151936 rows=6 values=911616 add_bos=false bos_token=151643 max_abs_diff=9.236663818 rms_diff=1.138672226 max_target_abs_diff=0.084975481
 ```
 
 Local smoke using the same `testdata/tiny-f32.gguf` dump as both actual and
