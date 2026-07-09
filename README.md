@@ -123,30 +123,30 @@ cargo run --release -p xtask -- bench-testdata --iters 100
 
 | check | throughput | note |
 |---|---:|---|
-| `tiny-f32` logits | 106111 tokens/s | 600 fixture tokens, hash stable |
-| `tiny-qmix` logits | 98926 tokens/s | 600 fixture tokens, hash stable |
-| `tiny-f32` codec | 22266 input bytes/s | 3900 bytes, round-trip verified |
-| `tiny-qmix` codec | 20123 input bytes/s | 3900 bytes, round-trip verified |
+| `tiny-f32` logits | 111472 tokens/s | 600 fixture tokens, hash stable |
+| `tiny-qmix` logits | 123648 tokens/s | 600 fixture tokens, hash stable |
+| `tiny-f32` codec | 77602 input bytes/s | 3900 bytes, round-trip verified |
+| `tiny-qmix` codec | 51439 input bytes/s | 3900 bytes, round-trip verified |
 
 These numbers are fixture-scale smoke benchmarks, not target-model compression
 quality measurements.
 
 Target-model prefix smoke on the same host, using
 `scripts/run-target-bench-smoke.sh` with enwik8 first-1MB tokenization,
-`--limit-tokens 16`, `--encode-only`, `--threads 8`, and `--n-ctx 64`:
+`--limit-tokens 64`, `--encode-only`, `--threads 8`, and `--n-ctx 128`:
 
 | check | measured bytes | payload bpb | DTLZ bpb | throughput | full-token ETA |
 |---|---:|---:|---:|---:|---:|
-| TinyLlama Q8_0 | 47 | 5.617021 | 15.148936 | 7.322 tokens/s | 45,938 s |
-| TinyLlama Q4_0 | 47 | 5.787234 | 15.319149 | 5.167 tokens/s | 65,094 s |
-| Qwen2.5 Q8_0 | 53 | 1.962264 | 10.415094 | 5.438 tokens/s | 51,389 s |
-| SmolLM2 Q8_0 | 46 | 2.434783 | 12.173913 | 5.593 tokens/s | 54,134 s |
+| TinyLlama Q8_0 | 169 | 6.106509 | 8.757396 | 7.093 tokens/s | 47,419 s |
+| TinyLlama Q4_0 | 169 | 5.869822 | 8.520710 | 5.076 tokens/s | 66,256 s |
+| Qwen2.5 Q8_0 | 190 | 0.631579 | 2.989474 | 5.280 tokens/s | 52,926 s |
+| SmolLM2 Q8_0 | 162 | 0.839506 | 3.604938 | 5.480 tokens/s | 55,253 s |
 
 This is real target-model throughput and prefix compression smoke evidence, not
 the final full-token enwik8 first-1MB compression-rate result. A current
-Qwen2.5 Q8_0 16-token encode-only preflight with `--estimate-full-run` reports
+Qwen2.5 Q8_0 64-token encode-only preflight with `--estimate-full-run` reports
 279,472 full tokens for the first 1MB and estimates the measured encode loop at
-about 51,389 seconds, or roughly 14 hours, on this host.
+about 52,926 seconds, or roughly 15 hours, on this host.
 
 Target-model determinism smoke, using
 `scripts/run-target-determinism-matrix.sh`, checks the same four external GGUFs
@@ -186,5 +186,5 @@ the following acceptance evidence is still missing:
 - Target-model enwik8 first-1MB compression-rate measurement with
   `xtask bench-file`; the bundled tiny fixture has input-scale enwik8 evidence.
 - Broader benchmark results on real target hardware beyond the current bundled
-  fixture `xtask bench-testdata` snapshot and the current 16-token target-model
+  fixture `xtask bench-testdata` snapshot and the current 64-token target-model
   enwik8 prefix smoke matrix.

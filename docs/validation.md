@@ -1283,8 +1283,54 @@ bench-file-estimate: full_tokens=302781 full_input_bytes=1048576 measured_tokens
 bench-file-phases: model_read_ms=1227.084 gguf_parse_ms=8.054 model_load_ms=2379.588 tokenizer_setup_ms=118.976 input_read_ms=2.349 tokenize_ms=1586.070 token_prefix_ms=0.110 warmup_ms=0.000 measured_ms=2860.649 total_ms=14136.766
 ```
 
+The broader 64-token prefix matrix uses the same harness with `--limit-tokens
+64`, `--n-ctx 128`, and `--progress-every 16`:
+
+```sh
+scripts/run-target-bench-smoke.sh --input /tmp/enwik8 --tinyllama-q8 /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf --tinyllama-q4 /tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf --qwen25-q8 /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --smollm2-q8 /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf --limit-tokens 64 --n-ctx 128 --progress-every 16
+```
+
+```text
+== tinyllama-q8 ==
+bench-file-progress phase=encode tokens_done=16 tokens_total=64 elapsed_ms=2080.736 tokens_per_s=7.690
+bench-file-progress phase=encode tokens_done=32 tokens_total=64 elapsed_ms=4381.900 tokens_per_s=7.303
+bench-file-progress phase=encode tokens_done=48 tokens_total=64 elapsed_ms=6659.421 tokens_per_s=7.208
+bench-file-progress phase=encode tokens_done=64 tokens_total=64 elapsed_ms=8966.214 tokens_per_s=7.138
+bench-file model=/tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q8_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=64 iters=1 warmup=false mode=encode-only threads=8 n_ctx=128 overlap=32 model_sha256=a4c9bb1dbaa372f6381a035fa5c02ef087aaa1ff1f843a56a22328114f03fc59 input_sha256=f2ef9d4f53049b3642e646fe06024f1b025ce73dcc83a317c0a55eed1004ac56
+bench-file: source_input_bytes=100000000 measured_input_bytes=169 total_input_bytes=169 tokenized_tokens=336344 tokens=64 total_tokens=64 payload_bytes=129 dtlz_bytes=185 payload_bits_per_byte=6.106509 dtlz_bits_per_byte=8.757396 compression_ratio=1.094675 elapsed_ms=9023.003 input_bytes_per_s=18.730 tokens_per_s=7.093
+bench-file-estimate: full_tokens=336344 full_input_bytes=1048576 measured_tokens=64 scale_factor=5255.375000 estimated_measured_ms=47419262.857 estimated_measured_s=47419.263 measured_tokens_per_s=7.093
+bench-file-phases: model_read_ms=2017.435 gguf_parse_ms=6.854 model_load_ms=1395.045 tokenizer_setup_ms=26.968 input_read_ms=52.942 tokenize_ms=924.101 token_prefix_ms=0.128 warmup_ms=0.000 measured_ms=9023.003 total_ms=17325.731
+== tinyllama-q4 ==
+bench-file-progress phase=encode tokens_done=16 tokens_total=64 elapsed_ms=3075.957 tokens_per_s=5.202
+bench-file-progress phase=encode tokens_done=32 tokens_total=64 elapsed_ms=6289.934 tokens_per_s=5.087
+bench-file-progress phase=encode tokens_done=48 tokens_total=64 elapsed_ms=9415.671 tokens_per_s=5.098
+bench-file-progress phase=encode tokens_done=64 tokens_total=64 elapsed_ms=12579.055 tokens_per_s=5.088
+bench-file model=/tmp/detllm-external/tinyllama-1.1b-chat-v1.0.Q4_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=64 iters=1 warmup=false mode=encode-only threads=8 n_ctx=128 overlap=32 model_sha256=da3087fb14aede55fde6eb81a0e55e886810e43509ec82ecdc7aa5d62a03b556 input_sha256=f2ef9d4f53049b3642e646fe06024f1b025ce73dcc83a317c0a55eed1004ac56
+bench-file: source_input_bytes=100000000 measured_input_bytes=169 total_input_bytes=169 tokenized_tokens=336344 tokens=64 total_tokens=64 payload_bytes=124 dtlz_bytes=180 payload_bits_per_byte=5.869822 dtlz_bits_per_byte=8.520710 compression_ratio=1.065089 elapsed_ms=12607.221 input_bytes_per_s=13.405 tokens_per_s=5.076
+bench-file-estimate: full_tokens=336344 full_input_bytes=1048576 measured_tokens=64 scale_factor=5255.375000 estimated_measured_ms=66255676.349 estimated_measured_s=66255.676 measured_tokens_per_s=5.076
+bench-file-phases: model_read_ms=590.225 gguf_parse_ms=8.067 model_load_ms=934.405 tokenizer_setup_ms=41.089 input_read_ms=1.960 tokenize_ms=907.220 token_prefix_ms=0.196 warmup_ms=0.000 measured_ms=12607.221 total_ms=17227.674
+== qwen25-q8 ==
+bench-file-progress phase=encode tokens_done=16 tokens_total=64 elapsed_ms=2888.551 tokens_per_s=5.539
+bench-file-progress phase=encode tokens_done=32 tokens_total=64 elapsed_ms=5872.289 tokens_per_s=5.449
+bench-file-progress phase=encode tokens_done=48 tokens_total=64 elapsed_ms=8966.890 tokens_per_s=5.353
+bench-file-progress phase=encode tokens_done=64 tokens_total=64 elapsed_ms=12027.905 tokens_per_s=5.321
+bench-file model=/tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=64 iters=1 warmup=false mode=encode-only threads=8 n_ctx=128 overlap=32 model_sha256=d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8 input_sha256=b4997b129849e53a0cb6265f2561d8e57ad57003ffbcc1c7357b03918e79b03b
+bench-file: source_input_bytes=100000000 measured_input_bytes=190 total_input_bytes=190 tokenized_tokens=279472 tokens=64 total_tokens=64 payload_bytes=15 dtlz_bytes=71 payload_bits_per_byte=0.631579 dtlz_bits_per_byte=2.989474 compression_ratio=0.373684 elapsed_ms=12120.284 input_bytes_per_s=15.676 tokens_per_s=5.280
+bench-file-estimate: full_tokens=279472 full_input_bytes=1048576 measured_tokens=64 scale_factor=4366.750000 estimated_measured_ms=52926251.153 estimated_measured_s=52926.251 measured_tokens_per_s=5.280
+bench-file-phases: model_read_ms=2722.861 gguf_parse_ms=31.691 model_load_ms=2113.508 tokenizer_setup_ms=480.329 input_read_ms=31.406 tokenize_ms=1489.082 token_prefix_ms=0.135 warmup_ms=0.000 measured_ms=12120.284 total_ms=25165.858
+== smollm2-q8 ==
+bench-file-progress phase=encode tokens_done=16 tokens_total=64 elapsed_ms=2819.196 tokens_per_s=5.675
+bench-file-progress phase=encode tokens_done=32 tokens_total=64 elapsed_ms=5766.107 tokens_per_s=5.550
+bench-file-progress phase=encode tokens_done=48 tokens_total=64 elapsed_ms=8598.467 tokens_per_s=5.582
+bench-file-progress phase=encode tokens_done=64 tokens_total=64 elapsed_ms=11588.129 tokens_per_s=5.523
+bench-file model=/tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=64 iters=1 warmup=false mode=encode-only threads=8 n_ctx=128 overlap=32 model_sha256=0f3fb091804c48a561b42a4ca1be9ce2c353017187f74c48f52299cae790abe5 input_sha256=e70374032866c3858fb877a60539f38959a73eb0abbe0417fb58411fe8b5d52a
+bench-file: source_input_bytes=100000000 measured_input_bytes=162 total_input_bytes=162 tokenized_tokens=302781 tokens=64 total_tokens=64 payload_bytes=17 dtlz_bytes=73 payload_bits_per_byte=0.839506 dtlz_bits_per_byte=3.604938 compression_ratio=0.450617 elapsed_ms=11678.957 input_bytes_per_s=13.871 tokens_per_s=5.480
+bench-file-estimate: full_tokens=302781 full_input_bytes=1048576 measured_tokens=64 scale_factor=4730.953125 estimated_measured_ms=55252597.946 estimated_measured_s=55252.598 measured_tokens_per_s=5.480
+bench-file-phases: model_read_ms=1775.138 gguf_parse_ms=10.109 model_load_ms=2204.428 tokenizer_setup_ms=125.453 input_read_ms=8.458 tokenize_ms=1383.989 token_prefix_ms=0.134 warmup_ms=0.000 measured_ms=11678.957 total_ms=23142.203
+```
+
 This is target-model throughput and prefix compression smoke evidence for the
-current GGUF matrix. Because `--limit-tokens 16` is set, it is not the final
+current GGUF matrix. Because `--limit-tokens 64` is set, it is not the final
 M4 enwik8 first-1MB compression-rate acceptance measurement.
 
 Current-format Qwen2.5 preflight with a one-token measured prefix records the
@@ -1403,10 +1449,10 @@ Observed output:
 
 ```text
 bench-testdata iters=100
-logits tiny-f32: hash=92a0280149c6b1505c84dce0d19486a2093f93b7978b579c220000d12e4ef7e7 tokens=600 elapsed_ms=5.654 tokens_per_s=106111.003
-logits tiny-qmix: hash=8a34d3c4a05e9a30b90aadcdca7b6bac91655e6ab67980ccdb6726565d35f3e4 tokens=600 elapsed_ms=6.065 tokens_per_s=98925.928
-codec tiny-f32: input_bytes=3900 payload_bytes=4600 elapsed_ms=175.157 input_bytes_per_s=22265.754
-codec tiny-qmix: input_bytes=3900 payload_bytes=4600 elapsed_ms=193.805 input_bytes_per_s=20123.346
+logits tiny-f32: hash=92a0280149c6b1505c84dce0d19486a2093f93b7978b579c220000d12e4ef7e7 tokens=600 elapsed_ms=5.383 tokens_per_s=111471.660
+logits tiny-qmix: hash=8a34d3c4a05e9a30b90aadcdca7b6bac91655e6ab67980ccdb6726565d35f3e4 tokens=600 elapsed_ms=4.852 tokens_per_s=123647.630
+codec tiny-f32: input_bytes=3900 payload_bytes=4600 elapsed_ms=50.257 input_bytes_per_s=77601.552
+codec tiny-qmix: input_bytes=3900 payload_bytes=4600 elapsed_ms=75.818 input_bytes_per_s=51438.997
 ```
 
 `bench-testdata` verifies that the fixture logits hash does not change during
