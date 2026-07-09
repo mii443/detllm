@@ -885,6 +885,19 @@ Observed output:
 compare-llamacpp-logprobs chunks=2 n_ctx=8 vocab=151936 rows=6 values=911616 add_bos=false bos_token=151643 max_abs_diff=9.236663818 rms_diff=1.138672226 max_target_abs_diff=0.084975481
 ```
 
+SmolLM2 Q8_0 llama.cpp reference command:
+
+```sh
+llama-perplexity -m /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf -p "Hello world from detllm validation. Hello world from detllm validation. Hello world from detllm validation. Hello world from detllm validation." --save-all-logits /tmp/llama-smollm2-ppl-c8.logits --chunks 2 --threads 8 --ctx-size 8 --batch-size 8 --no-mmap --log-disable
+cargo run --release -p xtask -- compare-llamacpp-logprobs --model /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf --reference /tmp/llama-smollm2-ppl-c8.logits --threads 8 --max-target-abs-diff 0.2
+```
+
+Observed output:
+
+```text
+compare-llamacpp-logprobs chunks=2 n_ctx=8 vocab=49152 rows=6 values=294912 add_bos=false bos_token=1 max_abs_diff=12.707466125 rms_diff=0.655142658 max_target_abs_diff=0.095531464
+```
+
 Local smoke using the same `testdata/tiny-f32.gguf` dump as both actual and
 reference reported:
 
