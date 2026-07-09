@@ -534,6 +534,73 @@ codec round-trip on a tiny byte input. It is not a substitute for the HF
 transformers / llama.cpp cosine check or the enwik8 first-1MB compression
 measurement.
 
+### Qwen2.5 External Smoke
+
+Source:
+
+- Repository: <https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF>
+- Supported model file:
+  `qwen2.5-1.5b-instruct-q8_0.gguf`
+
+Observed Q8_0 intake result:
+
+```text
+model-info path=/tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf bytes=1894532128 sha256=d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8 gguf_version=3 metadata=26 tensors=339 data_offset=5950496
+model-info metadata key=general.architecture string=qwen2
+model-info metadata key=general.name string=qwen2.5-1.5b-instruct
+model-info metadata key=tokenizer.ggml.model string=gpt2
+model-info metadata key=tokenizer.ggml.add_bos_token bool=false
+model-info metadata key=tokenizer.ggml.bos_token_id u32=151643
+model-info metadata key=tokenizer.ggml.eos_token_id u32=151645
+model-info metadata key=tokenizer.ggml.tokens array<string>[151936]
+model-info metadata key=tokenizer.ggml.merges array<string>[151387]
+model-info metadata key=tokenizer.ggml.token_type array<i32>[151936]
+model-info tokenizer status=ok kind=byte_bpe
+model-info config status=ok block_count=28 embedding_length=1536 feed_forward_length=8960 head_count=12 head_count_kv=2 context_length=32768 rope_dimension_count=128 rope_pairing=SplitHalf rope_freq_base=1000000.0 rms_epsilon=1e-6 attention_scale=0.088388346
+model-info tensor-inventory total=339 encoded_bytes=1888581632 encoded_len_errors=0 F32=141 Q8_0=198
+model-info vocab status=ok tokenizer=151936 model=151936 codec_max_symbols=262144
+model-info required-tensors status=ok checked=255 missing=0 shape_mismatch=0 unsupported_type=0 tied_output=false
+```
+
+Minimal logits smoke:
+
+```sh
+cargo run --release -p det-cli -- tokenize -m /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf -p "Hello"
+cargo run --release -p det-cli -- logits -m /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --tokens 151643 --hash --threads 8
+cargo run --release -p det-cli -- logits -m /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --tokens 151643,9707,151645 --hash --chunk-size 1 --threads 8
+cargo run --release -p det-cli -- logits -m /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --tokens 151643,9707,151645 --hash --chunk-size 3 --threads 8
+```
+
+Observed output:
+
+```text
+tokens("Hello") = 9707
+tokens=151643 hash = 6d26b369afb23cf98f405a9139a0999c11d9a00937eebb4c65cd484730de90ec
+tokens=151643,9707,151645 chunk-size=1 hash = 64d86bcdfc80c0b5ea791d739d9e877c58f26046ed15ffc1a1f7e8d063be7db8
+tokens=151643,9707,151645 chunk-size=3 hash = 64d86bcdfc80c0b5ea791d739d9e877c58f26046ed15ffc1a1f7e8d063be7db8
+```
+
+Minimal codec smoke:
+
+```sh
+cargo run --release -p xtask -- bench-file --model /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --input /tmp/detllm-external/hello.txt --n-ctx 16 --iters 1
+```
+
+Observed output:
+
+```text
+bench-file model=/tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf input=/tmp/detllm-external/hello.txt limit_bytes=all iters=1 n_ctx=16 overlap=4 model_sha256=d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8 input_sha256=66a045b452102c59d840ec097d59d9467e13a3f34f6494e539ffd32c1bb35f18
+bench-file: source_input_bytes=6 measured_input_bytes=6 total_input_bytes=6 tokens=2 total_tokens=2 payload_bytes=10 dtlz_bytes=66 payload_bits_per_byte=13.333333 dtlz_bits_per_byte=88.000000 compression_ratio=11.000000 elapsed_ms=439.175 input_bytes_per_s=13.662 tokens_per_s=4.554
+```
+
+This is real Qwen2.5 GGUF evidence for GPT-2-style ByteBPE tokenizer
+construction, `qwen2` metadata parsing, split-half RoPE configuration, full
+required tensor compatibility on Q8_0, single-token forward,
+chunk-size-invariant logits hashing on a three-token stream, and an end-to-end
+codec round-trip on a tiny byte input. It is not a substitute for the HF
+transformers / llama.cpp cosine check or the enwik8 first-1MB compression
+measurement.
+
 ## File Codec Bench Harness
 
 Command:
