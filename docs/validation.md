@@ -1506,10 +1506,23 @@ through a temporary file and rename as soon as encode finishes. It requires
 `--iters 1`, matching the target-model acceptance run, so a long round-trip
 run leaves a durable compressed file before the decode verification phase
 starts. That file can be checked later with the public `decompress` command.
+`--verify-dtlz PATH` resumes from such a saved DTLZ file: it reloads the same
+model and input prefix, verifies the DTLZ header model SHA/context/original
+length, decodes the payload, compares the decoded codec symbols with the fresh
+tokenization, and detokenizes back to the measured input bytes. This mode is
+intended for long target-model runs where encode completed and wrote the DTLZ
+but the decode/round-trip verification still needs to be repeated.
 For the final target-model first-1MB run, use:
 
 ```sh
 scripts/run-target-full-bench.sh --model /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --input /tmp/enwik8 --name qwen25-q8-first1m
+```
+
+If that run has already written `/tmp/detllm-target-bench/qwen25-q8-first1m.dtlz`
+and only the verification phase needs to be resumed, use:
+
+```sh
+scripts/run-target-full-bench.sh --model /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --input /tmp/enwik8 --name qwen25-q8-first1m --verify-dtlz /tmp/detllm-target-bench/qwen25-q8-first1m.dtlz
 ```
 
 The wrapper keeps the acceptance defaults explicit: `--limit-bytes 1048576`,
@@ -1517,8 +1530,9 @@ no `--limit-tokens`, round-trip mode, `--no-warmup`, `--show-phases`,
 `--threads 8`, `--n-ctx 2048`, and `--progress-every 1000`. It records the
 combined progress log, the stable `bench-file --summary` output, and a
 `<name>.dtlz` output in `/tmp/detllm-target-bench` unless `--out DIR` is
-provided, and it keeps a `<name>.progress` file updated with the latest
-progress row. Use
+provided. In `--verify-dtlz` mode the same wrapper records summary/progress/log
+files for the resumed decode verification without rewriting the saved DTLZ. It
+keeps a `<name>.progress` file updated with the latest progress row. Use
 `--limit-tokens N --encode-only --estimate-full-run` with the same wrapper only
 for preflight estimates; omit those flags for the acceptance measurement.
 `--estimate-full-run` adds an opt-in `bench-file-estimate` line for

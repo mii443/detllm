@@ -123,7 +123,7 @@ fn real_main() -> Result<(), String> {
         Some("check-ci-workflow") => check_ci_workflow(),
         Some("check-determinism") => check_determinism(),
         _ => Err(
-            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf [--metadata-prefix]|bench-file --model model.gguf --input file [--limit-bytes N] [--limit-tokens N] [--n-ctx N] [--iters N] [--threads N] [--progress-every N] [--progress-summary PATH] [--summary PATH] [--output-dtlz PATH] [--no-warmup] [--encode-only] [--show-phases] [--estimate-full-run]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N] [--worst-rows N] [--top-diffs N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
+            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf [--metadata-prefix]|bench-file --model model.gguf --input file [--limit-bytes N] [--limit-tokens N] [--n-ctx N] [--iters N] [--threads N] [--progress-every N] [--progress-summary PATH] [--summary PATH] [--output-dtlz PATH] [--verify-dtlz PATH] [--no-warmup] [--encode-only] [--show-phases] [--estimate-full-run]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N] [--worst-rows N] [--top-diffs N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
                 .to_owned(),
         ),
     }
@@ -338,6 +338,7 @@ struct BenchFileOpts {
     progress_summary_path: Option<String>,
     summary_path: Option<String>,
     output_dtlz_path: Option<String>,
+    verify_dtlz_path: Option<String>,
     warmup: bool,
     encode_only: bool,
     show_phases: bool,
@@ -944,6 +945,7 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
     let mut progress_summary_path = None;
     let mut summary_path = None;
     let mut output_dtlz_path = None;
+    let mut verify_dtlz_path = None;
     let mut warmup = true;
     let mut encode_only = false;
     let mut show_phases = false;
@@ -1046,6 +1048,16 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
                 }
                 output_dtlz_path = Some(raw.clone());
             }
+            "--verify-dtlz" => {
+                i += 1;
+                let raw = args
+                    .get(i)
+                    .ok_or("bench-file: missing value for --verify-dtlz")?;
+                if raw.is_empty() {
+                    return Err("bench-file: --verify-dtlz must not be empty".to_owned());
+                }
+                verify_dtlz_path = Some(raw.clone());
+            }
             "--progress-summary" => {
                 i += 1;
                 let raw = args
@@ -1078,6 +1090,26 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
     if output_dtlz_path.is_some() && iters != 1 {
         return Err("bench-file: --output-dtlz requires --iters 1".to_owned());
     }
+    if verify_dtlz_path.is_some() {
+        if output_dtlz_path.is_some() {
+            return Err(
+                "bench-file: --verify-dtlz cannot be combined with --output-dtlz".to_owned(),
+            );
+        }
+        if encode_only {
+            return Err(
+                "bench-file: --verify-dtlz cannot be combined with --encode-only".to_owned(),
+            );
+        }
+        if estimate_full_run {
+            return Err(
+                "bench-file: --verify-dtlz cannot be combined with --estimate-full-run".to_owned(),
+            );
+        }
+        if iters != 1 {
+            return Err("bench-file: --verify-dtlz requires --iters 1".to_owned());
+        }
+    }
     Ok(BenchFileOpts {
         model: model.ok_or("bench-file: missing --model")?,
         input: input.ok_or("bench-file: missing --input")?,
@@ -1090,6 +1122,7 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
         progress_summary_path,
         summary_path,
         output_dtlz_path,
+        verify_dtlz_path,
         warmup,
         encode_only,
         show_phases,
@@ -1158,6 +1191,32 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
     let token_prefix_ms = phase_start.elapsed().as_secs_f64() * 1000.0;
     let measured_input_bytes = input.len();
     let input_sha256 = sha256_hex(&input);
+
+    if let Some(path) = &opts.verify_dtlz_path {
+        return bench_file_verify_dtlz(
+            &opts,
+            path,
+            &model,
+            &tokenizer,
+            model_sha256_digest,
+            &model_sha256,
+            source_input_bytes,
+            limited_input_bytes,
+            measured_input_bytes,
+            tokenized_tokens,
+            &input,
+            &input_sha256,
+            &symbols,
+            model_read_ms,
+            gguf_parse_ms,
+            model_load_ms,
+            tokenizer_setup_ms,
+            input_read_ms,
+            tokenize_ms,
+            token_prefix_ms,
+            total_start,
+        );
+    }
 
     let n_ctx = opts.n_ctx.unwrap_or(model.config.context_length);
     let overlap = n_ctx / 4;
@@ -1316,6 +1375,169 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
         summary_lines.push(format!(
             "bench-file-output-dtlz path={} bytes={} sha256={}",
             output.path, output.bytes, output.sha256
+        ));
+    }
+    for line in &summary_lines {
+        println!("{line}");
+    }
+    if let Some(path) = &opts.summary_path {
+        write_bench_file_summary(path, &summary_lines)?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn bench_file_verify_dtlz(
+    opts: &BenchFileOpts,
+    path: &str,
+    model: &det_model::F32Llama,
+    tokenizer: &det_token::Tokenizer,
+    model_sha256_digest: [u8; 32],
+    model_sha256: &str,
+    source_input_bytes: usize,
+    limited_input_bytes: usize,
+    measured_input_bytes: usize,
+    tokenized_tokens: usize,
+    input: &[u8],
+    input_sha256: &str,
+    symbols: &[usize],
+    model_read_ms: f64,
+    gguf_parse_ms: f64,
+    model_load_ms: f64,
+    tokenizer_setup_ms: f64,
+    input_read_ms: f64,
+    tokenize_ms: f64,
+    token_prefix_ms: f64,
+    total_start: Instant,
+) -> Result<(), String> {
+    let phase_start = Instant::now();
+    let dtlz = fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+    let dtlz_read_ms = phase_start.elapsed().as_secs_f64() * 1000.0;
+    let header = det_coder::DtlzHeader::decode(&dtlz)
+        .map_err(|e| format!("bench-file: DTLZ header error: {e:?}"))?;
+    if header.flags & det_coder::FLAG_BYTE_ESCAPES == 0 {
+        return Err("bench-file: --verify-dtlz requires byte-escape DTLZ payload".to_owned());
+    }
+    if header.model_sha256 != model_sha256_digest {
+        return Err("bench-file: --verify-dtlz model SHA-256 mismatch".to_owned());
+    }
+    let n_ctx = usize::try_from(header.n_ctx)
+        .map_err(|_| "bench-file: --verify-dtlz n_ctx does not fit usize")?;
+    let overlap = usize::try_from(header.overlap)
+        .map_err(|_| "bench-file: --verify-dtlz overlap does not fit usize")?;
+    if let Some(requested_n_ctx) = opts.n_ctx {
+        if requested_n_ctx != n_ctx {
+            return Err(format!(
+                "bench-file: --verify-dtlz header n_ctx {n_ctx} does not match --n-ctx {requested_n_ctx}"
+            ));
+        }
+    }
+    validate_window(n_ctx, overlap, model.config.context_length)?;
+    let orig_len = usize::try_from(header.orig_len)
+        .map_err(|_| "bench-file: --verify-dtlz orig_len does not fit usize")?;
+    if orig_len != input.len() {
+        return Err(format!(
+            "bench-file: --verify-dtlz orig_len {orig_len} does not match measured input bytes {}",
+            input.len()
+        ));
+    }
+    let payload = dtlz
+        .get(det_coder::file::HEADER_LEN..)
+        .ok_or("bench-file: truncated DTLZ payload")?;
+    let dtlz_sha256 = sha256_hex(&dtlz);
+
+    let progress = BenchFileProgress {
+        every: opts.progress_every,
+        summary_path: opts.progress_summary_path.clone(),
+    };
+    let start = Instant::now();
+    let decoded = decode_symbols_with_model_progress(
+        model,
+        payload,
+        symbols.len(),
+        n_ctx,
+        overlap,
+        &progress,
+    )?;
+    if decoded != symbols {
+        return Err(
+            "bench-file: verified DTLZ decoded symbols did not match input tokens".to_owned(),
+        );
+    }
+    let restored = detokenize_codec_symbols(tokenizer, &decoded, model.output.rows())
+        .map_err(|e| format!("detokenize error: {e:?}"))?;
+    if restored != input {
+        return Err("bench-file: verified DTLZ did not round-trip".to_owned());
+    }
+    let elapsed = start.elapsed();
+    let elapsed_s = elapsed.as_secs_f64();
+    let restored_sha256 = sha256_hex(&restored);
+    let limit_label = opts
+        .limit_bytes
+        .map_or_else(|| "all".to_owned(), |limit_bytes| limit_bytes.to_string());
+    let token_limit_label = opts
+        .limit_tokens
+        .map_or_else(|| "all".to_owned(), |limit_tokens| limit_tokens.to_string());
+    let dtlz_bits_per_byte = if input.is_empty() {
+        0.0
+    } else {
+        (dtlz.len() as f64 * 8.0) / input.len() as f64
+    };
+    let compression_ratio = if input.is_empty() {
+        0.0
+    } else {
+        dtlz.len() as f64 / input.len() as f64
+    };
+    let tokens_per_s = if elapsed_s > 0.0 {
+        symbols.len() as f64 / elapsed_s
+    } else {
+        0.0
+    };
+    let mut summary_lines = Vec::new();
+    summary_lines.push(format!(
+        "bench-file model={} input={} limit_bytes={} limit_tokens={} iters=1 warmup=false mode=verify-dtlz threads={} n_ctx={} overlap={} model_sha256={} input_sha256={}",
+        opts.model,
+        opts.input,
+        limit_label,
+        token_limit_label,
+        opts.threads
+            .map_or_else(|| "default".to_owned(), |threads| threads.to_string()),
+        n_ctx,
+        overlap,
+        model_sha256,
+        input_sha256
+    ));
+    summary_lines.push(format!(
+        "bench-file-verify-dtlz path={} bytes={} sha256={} source_input_bytes={} measured_input_bytes={} tokenized_tokens={} tokens={} payload_bytes={} dtlz_bits_per_byte={:.6} compression_ratio={:.6} restored_bytes={} restored_sha256={} elapsed_ms={:.3} tokens_per_s={:.3}",
+        path,
+        dtlz.len(),
+        dtlz_sha256,
+        source_input_bytes,
+        measured_input_bytes,
+        tokenized_tokens,
+        symbols.len(),
+        payload.len(),
+        dtlz_bits_per_byte,
+        compression_ratio,
+        restored.len(),
+        restored_sha256,
+        elapsed_s * 1000.0,
+        tokens_per_s
+    ));
+    if opts.show_phases {
+        summary_lines.push(format!(
+            "bench-file-phases: model_read_ms={:.3} gguf_parse_ms={:.3} model_load_ms={:.3} tokenizer_setup_ms={:.3} input_read_ms={:.3} tokenize_ms={:.3} token_prefix_ms={:.3} dtlz_read_ms={:.3} verify_ms={:.3} total_ms={:.3} limited_input_bytes={}",
+            model_read_ms,
+            gguf_parse_ms,
+            model_load_ms,
+            tokenizer_setup_ms,
+            input_read_ms,
+            tokenize_ms,
+            token_prefix_ms,
+            dtlz_read_ms,
+            elapsed_s * 1000.0,
+            total_start.elapsed().as_secs_f64() * 1000.0,
+            limited_input_bytes
         ));
     }
     for line in &summary_lines {
@@ -3738,10 +3960,23 @@ mod tests {
         );
         assert_eq!(opts.summary_path.as_deref(), Some("/tmp/bench.summary"));
         assert_eq!(opts.output_dtlz_path.as_deref(), Some("/tmp/bench.dtlz"));
+        assert_eq!(opts.verify_dtlz_path, None);
         assert!(!opts.warmup);
         assert!(opts.encode_only);
         assert!(opts.show_phases);
         assert!(opts.estimate_full_run);
+
+        let opts = parse_bench_file_opts(vec![
+            "--model".to_owned(),
+            "model.gguf".to_owned(),
+            "--input".to_owned(),
+            "enwik8".to_owned(),
+            "--verify-dtlz".to_owned(),
+            "/tmp/bench.dtlz".to_owned(),
+        ])
+        .expect("verify DTLZ options");
+        assert_eq!(opts.output_dtlz_path, None);
+        assert_eq!(opts.verify_dtlz_path.as_deref(), Some("/tmp/bench.dtlz"));
 
         let err = parse_bench_file_opts(vec![
             "--model".to_owned(),
@@ -3825,6 +4060,16 @@ mod tests {
             "model.gguf".to_owned(),
             "--input".to_owned(),
             "enwik8".to_owned(),
+            "--verify-dtlz".to_owned(),
+        ])
+        .expect_err("verify DTLZ missing value must be rejected");
+        assert_eq!(err, "bench-file: missing value for --verify-dtlz");
+
+        let err = parse_bench_file_opts(vec![
+            "--model".to_owned(),
+            "model.gguf".to_owned(),
+            "--input".to_owned(),
+            "enwik8".to_owned(),
             "--iters".to_owned(),
             "2".to_owned(),
             "--output-dtlz".to_owned(),
@@ -3832,6 +4077,67 @@ mod tests {
         ])
         .expect_err("output DTLZ with multiple iterations must be rejected");
         assert_eq!(err, "bench-file: --output-dtlz requires --iters 1");
+
+        let err = parse_bench_file_opts(vec![
+            "--model".to_owned(),
+            "model.gguf".to_owned(),
+            "--input".to_owned(),
+            "enwik8".to_owned(),
+            "--output-dtlz".to_owned(),
+            "/tmp/out.dtlz".to_owned(),
+            "--verify-dtlz".to_owned(),
+            "/tmp/in.dtlz".to_owned(),
+        ])
+        .expect_err("verify DTLZ cannot be combined with output DTLZ");
+        assert_eq!(
+            err,
+            "bench-file: --verify-dtlz cannot be combined with --output-dtlz"
+        );
+
+        let err = parse_bench_file_opts(vec![
+            "--model".to_owned(),
+            "model.gguf".to_owned(),
+            "--input".to_owned(),
+            "enwik8".to_owned(),
+            "--verify-dtlz".to_owned(),
+            "/tmp/bench.dtlz".to_owned(),
+            "--encode-only".to_owned(),
+        ])
+        .expect_err("verify DTLZ cannot be encode-only");
+        assert_eq!(
+            err,
+            "bench-file: --verify-dtlz cannot be combined with --encode-only"
+        );
+
+        let err = parse_bench_file_opts(vec![
+            "--model".to_owned(),
+            "model.gguf".to_owned(),
+            "--input".to_owned(),
+            "enwik8".to_owned(),
+            "--verify-dtlz".to_owned(),
+            "/tmp/bench.dtlz".to_owned(),
+            "--limit-tokens".to_owned(),
+            "5".to_owned(),
+            "--estimate-full-run".to_owned(),
+        ])
+        .expect_err("verify DTLZ cannot be an estimate");
+        assert_eq!(
+            err,
+            "bench-file: --verify-dtlz cannot be combined with --estimate-full-run"
+        );
+
+        let err = parse_bench_file_opts(vec![
+            "--model".to_owned(),
+            "model.gguf".to_owned(),
+            "--input".to_owned(),
+            "enwik8".to_owned(),
+            "--iters".to_owned(),
+            "2".to_owned(),
+            "--verify-dtlz".to_owned(),
+            "/tmp/bench.dtlz".to_owned(),
+        ])
+        .expect_err("verify DTLZ with multiple iterations must be rejected");
+        assert_eq!(err, "bench-file: --verify-dtlz requires --iters 1");
     }
 
     #[test]
