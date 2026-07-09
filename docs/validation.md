@@ -225,6 +225,11 @@ GPT-2/BPE merge metadata is also parsed strictly: each merge line must contain
 exactly two non-empty token pieces, and duplicate merge pairs are rejected
 instead of letting a later entry overwrite the earlier rank. This keeps BPE
 rank ordering a single unambiguous function of the GGUF metadata.
+The ByteBPE tokenizer applies merges with a priority queue over linked token
+nodes so large inputs do not require a full rank scan plus `Vec::remove` for
+every merge. The test `byte_bpe_priority_queue_matches_rank_scan_reference`
+checks the optimized path against the direct rank-scan rule on overlapping
+merge patterns, preserving the rank-then-leftmost tie semantics.
 Tokenizer model metadata is not silently ignored: `tokenizer.ggml.model = gpt2`
 selects the ByteBPE path even when the merge list is empty, SentencePiece model
 names select the SentencePiece path, and unknown model names or wrong metadata
@@ -812,15 +817,15 @@ bench-file: source_input_bytes=100000000 measured_input_bytes=47 total_input_byt
 ```
 
 Observed Qwen2.5 Q8_0 target-model token-prefix smoke on the canonical enwik8
-stream, using a smaller byte cap to keep the BPE tokenization prepass bounded:
+stream:
 
 ```sh
-cargo run --release -p xtask -- bench-file --model /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --input /tmp/enwik8 --limit-bytes 4096 --limit-tokens 16 --n-ctx 64 --threads 8 --iters 1 --no-warmup
+cargo run --release -p xtask -- bench-file --model /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --input /tmp/enwik8 --limit-bytes 1048576 --limit-tokens 16 --n-ctx 64 --threads 8 --iters 1 --no-warmup
 ```
 
 ```text
-bench-file model=/tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf input=/tmp/enwik8 limit_bytes=4096 limit_tokens=16 iters=1 warmup=false threads=8 n_ctx=64 overlap=16 model_sha256=d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8 input_sha256=4fe5a21798e43c8258edcf9f3a98fac2df77613b4d2add15a2a3082eedc7b0b2
-bench-file: source_input_bytes=100000000 measured_input_bytes=53 total_input_bytes=53 tokens=16 total_tokens=16 payload_bytes=14 dtlz_bytes=70 payload_bits_per_byte=2.113208 dtlz_bits_per_byte=10.566038 compression_ratio=1.320755 elapsed_ms=51050.146 input_bytes_per_s=1.038 tokens_per_s=0.313
+bench-file model=/tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=16 iters=1 warmup=false threads=8 n_ctx=64 overlap=16 model_sha256=d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8 input_sha256=4fe5a21798e43c8258edcf9f3a98fac2df77613b4d2add15a2a3082eedc7b0b2
+bench-file: source_input_bytes=100000000 measured_input_bytes=53 total_input_bytes=53 tokens=16 total_tokens=16 payload_bytes=14 dtlz_bytes=70 payload_bits_per_byte=2.113208 dtlz_bits_per_byte=10.566038 compression_ratio=1.320755 elapsed_ms=50439.929 input_bytes_per_s=1.051 tokens_per_s=0.317
 ```
 
 This is input-scale and round-trip evidence for the `bench-file`
@@ -841,9 +846,10 @@ tokenization, so the enwik8 first-1MB measurement can use
 then truncates the tokenized stream and detokenizes that prefix back to bytes
 before measurement; this gives a reproducible target-model prefix smoke path
 for long runs while keeping the reported byte counts and SHA-256 tied to the
-actual bytes round-tripped. Tokenization still happens before token truncation,
-so combine `--limit-tokens` with a small `--limit-bytes` value for fast
-preflights on expensive BPE tokenizers. Omit `--limit-tokens` for the final
+actual bytes round-tripped. Tokenization still happens before token truncation.
+The ByteBPE path uses a priority-queue merge implementation, so 1MB byte caps
+are usable for Qwen2.5 prefix preflights; use smaller `--limit-bytes` values
+only when an even faster smoke is needed. Omit `--limit-tokens` for the final
 first-1MB acceptance measurement. `--threads N` fixes the model parallelism for
 reproducible benchmark notes, and `--no-warmup` skips the extra
 pre-measurement round-trip for long target-model measurements; the measured

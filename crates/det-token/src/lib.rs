@@ -1,4 +1,5 @@
-use std::collections::BTreeMap;
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, BinaryHeap};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TokenError {
@@ -288,24 +289,65 @@ impl ByteBpeTokenizer {
             );
         }
 
-        loop {
-            let mut best: Option<(usize, usize, u32)> = None;
-            for i in 0..ids.len().saturating_sub(1) {
-                if let Some(&(rank, merged_id)) = self.merge_ranks.get(&(ids[i], ids[i + 1])) {
-                    match best {
-                        Some((best_rank, _, _)) if best_rank <= rank => {}
-                        _ => best = Some((rank, i, merged_id)),
-                    }
-                }
-            }
-            let Some((_, index, merged_id)) = best else {
-                break;
-            };
-            ids[index] = merged_id;
-            ids.remove(index + 1);
+        if ids.len() < 2 {
+            return Ok(ids);
         }
 
-        Ok(ids)
+        let mut prev: Vec<Option<usize>> = (0..ids.len())
+            .map(|i| if i == 0 { None } else { Some(i - 1) })
+            .collect();
+        let mut next: Vec<Option<usize>> = (0..ids.len())
+            .map(|i| {
+                if i + 1 == ids.len() {
+                    None
+                } else {
+                    Some(i + 1)
+                }
+            })
+            .collect();
+        let mut alive = vec![true; ids.len()];
+        let mut heap = BinaryHeap::new();
+        for i in 0..ids.len() - 1 {
+            push_bpe_pair(&mut heap, &self.merge_ranks, &ids, i, Some(i + 1));
+        }
+
+        while let Some(Reverse((rank, index, merged_id))) = heap.pop() {
+            if !alive[index] {
+                continue;
+            }
+            let Some(right) = next[index] else {
+                continue;
+            };
+            if !alive[right] {
+                continue;
+            }
+            if self.merge_ranks.get(&(ids[index], ids[right])) != Some(&(rank, merged_id)) {
+                continue;
+            }
+
+            ids[index] = merged_id;
+            alive[right] = false;
+            let after = next[right];
+            next[index] = after;
+            if let Some(after) = after {
+                prev[after] = Some(index);
+            }
+
+            if let Some(left) = prev[index] {
+                push_bpe_pair(&mut heap, &self.merge_ranks, &ids, left, Some(index));
+            }
+            push_bpe_pair(&mut heap, &self.merge_ranks, &ids, index, next[index]);
+        }
+
+        let mut out = Vec::new();
+        let mut index = Some(0usize);
+        while let Some(i) = index {
+            if alive[i] {
+                out.push(ids[i]);
+            }
+            index = next[i];
+        }
+        Ok(out)
     }
 
     pub fn detokenize_bytes(&self, tokens: &[u32]) -> Result<Vec<u8>, TokenError> {
@@ -318,6 +360,20 @@ impl ByteBpeTokenizer {
             out.extend_from_slice(bytes);
         }
         Ok(out)
+    }
+}
+
+fn push_bpe_pair(
+    heap: &mut BinaryHeap<Reverse<(usize, usize, u32)>>,
+    merge_ranks: &BTreeMap<(u32, u32), (usize, u32)>,
+    ids: &[u32],
+    left: usize,
+    right: Option<usize>,
+) {
+    if let Some(right) = right {
+        if let Some(&(rank, merged_id)) = merge_ranks.get(&(ids[left], ids[right])) {
+            heap.push(Reverse((rank, left, merged_id)));
+        }
     }
 }
 
@@ -730,6 +786,32 @@ mod tests {
             [b'b' as u32, aba]
         );
         assert_eq!(tok.detokenize_bytes(&[aba]).expect("detok"), b"aba");
+    }
+
+    #[test]
+    fn byte_bpe_priority_queue_matches_rank_scan_reference() {
+        let mut tokens: Vec<String> = (0..=255).map(|b| format!("<0x{b:02X}>")).collect();
+        for token in ["aa", "aaa", "aaaa", "ab", "ba", "aba", "abab", "baba"] {
+            tokens.push(token.to_owned());
+        }
+        let merges = vec![
+            "<0x61> <0x61>".to_owned(),
+            "aa <0x61>".to_owned(),
+            "aaa <0x61>".to_owned(),
+            "<0x61> <0x62>".to_owned(),
+            "<0x62> <0x61>".to_owned(),
+            "ab <0x61>".to_owned(),
+            "ab ab".to_owned(),
+            "ba ba".to_owned(),
+        ];
+        let tok = ByteBpeTokenizer::from_tokens_and_merges(&tokens, &merges).expect("bpe");
+
+        for input in [b"aaaaa".as_slice(), b"abababa", b"bababaa", b"aaabaaa"] {
+            assert_eq!(
+                tok.tokenize_bytes(input).expect("priority queue"),
+                tokenize_bpe_by_rank_scan(&tok, input).expect("rank scan")
+            );
+        }
     }
 
     #[test]
@@ -1192,6 +1274,38 @@ mod tests {
         let input = (0..=255u8).collect::<Vec<_>>();
         let tokens = tokenizer.tokenize_bytes(&input).expect("tokenize");
         assert_eq!(tokenizer.detokenize_bytes(&tokens).expect("detok"), input);
+    }
+
+    fn tokenize_bpe_by_rank_scan(
+        tokenizer: &ByteBpeTokenizer,
+        input: &[u8],
+    ) -> Result<Vec<u32>, TokenError> {
+        let mut ids = Vec::with_capacity(input.len());
+        for &byte in input {
+            ids.push(
+                tokenizer.byte_to_token[byte as usize]
+                    .ok_or(TokenError::MissingByteFallback(byte))?,
+            );
+        }
+
+        loop {
+            let mut best: Option<(usize, usize, u32)> = None;
+            for i in 0..ids.len().saturating_sub(1) {
+                if let Some(&(rank, merged_id)) = tokenizer.merge_ranks.get(&(ids[i], ids[i + 1])) {
+                    match best {
+                        Some((best_rank, _, _)) if best_rank <= rank => {}
+                        _ => best = Some((rank, i, merged_id)),
+                    }
+                }
+            }
+            let Some((_, index, merged_id)) = best else {
+                break;
+            };
+            ids[index] = merged_id;
+            ids.remove(index + 1);
+        }
+
+        Ok(ids)
     }
 
     fn gpt2_byte_unicode_token_bytes(byte: u8) -> Vec<u8> {
