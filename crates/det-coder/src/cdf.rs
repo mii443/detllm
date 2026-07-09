@@ -12,14 +12,28 @@ pub enum CdfError {
     TotalTooLarge,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Cdf {
     pub freq: Vec<u32>,
     pub cum: Vec<u64>,
     pub total: u64,
 }
 
+#[derive(Debug, Default)]
+pub struct CdfScratch {
+    exp: Vec<f32>,
+    cdf: Cdf,
+}
+
 pub fn logits_to_cdf(logits: &[f32]) -> Result<Cdf, CdfError> {
+    let mut scratch = CdfScratch::default();
+    logits_to_cdf_with_scratch(logits, &mut scratch).cloned()
+}
+
+pub fn logits_to_cdf_with_scratch<'a>(
+    logits: &[f32],
+    scratch: &'a mut CdfScratch,
+) -> Result<&'a Cdf, CdfError> {
     if logits.is_empty() {
         return Err(CdfError::Empty);
     }
@@ -36,28 +50,32 @@ pub fn logits_to_cdf(logits: &[f32]) -> Result<Cdf, CdfError> {
         }
     }
 
-    let mut e = Vec::with_capacity(logits.len());
+    scratch.exp.clear();
+    scratch.exp.reserve(logits.len());
     for &x in logits {
-        e.push(exp_f32((x - max).max(-88.0)));
+        scratch.exp.push(exp_f32((x - max).max(-88.0)));
     }
-    let z = sum_f32_ref(&e);
+    let z = sum_f32_ref(&scratch.exp);
 
-    let mut freq = Vec::with_capacity(logits.len());
-    let mut cum = Vec::with_capacity(logits.len());
+    scratch.cdf.freq.clear();
+    scratch.cdf.freq.reserve(logits.len());
+    scratch.cdf.cum.clear();
+    scratch.cdf.cum.reserve(logits.len());
     let mut total = 0u64;
-    for ei in e {
+    for &ei in &scratch.exp {
         let p = ei / z;
         let g = (p * M) as u32;
         let f = g + 1;
-        cum.push(total);
-        freq.push(f);
+        scratch.cdf.cum.push(total);
+        scratch.cdf.freq.push(f);
         total += f as u64;
     }
 
     if total >= (1u64 << 31) {
         return Err(CdfError::TotalTooLarge);
     }
-    Ok(Cdf { freq, cum, total })
+    scratch.cdf.total = total;
+    Ok(&scratch.cdf)
 }
 
 pub fn uniform_cdf(symbols: usize) -> Result<Cdf, CdfError> {
@@ -151,6 +169,20 @@ mod tests {
             ]
         );
         assert_eq!(cdf.total, (M as u64) + 4);
+    }
+
+    #[test]
+    fn logits_to_cdf_scratch_matches_owned_api_and_reuses_buffers() {
+        let logits = [0.0, 1.5, -2.0, 0.25];
+        let expected = logits_to_cdf(&logits).expect("owned cdf");
+        let mut scratch = CdfScratch::default();
+        let got = logits_to_cdf_with_scratch(&logits, &mut scratch).expect("scratch cdf");
+        assert_eq!(got, &expected);
+
+        let second = logits_to_cdf_with_scratch(&[4.0, -1.0], &mut scratch).expect("second cdf");
+        assert_eq!(second.freq.len(), 2);
+        assert_eq!(second.cum.len(), 2);
+        assert_eq!(second.total, second.freq.iter().map(|&f| f as u64).sum());
     }
 
     #[test]

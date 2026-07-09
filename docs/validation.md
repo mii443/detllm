@@ -1011,13 +1011,13 @@ cargo run --release -p xtask --features parallel,simd -- bench-file --model /tmp
 ```
 
 ```text
-bench-file-progress phase=encode tokens_done=8 tokens_total=16 elapsed_ms=1536.689 tokens_per_s=5.206
-bench-file-progress phase=encode tokens_done=16 tokens_total=16 elapsed_ms=3099.098 tokens_per_s=5.163
-bench-file-progress phase=decode tokens_done=8 tokens_total=16 elapsed_ms=1529.939 tokens_per_s=5.229
-bench-file-progress phase=decode tokens_done=16 tokens_total=16 elapsed_ms=3086.035 tokens_per_s=5.185
+bench-file-progress phase=encode tokens_done=8 tokens_total=16 elapsed_ms=1545.991 tokens_per_s=5.175
+bench-file-progress phase=encode tokens_done=16 tokens_total=16 elapsed_ms=3098.121 tokens_per_s=5.164
+bench-file-progress phase=decode tokens_done=8 tokens_total=16 elapsed_ms=1569.755 tokens_per_s=5.096
+bench-file-progress phase=decode tokens_done=16 tokens_total=16 elapsed_ms=3136.206 tokens_per_s=5.102
 bench-file model=/tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf input=/tmp/enwik8 limit_bytes=1048576 limit_tokens=16 iters=1 warmup=false threads=8 n_ctx=64 overlap=16 model_sha256=d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8 input_sha256=4fe5a21798e43c8258edcf9f3a98fac2df77613b4d2add15a2a3082eedc7b0b2
-bench-file: source_input_bytes=100000000 measured_input_bytes=53 total_input_bytes=53 tokens=16 total_tokens=16 payload_bytes=14 dtlz_bytes=70 payload_bits_per_byte=2.113208 dtlz_bits_per_byte=10.566038 compression_ratio=1.320755 elapsed_ms=6293.584 input_bytes_per_s=8.421 tokens_per_s=2.542
-bench-file-phases: model_read_ms=2730.935 gguf_parse_ms=20.793 model_load_ms=1956.152 tokenizer_setup_ms=267.905 input_read_ms=191.948 tokenize_ms=941.857 token_prefix_ms=9.582 warmup_ms=0.000 measured_ms=6293.584 total_ms=17843.156
+bench-file: source_input_bytes=100000000 measured_input_bytes=53 total_input_bytes=53 tokens=16 total_tokens=16 payload_bytes=14 dtlz_bytes=70 payload_bits_per_byte=2.113208 dtlz_bits_per_byte=10.566038 compression_ratio=1.320755 elapsed_ms=6349.664 input_bytes_per_s=8.347 tokens_per_s=2.520
+bench-file-phases: model_read_ms=2764.322 gguf_parse_ms=21.989 model_load_ms=1895.792 tokenizer_setup_ms=271.305 input_read_ms=186.313 tokenize_ms=830.423 token_prefix_ms=9.451 warmup_ms=0.000 measured_ms=6349.664 total_ms=17906.462
 ```
 
 This is input-scale and round-trip evidence for the `bench-file`
@@ -1061,7 +1061,10 @@ reuse, the 16-token measured encode/decode loop is roughly 6.2 seconds. The
 model forward path also reuses `ForwardWorkspace` scratch buffers across
 tokens, avoiding per-token allocation of the large hidden-state, projection,
 attention, and feed-forward vectors, and attention reads KV-cache prefix slices
-directly instead of copying per-head key/value windows.
+directly instead of copying per-head key/value windows. The codec CDF path also
+reuses the exp, frequency, and cumulative buffers across tokens; tests verify
+the scratch API is bit-for-bit equivalent to the owned `logits_to_cdf` API and
+that streaming codec payloads still match the direct replay rule.
 This is the harness to use for target-model enwik8 first-1MB measurements; the
 bundled fixtures remain smoke and input-scale checks.
 The harness applies the same tokenizer/model vocabulary equality check and

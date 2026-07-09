@@ -511,7 +511,7 @@ fn encode_tokens_with_model(
     for pos in 0..tokens.len() {
         state.sync(pos, &tokens[..pos], overlap)?;
         let cdf = state.cdf()?;
-        encode_symbol(&mut enc, &cdf, tokens[pos])?;
+        encode_symbol(&mut enc, cdf, tokens[pos])?;
         state.advance(tokens[pos])?;
     }
     Ok(enc.finish())
@@ -533,7 +533,7 @@ fn decode_tokens_with_model(
     for pos in 0..token_len {
         state.sync(pos, &tokens, overlap)?;
         let cdf = state.cdf()?;
-        tokens.push(decode_symbol(&mut dec, &cdf)?);
+        tokens.push(decode_symbol(&mut dec, cdf)?);
         state.advance(*tokens.last().expect("decoded token was just pushed"))?;
     }
     Ok(tokens)
@@ -562,7 +562,7 @@ fn decode_bytes_with_model(
         let pos = tokens.len();
         state.sync(pos, &tokens, overlap)?;
         let cdf = state.cdf()?;
-        let token = decode_symbol(&mut dec, &cdf)?;
+        let token = decode_symbol(&mut dec, cdf)?;
         let token_u32 =
             u32::try_from(token).map_err(|_| format!("decoded token too large: {token}"))?;
         let piece = tokenizer
@@ -587,6 +587,8 @@ struct WindowedModelState<'a> {
     cache: det_model::KvCache,
     workspace: det_model::ForwardWorkspace,
     logits: Vec<f32>,
+    uniform_cdf: det_coder::Cdf,
+    cdf_scratch: det_coder::CdfScratch,
 }
 
 impl<'a> WindowedModelState<'a> {
@@ -598,6 +600,8 @@ impl<'a> WindowedModelState<'a> {
         let workspace = model
             .forward_workspace(n_ctx)
             .map_err(|e| format!("workspace error: {e:?}"))?;
+        let uniform_cdf = det_coder::uniform_cdf(model.output.rows())
+            .map_err(|e| format!("uniform CDF error: {e:?}"))?;
         Ok(Self {
             model,
             n_ctx,
@@ -607,6 +611,8 @@ impl<'a> WindowedModelState<'a> {
             cache,
             workspace,
             logits: vec![0.0f32; model.output.rows()],
+            uniform_cdf,
+            cdf_scratch: det_coder::CdfScratch::default(),
         })
     }
 
@@ -633,12 +639,12 @@ impl<'a> WindowedModelState<'a> {
         Ok(())
     }
 
-    fn cdf(&self) -> Result<det_coder::Cdf, String> {
+    fn cdf(&mut self) -> Result<&det_coder::Cdf, String> {
         if self.context_len == 0 {
-            det_coder::uniform_cdf(self.model.output.rows())
-                .map_err(|e| format!("uniform CDF error: {e:?}"))
+            Ok(&self.uniform_cdf)
         } else {
-            det_coder::logits_to_cdf(&self.logits).map_err(|e| format!("CDF error: {e:?}"))
+            det_coder::logits_to_cdf_with_scratch(&self.logits, &mut self.cdf_scratch)
+                .map_err(|e| format!("CDF error: {e:?}"))
         }
     }
 
