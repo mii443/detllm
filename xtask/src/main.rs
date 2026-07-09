@@ -1658,7 +1658,7 @@ fn validate_ci_workflow_text(text: &str) -> Result<(), String> {
         ),
         (
             "wasmtime download retry",
-            "curl -fsSL --retry 3 --retry-all-errors --retry-delay 2",
+            "curl -fsSL --retry 10 --retry-all-errors --retry-delay 5 --retry-max-time 180",
         ),
         (
             "wasm selftest execution",
@@ -3665,7 +3665,10 @@ floating_table = { version = "2.0" }
             "{err}"
         );
 
-        let missing_retry = valid.replace("--retry 3 --retry-all-errors --retry-delay 2 ", "");
+        let missing_retry = valid.replace(
+            "--retry 10 --retry-all-errors --retry-delay 5 --retry-max-time 180 ",
+            "",
+        );
         let err = validate_ci_workflow_text(&missing_retry).expect_err("missing retry");
         assert!(err.contains("wasmtime download retry"), "{err}");
     }
@@ -3709,7 +3712,7 @@ jobs:
     env:
       XDG_CACHE_HOME: /tmp/detllm-wasmtime-cache
     steps:
-      - run: curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 https://example.invalid/wasmtime.tar.xz -o wasmtime.tar.xz
+      - run: curl -fsSL --retry 10 --retry-all-errors --retry-delay 5 --retry-max-time 180 https://example.invalid/wasmtime.tar.xz -o wasmtime.tar.xz
       - run: cargo build --workspace --target wasm32-wasip1
       - run: wasmtime target/wasm32-wasip1/debug/detllm.wasm selftest
       - run: cargo run -p det-cli -- logits -m testdata/tiny-f32.gguf --tokens "$(cat testdata/tiny.tokens.txt)" --hash --chunk-size 3

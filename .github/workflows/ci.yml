@@ -124,7 +124,7 @@ jobs:
       - name: Install wasmtime
         run: |
           set -eu
-          curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 "https://github.com/bytecodealliance/wasmtime/releases/download/${WASMTIME_VERSION}/wasmtime-${WASMTIME_VERSION}-x86_64-linux.tar.xz" -o wasmtime.tar.xz
+          curl -fsSL --retry 10 --retry-all-errors --retry-delay 5 --retry-max-time 180 "https://github.com/bytecodealliance/wasmtime/releases/download/${WASMTIME_VERSION}/wasmtime-${WASMTIME_VERSION}-x86_64-linux.tar.xz" -o wasmtime.tar.xz
           tar -xf wasmtime.tar.xz
           echo "$PWD/wasmtime-${WASMTIME_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
       - run: cargo build --workspace --target wasm32-wasip1
