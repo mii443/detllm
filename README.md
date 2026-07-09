@@ -128,8 +128,9 @@ the following acceptance evidence is still missing:
   blocker.
 - Further SmolLM2 reference-quality work remains: three-token raw-logits
   evidence passes the 0.999 cosine threshold, and 8-token log-probability target
-  checks pass, but the current 8-token raw-logits comparison is below the 0.999
-  per-row cosine target. Broader target-model checks are also still needed
+  checks pass, but the current tokenizer-backed 8-token raw-logits comparison
+  still has a first row below the 0.999 per-row cosine target. Broader
+  target-model checks are also still needed
   beyond the current TinyLlama/Qwen2.5/SmolLM2 logits/log-probability smoke
   evidence, TinyLlama Q4_0 raw-logits evidence, and TinyLlama Q8/Q4 plus
   Qwen2.5 mixed-byte round-trip smoke.
