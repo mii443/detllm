@@ -125,14 +125,11 @@ quality measurements.
 The implementation is not yet complete against the full design. In particular,
 the following acceptance evidence is still missing:
 
-- Further SmolLM2 reference-quality work remains: three-token raw-logits
-  evidence passes the 0.999 cosine threshold, and 8-token log-probability target
-  checks pass, but the current tokenizer-backed 8-token raw-logits comparison
-  still has a first row below the 0.999 per-row cosine target. Broader
-  target-model checks are also still needed
+- Broader target-model reference-quality checks are still needed
   beyond the current TinyLlama/Qwen2.5/SmolLM2 logits/log-probability smoke
-  evidence, TinyLlama Q4_0 raw-logits evidence, and TinyLlama Q8/Q4,
-  Qwen2.5, plus SmolLM2 mixed-byte round-trip smoke.
+  evidence, SmolLM2 tokenizer-backed 8-token raw-logits evidence, TinyLlama
+  Q4_0 raw-logits evidence, and TinyLlama Q8/Q4, Qwen2.5, plus SmolLM2
+  mixed-byte round-trip smoke.
 - Target-model enwik8 first-1MB compression-rate measurement with
   `xtask bench-file`; the bundled tiny fixture has input-scale enwik8 evidence.
 - Broader benchmark results on real target hardware beyond the current bundled

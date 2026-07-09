@@ -118,7 +118,7 @@ GGUF標準レイアウトに従う: ブロックサイズ32、各ブロックは
 
 ### 3.2 活性化の量子化 `Q8A`(自前形式、メモリ上のみ)
 
-Q8_0重みとの内積のため、活性ベクトルをブロック32で量子化する。**llama.cppの実装(逆数乗算)とは意図的に異なる**、自前の定義:
+Q8_0重みとの内積のため、活性ベクトルをブロック32で量子化する。参照品質を保つため、整数丸めはhalf-away-from-zeroで固定する。逆数 `1/d` の事前計算は使わず、除算結果を明示的に丸める:
 
 ```
 for each block of 32 f32 values x[0..32]:
@@ -126,12 +126,12 @@ for each block of 32 f32 values x[0..32]:
     if amax == 0.0 { d = 0.0; q[i] = 0 for all i }
     else {
         d = amax / 127.0                     // f32除算(正しい丸め)
-        q[i] = clamp(round_ties_even_i32(x[i] / d), -127, 127)  // f32除算 → 明示的丸め
+        q[i] = clamp(round_half_away_i32(x[i] / d), -127, 127)  // f32除算 → 明示的丸め
     }
     store d as f32 (f16に落とさない)
 ```
 
-`round_ties_even_i32` は§4.4で定義。逆数 `1/d` を掛ける最適化は丸めが1回増えるため禁止(除算はハードウェアで十分速い)。
+`round_half_away_i32` は§4.4で定義。逆数 `1/d` を掛ける最適化は丸めが1回増えるため禁止(除算はハードウェアで十分速い)。
 
 ### 3.3 Q8_0 × Q8A 内積(1ブロック)
 
@@ -198,6 +198,14 @@ pub fn round_ties_even_i32(x: f32) -> i32 {
 ```
 
 `round_ties_even` はIEEEの roundToIntegralTiesToEven であり全ターゲットで一致する。Wasmでは `f32.nearest` に対応する。
+
+Q8Aの量子化では、参照実装との誤差を抑えるためhalf-away-from-zeroを使う。入力は有限かつ `|x| <= 127` の範囲に正規化済みなので、次の演算列で決定的に定義する:
+
+```rust
+pub fn round_half_away_i32(x: f32) -> i32 {
+    if x < 0.0 { (x - 0.5) as i32 } else { (x + 0.5) as i32 }
+}
+```
 
 ### 4.5 f16→f32
 

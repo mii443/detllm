@@ -2,7 +2,7 @@
 
 extern crate alloc;
 
-use det_num::{dot_f32_ref, f16_to_f32, round_ties_even_i32};
+use det_num::{dot_f32_ref, f16_to_f32};
 
 pub const BLOCK: usize = 32;
 pub const Q4K_BLOCK: usize = 256;
@@ -88,10 +88,19 @@ pub fn try_quantize_q8a_block(input: &[f32]) -> Result<Q8ABlock, QuantError> {
 
     let d = amax / 127.0;
     for (dst, &x) in q.iter_mut().zip(input) {
-        let rounded = round_ties_even_i32(x / d).clamp(-127, 127);
+        let rounded = round_half_away_from_zero_i32(x / d).clamp(-127, 127);
         *dst = rounded as i8;
     }
     Ok(Q8ABlock { d, q })
+}
+
+#[inline]
+fn round_half_away_from_zero_i32(x: f32) -> i32 {
+    if x < 0.0 {
+        (x - 0.5) as i32
+    } else {
+        (x + 0.5) as i32
+    }
 }
 
 pub fn q8_0_block_from_gguf(scale_f16: u16, q: [i8; BLOCK]) -> Result<Q8_0Block, QuantError> {
@@ -598,7 +607,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn q8a_quantizes_ties_even_and_zero() {
+    fn q8a_quantizes_half_away_from_zero_and_zero() {
         let zero = [0.0f32; BLOCK];
         let q = quantize_q8a_block(&zero);
         assert_eq!(q.d.to_bits(), 0.0f32.to_bits());
@@ -608,10 +617,12 @@ mod tests {
         input[0] = 1.0;
         input[1] = -1.0;
         input[2] = 0.5 / 127.0;
+        input[3] = -0.5 / 127.0;
         let q = quantize_q8a_block(&input);
         assert_eq!(q.q[0], 127);
         assert_eq!(q.q[1], -127);
-        assert_eq!(q.q[2], 0);
+        assert_eq!(q.q[2], 1);
+        assert_eq!(q.q[3], -1);
     }
 
     #[test]
