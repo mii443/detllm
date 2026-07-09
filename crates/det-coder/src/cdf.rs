@@ -129,7 +129,11 @@ impl Cdf {
         self.symbol_for_validated(value)
     }
 
-    pub(crate) fn symbol_for_validated(&self, value: u64) -> Option<usize> {
+    /// Look up a symbol in a CDF that the caller already knows is valid.
+    ///
+    /// This avoids the full O(vocabulary) validation scan in hot decode paths
+    /// where the CDF was just built by this crate or validated by the caller.
+    pub fn symbol_for_validated(&self, value: u64) -> Option<usize> {
         if self.cum.is_empty() || self.cum.len() != self.freq.len() || value >= self.total {
             return None;
         }

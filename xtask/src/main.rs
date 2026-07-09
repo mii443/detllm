@@ -2307,7 +2307,7 @@ fn decode_tokens_with_model_progress(
             .decode_freq(cdf.total)
             .map_err(|e| format!("range decode error: {e:?}"))?;
         let token = cdf
-            .symbol_for(value)
+            .symbol_for_validated(value)
             .ok_or_else(|| format!("CDF lookup failed for value {value}"))?;
         dec.advance(cdf.cum[token], cdf.freq[token] as u64, cdf.total)
             .map_err(|e| format!("range advance error: {e:?}"))?;
