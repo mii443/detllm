@@ -447,6 +447,26 @@ fn write_tokenizer_summary(out: &mut String, gguf: &det_gguf::Gguf) {
                 .expect("write to string");
         }
     }
+    match det_token::byte_coverage_from_gguf(gguf) {
+        Ok(coverage) => {
+            writeln!(
+                out,
+                "model-info byte-coverage tokens={} single_byte={} emittable_single_byte={} missing={} missing_emittable={} missing_first={} missing_emittable_first={}",
+                coverage.token_count,
+                coverage.single_byte_tokens,
+                coverage.emittable_single_byte_tokens,
+                coverage.missing_bytes.len(),
+                coverage.missing_emittable_bytes.len(),
+                summarize_bytes(&coverage.missing_bytes),
+                summarize_bytes(&coverage.missing_emittable_bytes)
+            )
+            .expect("write to string");
+        }
+        Err(e) => {
+            writeln!(out, "model-info byte-coverage status=error error={e:?}")
+                .expect("write to string");
+        }
+    }
 }
 
 fn write_config_summary(out: &mut String, gguf: &det_gguf::Gguf) {
@@ -817,6 +837,23 @@ fn summarize_str(value: &str) -> String {
             return out;
         }
         out.push(ch);
+    }
+    out
+}
+
+fn summarize_bytes(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return "none".to_owned();
+    }
+    let mut out = String::new();
+    for (idx, byte) in bytes.iter().take(16).enumerate() {
+        if idx > 0 {
+            out.push(',');
+        }
+        write!(out, "{byte:02x}").expect("write to string");
+    }
+    if bytes.len() > 16 {
+        out.push_str(",...");
     }
     out
 }
@@ -2216,6 +2253,9 @@ mod tests {
         assert!(text
             .contains("sha256=ce2aa01900a63585a409ef995a2827dcac81e1678e38a1ab0733302ba82ce79b"));
         assert!(text.contains("model-info tokenizer status=ok kind=byte_fallback"));
+        assert!(text.contains(
+            "model-info byte-coverage tokens=256 single_byte=256 emittable_single_byte=256 missing=0 missing_emittable=0 missing_first=none missing_emittable_first=none"
+        ));
         assert!(text.contains("model-info config status=ok block_count=1 embedding_length=4"));
         assert!(text.contains("model-info tensor-inventory total=12"));
         assert!(text.contains("F32=12"));

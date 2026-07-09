@@ -35,6 +35,15 @@ pub enum Tokenizer {
     SentencePiece(SentencePieceTokenizer),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ByteCoverage {
+    pub token_count: usize,
+    pub single_byte_tokens: usize,
+    pub emittable_single_byte_tokens: usize,
+    pub missing_bytes: Vec<u8>,
+    pub missing_emittable_bytes: Vec<u8>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ByteBpeTokenizer {
     byte_to_token: [Option<u32>; 256],
@@ -113,6 +122,12 @@ impl Tokenizer {
             Self::SentencePiece(t) => t.detokenize_bytes(tokens),
         }
     }
+}
+
+pub fn byte_coverage_from_gguf(gguf: &det_gguf::Gguf) -> Result<ByteCoverage, TokenError> {
+    let tokens = gguf_tokens(gguf)?;
+    let emit_mask = optional_gguf_emit_mask(gguf, tokens.len())?;
+    Ok(byte_coverage_from_tokens(tokens, emit_mask.as_deref()))
 }
 
 impl ByteFallbackTokenizer {
@@ -513,6 +528,39 @@ fn token_type_is_emittable(token_type: i64) -> Result<bool, TokenError> {
     }
 }
 
+fn byte_coverage_from_tokens(tokens: &[String], emit_mask: Option<&[bool]>) -> ByteCoverage {
+    let mut present = [false; 256];
+    let mut emittable = [false; 256];
+    let mut single_byte_tokens = 0usize;
+    let mut emittable_single_byte_tokens = 0usize;
+    for (idx, token) in tokens.iter().enumerate() {
+        let bytes = token_piece_bytes(token);
+        if let [byte] = bytes.as_slice() {
+            single_byte_tokens += 1;
+            present[*byte as usize] = true;
+            if token_is_emittable(emit_mask, idx) {
+                emittable_single_byte_tokens += 1;
+                emittable[*byte as usize] = true;
+            }
+        }
+    }
+    ByteCoverage {
+        token_count: tokens.len(),
+        single_byte_tokens,
+        emittable_single_byte_tokens,
+        missing_bytes: missing_byte_values(&present),
+        missing_emittable_bytes: missing_byte_values(&emittable),
+    }
+}
+
+fn missing_byte_values(present: &[bool; 256]) -> Vec<u8> {
+    present
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, &exists)| (!exists).then_some(idx as u8))
+        .collect()
+}
+
 fn parse_merge(merge: &str) -> Result<(&str, &str), TokenError> {
     let mut parts = merge.split(' ');
     let left = parts
@@ -812,6 +860,23 @@ mod tests {
 
         assert_eq!(tok.tokenize_bytes(b"ab").expect("tokens"), [97, 98]);
         assert_eq!(tok.detokenize_bytes(&[control_ab]).expect("detok"), b"ab");
+    }
+
+    #[test]
+    fn byte_coverage_reports_present_and_emittable_bytes() {
+        let mut tokens = canonical_byte_tokens();
+        tokens.pop();
+        tokens.push("ab".to_owned());
+        let mut emit_mask = vec![true; tokens.len()];
+        emit_mask[b'A' as usize] = false;
+
+        let coverage = byte_coverage_from_tokens(&tokens, Some(&emit_mask));
+
+        assert_eq!(coverage.token_count, 256);
+        assert_eq!(coverage.single_byte_tokens, 255);
+        assert_eq!(coverage.emittable_single_byte_tokens, 254);
+        assert_eq!(coverage.missing_bytes, [255]);
+        assert_eq!(coverage.missing_emittable_bytes, [b'A', 255]);
     }
 
     #[test]

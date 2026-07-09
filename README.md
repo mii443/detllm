@@ -67,16 +67,18 @@ input SHA-256 values, measured byte/token counts, payload and DTLZ bpb,
 compression ratio, and throughput so real enwik8 measurements can be copied
 directly into the validation notes. `model-info` records a lightweight GGUF
 intake summary without loading all weights, including model SHA-256, parsed
-config, tokenizer kind, vocabulary/codec compatibility, tensor inventory, and
-required tensor shape/type status.
+config, tokenizer kind, byte coverage, vocabulary/codec compatibility, tensor
+inventory, and required tensor shape/type status.
 
 ## Remaining Work
 
 The implementation is not yet complete against the full design. In particular,
 the following acceptance evidence is still missing:
 
-- SmolLM2 external model validation, plus broader TinyLlama / Qwen2.5
-  reference-quality checks beyond the current minimal smoke.
+- SmolLM2 full codec validation with a tokenizer/model source that covers all
+  256 input bytes; the tested Unsloth Q8_0 GGUF has 21 missing byte tokens.
+- Broader TinyLlama / Qwen2.5 / SmolLM2 reference-quality checks beyond the
+  current minimal smoke.
 - HF transformers or llama.cpp cosine-similarity sanity checks.
 - enwik8 first-1MB compression-rate measurement with `xtask bench-file`.
 - Criterion or equivalent full benchmark results on real target hardware.

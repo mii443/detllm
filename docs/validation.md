@@ -425,10 +425,11 @@ cargo run -p xtask -- model-info --model model.gguf
 
 `model-info` is the lightweight first step for TinyLlama / SmolLM2 / Qwen2.5
 GGUF validation. It parses the file, reports the model SHA-256, selected GGUF
-metadata, tokenizer kind, deterministic `LlamaConfig` interpretation, tensor
-type inventory, tokenizer/model/codec vocabulary compatibility, and the
-required tensor shape/type status. It does not instantiate `F32Llama`, so it
-can be run before a full logits or compression pass on larger external GGUFs.
+metadata, tokenizer kind, byte coverage, deterministic `LlamaConfig`
+interpretation, tensor type inventory, tokenizer/model/codec vocabulary
+compatibility, and the required tensor shape/type status. It does not
+instantiate `F32Llama`, so it can be run before a full logits or compression
+pass on larger external GGUFs.
 
 Observed smoke output on the bundled F32 fixture:
 
@@ -438,6 +439,7 @@ model-info metadata key=general.architecture string=llama
 model-info metadata key=llama.vocab_size u32=256
 model-info metadata key=tokenizer.ggml.tokens array<string>[256]
 model-info tokenizer status=ok kind=byte_fallback
+model-info byte-coverage tokens=256 single_byte=256 emittable_single_byte=256 missing=0 missing_emittable=0 missing_first=none missing_emittable_first=none
 model-info config status=ok block_count=1 embedding_length=4 feed_forward_length=6 head_count=2 head_count_kv=1 context_length=16 rope_dimension_count=2 rope_pairing=Adjacent rope_freq_base=10000.0 rms_epsilon=1e-5 attention_scale=0.70710677
 model-info tensor-inventory total=12 encoded_bytes=8720 encoded_len_errors=0 F32=12
 model-info vocab status=ok tokenizer=256 model=256 codec_max_symbols=262144
@@ -489,6 +491,7 @@ model-info metadata key=tokenizer.ggml.merges array<string>[61249]
 model-info metadata key=tokenizer.ggml.scores array<f32>[32000]
 model-info metadata key=tokenizer.ggml.token_type array<i32>[32000]
 model-info tokenizer status=ok kind=sentencepiece
+model-info byte-coverage tokens=32000 single_byte=488 emittable_single_byte=488 missing=0 missing_emittable=0 missing_first=none missing_emittable_first=none
 model-info config status=ok block_count=22 embedding_length=2048 feed_forward_length=5632 head_count=32 head_count_kv=4 context_length=2048 rope_dimension_count=64 rope_pairing=Adjacent rope_freq_base=10000.0 rms_epsilon=1e-5 attention_scale=0.125
 model-info tensor-inventory total=201 encoded_bytes=1169072128 encoded_len_errors=0 F32=45 Q8_0=156
 model-info vocab status=ok tokenizer=32000 model=32000 codec_max_symbols=262144
@@ -556,6 +559,7 @@ model-info metadata key=tokenizer.ggml.tokens array<string>[151936]
 model-info metadata key=tokenizer.ggml.merges array<string>[151387]
 model-info metadata key=tokenizer.ggml.token_type array<i32>[151936]
 model-info tokenizer status=ok kind=byte_bpe
+model-info byte-coverage tokens=151936 single_byte=256 emittable_single_byte=256 missing=0 missing_emittable=0 missing_first=none missing_emittable_first=none
 model-info config status=ok block_count=28 embedding_length=1536 feed_forward_length=8960 head_count=12 head_count_kv=2 context_length=32768 rope_dimension_count=128 rope_pairing=SplitHalf rope_freq_base=1000000.0 rms_epsilon=1e-6 attention_scale=0.088388346
 model-info tensor-inventory total=339 encoded_bytes=1888581632 encoded_len_errors=0 F32=141 Q8_0=198
 model-info vocab status=ok tokenizer=151936 model=151936 codec_max_symbols=262144
@@ -600,6 +604,73 @@ chunk-size-invariant logits hashing on a three-token stream, and an end-to-end
 codec round-trip on a tiny byte input. It is not a substitute for the HF
 transformers / llama.cpp cosine check or the enwik8 first-1MB compression
 measurement.
+
+### SmolLM2 External Smoke
+
+Source:
+
+- Repository: <https://huggingface.co/unsloth/SmolLM2-1.7B-Instruct-GGUF>
+- Probed model file:
+  `SmolLM2-1.7B-Instruct-Q8_0.gguf`
+
+Observed Q8_0 intake result:
+
+```text
+model-info path=/tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf bytes=1820414624 sha256=0f3fb091804c48a561b42a4ca1be9ce2c353017187f74c48f52299cae790abe5 gguf_version=3 metadata=33 tensors=218 data_offset=1782432
+model-info metadata key=general.architecture string=llama
+model-info metadata key=general.name string=SmolLM2 1.7B Instruct
+model-info metadata key=tokenizer.ggml.model string=gpt2
+model-info metadata key=llama.vocab_size u32=49152
+model-info metadata key=tokenizer.ggml.add_bos_token bool=false
+model-info metadata key=tokenizer.ggml.bos_token_id u32=1
+model-info metadata key=tokenizer.ggml.eos_token_id u32=2
+model-info metadata key=tokenizer.ggml.tokens array<string>[49152]
+model-info metadata key=tokenizer.ggml.merges array<string>[48900]
+model-info metadata key=tokenizer.ggml.token_type array<i32>[49152]
+model-info tokenizer status=error error=IncompleteByteFallback
+model-info byte-coverage tokens=49152 single_byte=235 emittable_single_byte=235 missing=21 missing_emittable=21 missing_first=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,... missing_emittable_first=04,06,13,14,16,1d,c0,c1,f1,f2,f5,f6,f7,f8,f9,fa,...
+model-info config status=ok block_count=24 embedding_length=2048 feed_forward_length=8192 head_count=32 head_count_kv=32 context_length=8192 rope_dimension_count=64 rope_pairing=Adjacent rope_freq_base=130000.0 rms_epsilon=1e-5 attention_scale=0.125
+model-info tensor-inventory total=218 encoded_bytes=1818632192 encoded_len_errors=0 F32=49 Q8_0=169
+model-info vocab status=ok tokenizer=49152 model=49152 codec_max_symbols=262144
+model-info required-tensors status=ok checked=218 missing=0 shape_mismatch=0 unsupported_type=0 tied_output=true
+```
+
+Minimal logits smoke:
+
+```sh
+cargo run --release -p det-cli -- logits -m /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf --tokens 1 --hash --threads 8
+cargo run --release -p det-cli -- logits -m /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf --tokens 1,2,3 --hash --chunk-size 1 --threads 8
+cargo run --release -p det-cli -- logits -m /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf --tokens 1,2,3 --hash --chunk-size 3 --threads 8
+```
+
+Observed output:
+
+```text
+tokens=1 hash = e8baace71623c43dcf3fb2ee5be04317effd51c87f0072b2650f7e1693f86307
+tokens=1,2,3 chunk-size=1 hash = 691f2b299569cf86d2a8f7a21b9bec1942ff876db0bbcb37087baab6720b25b1
+tokens=1,2,3 chunk-size=3 hash = 691f2b299569cf86d2a8f7a21b9bec1942ff876db0bbcb37087baab6720b25b1
+```
+
+Tokenizer-backed CLI paths correctly reject this GGUF for v1 codec use:
+
+```sh
+cargo run --release -p det-cli -- tokenize -m /tmp/detllm-external/SmolLM2-1.7B-Instruct-Q8_0.gguf -p "Hello"
+```
+
+Observed output:
+
+```text
+detllm: tokenizer error: IncompleteByteFallback
+```
+
+This is real SmolLM2 GGUF evidence for model config parsing, required tensor
+compatibility on Q8_0, single-token forward, and chunk-size-invariant logits
+hashing on a three-token stream. It also records the blocking codec issue:
+the tested GGUF exposes only 235 of the 256 byte values as single-byte BPE
+seed tokens, so it cannot satisfy `detllm-design.md` §7's arbitrary-byte
+losslessness requirement. Full SmolLM2 codec validation needs a compatible
+GGUF/tokenizer source or a deterministic tokenizer strategy that can represent
+all byte values without changing the model vocabulary.
 
 ## File Codec Bench Harness
 
