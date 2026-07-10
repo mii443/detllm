@@ -5739,6 +5739,88 @@ mod tests {
     }
 
     #[test]
+    fn bench_file_verify_dtlz_replays_saved_output() {
+        let dir = unique_tmp_dir();
+        fs::create_dir_all(&dir).expect("mkdir");
+        let model_path = dir.join("tiny.gguf");
+        let input_path = dir.join("input.bin");
+        let dtlz_path = dir.join("input.dtlz");
+        let summary_path = dir.join("bench.summary");
+        let verify_summary_path = dir.join("verify.summary");
+        let progress_path = dir.join("bench.progress");
+        let checkpoint_path = dir.join("bench.checkpoint");
+
+        fs::write(&model_path, tiny_f32_gguf()).expect("write model");
+        fs::write(&input_path, b"dtlz verify").expect("write input");
+
+        bench_file(BenchFileOpts {
+            model: model_path.to_string_lossy().into_owned(),
+            input: input_path.to_string_lossy().into_owned(),
+            limit_bytes: None,
+            limit_tokens: None,
+            n_ctx: Some(8),
+            iters: 1,
+            threads: Some(1),
+            progress_every: Some(4),
+            progress_summary_path: Some(progress_path.to_string_lossy().into_owned()),
+            summary_path: Some(summary_path.to_string_lossy().into_owned()),
+            output_dtlz_path: Some(dtlz_path.to_string_lossy().into_owned()),
+            verify_dtlz_path: None,
+            checkpoint_path: Some(checkpoint_path.to_string_lossy().into_owned()),
+            checkpoint_every: Some(4),
+            warmup: false,
+            encode_only: false,
+            show_phases: true,
+            estimate_full_run: false,
+        })
+        .expect("write DTLZ benchmark");
+
+        assert!(dtlz_path.is_file());
+        assert!(!checkpoint_path.exists());
+        let summary = fs::read_to_string(&summary_path).expect("summary");
+        assert!(summary.contains("mode=round-trip"), "{summary}");
+        assert!(summary.contains("bench-file-output-dtlz"), "{summary}");
+
+        bench_file(BenchFileOpts {
+            model: model_path.to_string_lossy().into_owned(),
+            input: input_path.to_string_lossy().into_owned(),
+            limit_bytes: None,
+            limit_tokens: None,
+            n_ctx: Some(8),
+            iters: 1,
+            threads: Some(1),
+            progress_every: Some(4),
+            progress_summary_path: Some(progress_path.to_string_lossy().into_owned()),
+            summary_path: Some(verify_summary_path.to_string_lossy().into_owned()),
+            output_dtlz_path: None,
+            verify_dtlz_path: Some(dtlz_path.to_string_lossy().into_owned()),
+            checkpoint_path: None,
+            checkpoint_every: None,
+            warmup: false,
+            encode_only: false,
+            show_phases: true,
+            estimate_full_run: false,
+        })
+        .expect("verify saved DTLZ");
+
+        let verify_summary = fs::read_to_string(&verify_summary_path).expect("verify summary");
+        assert!(
+            verify_summary.contains("mode=verify-dtlz"),
+            "{verify_summary}"
+        );
+        assert!(
+            verify_summary.contains("bench-file-verify-dtlz"),
+            "{verify_summary}"
+        );
+        assert!(
+            verify_summary.contains(&format!("restored_sha256={}", sha256_hex(b"dtlz verify"))),
+            "{verify_summary}"
+        );
+
+        fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
     fn bench_file_checkpoint_resume_matches_one_shot_payload() {
         let dir = unique_tmp_dir();
         fs::create_dir_all(&dir).expect("mkdir");
