@@ -459,6 +459,25 @@ mod tests {
     }
 
     #[test]
+    fn logits_to_cdf_clamps_exp_input_lower_bound() {
+        let clamped = logits_to_cdf(&[0.0, -88.0, -88.0, -0.5]).expect("clamped");
+        let extreme = logits_to_cdf(&[0.0, -1000.0, -1.0e30, -0.5]).expect("extreme");
+        assert_eq!(extreme, clamped);
+
+        let mut scratch = CdfScratch::default();
+        let clamped_range =
+            logits_to_symbol_range_with_byte_escapes(&[0.0, -88.0, -88.0, -0.5], 1, &mut scratch)
+                .expect("clamped range");
+        let extreme_range = logits_to_symbol_range_with_byte_escapes(
+            &[0.0, -1000.0, -1.0e30, -0.5],
+            1,
+            &mut scratch,
+        )
+        .expect("extreme range");
+        assert_eq!(extreme_range, clamped_range);
+    }
+
+    #[test]
     fn logits_to_cdf_scratch_matches_owned_api_and_reuses_buffers() {
         let logits = [0.0, 1.5, -2.0, 0.25];
         let expected = logits_to_cdf(&logits).expect("owned cdf");

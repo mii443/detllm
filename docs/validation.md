@@ -1651,7 +1651,11 @@ distribution returns the same symbol ranges as the full CDF, including
 byte-escape tails, while the public validating `symbol_for` helper remains
 available for untrusted tables. The tests also verify the scratch API is
 bit-for-bit equivalent to the owned `logits_to_cdf` API and that streaming
-codec payloads still match the direct replay rule. With the `parallel` feature,
+codec payloads still match the direct replay rule.
+`logits_to_cdf_clamps_exp_input_lower_bound` fixes the softmax lower clamp:
+logits far below the maximum, such as `-1000.0`, must produce the same CDF and
+byte-escape symbol ranges as the specified `-88.0` clamp. With the `parallel`
+feature,
 row-parallel GEMV reuses fixed-size Rayon worker pools keyed by `--threads`
 instead of spawning OS threads for every matrix multiply, attention
 parallelizes independent heads with per-head score/prob scratch for larger
