@@ -214,6 +214,14 @@ const DETERMINISM_BANNED_PATTERNS: &[(&str, &str)] = &[
     ("fmul_fast", "fast floating-point intrinsics are forbidden"), // determinism-allow
     ("fdiv_fast", "fast floating-point intrinsics are forbidden"), // determinism-allow
     (
+        "asm!(",
+        "inline assembly can bypass deterministic numeric kernel review",
+    ), // determinism-allow
+    (
+        "global_asm!",
+        "inline assembly can bypass deterministic numeric kernel review",
+    ), // determinism-allow
+    (
         "rsqrtss",
         "hardware approximate reciprocal sqrt is forbidden",
     ), // determinism-allow
@@ -5924,6 +5932,8 @@ mod tests {
         let runtime_dispatch = concat!("is_x86", "_feature_detected!");
         let fast_math = concat!("-ffast", "-math");
         let fast_add = concat!("fadd", "_fast");
+        let inline_asm = concat!("asm", "!(");
+        let global_asm = concat!("global", "_asm!");
         let x86_approx = concat!("rsqrt", "ss");
         let neon_approx = concat!("frsqr", "te");
         let rayon_reduce = concat!(".par_iter().", "reduce");
@@ -5937,15 +5947,16 @@ mod tests {
             format!("if std::arch::{runtime_dispatch}(\"avx2\") {{}}"),
             format!("let _ = \"{fast_math}\";"),
             format!("llvm_intrinsic(\"{fast_add}\");"),
-            format!("asm!(\"{x86_approx} xmm0, xmm0\");"),
-            format!("asm!(\"{neon_approx} v0.4s, v0.4s\");"),
+            format!("{inline_asm}\"{x86_approx} xmm0, xmm0\");"),
+            format!("{inline_asm}\"{neon_approx} v0.4s, v0.4s\");"),
+            format!("{global_asm}(\".text\");"),
             format!("let _ = xs{rayon_reduce}(|| 0.0, |a, b| a + b);"),
             format!("let _ = xs{rayon_fold}(|| 0.0, |a, b| a + b);"),
             format!("RUSTFLAGS=\"-C {fma_flag}\""),
             format!("RUSTFLAGS=\"-C {native_cpu}\""),
             format!("#[target_feature({fma_attr}\")] unsafe fn kernel() {{}}"),
             format!("#[cfg(target_feature = \"{avx_wide}f\")] fn wide() {{}}"),
-            format!("asm!(\"{fma_instruction}132ps ymm0, ymm1, ymm2\");"),
+            format!("{inline_asm}\"{fma_instruction}132ps ymm0, ymm1, ymm2\");"),
         ]
         .join("\n");
         scan_determinism_text(Path::new("sample.rs"), &text, &mut violations);
@@ -5954,6 +5965,8 @@ mod tests {
             runtime_dispatch,
             fast_math,
             fast_add,
+            inline_asm,
+            global_asm,
             x86_approx,
             neon_approx,
             rayon_reduce,

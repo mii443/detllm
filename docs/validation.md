@@ -441,6 +441,8 @@ constructs such as platform transcendental calls, `mul_add`, randomized
 including reductions hidden behind iterator adaptors such as `.map(...)`.
 Host-dependent `target-cpu=native` builds are rejected as well; target features
 used for validation must be explicit and covered by bit-equivalence tests.
+Inline assembly via `asm!` or `global_asm!` is rejected because it can bypass
+the reviewed `core::arch` SIMD paths and their bit-equivalence tests.
 Explicit floating-point iterator reductions such as `.sum::<f32>()`,
 `Iterator::sum::<f32>(...)`, zero-seeded `.fold(...)`, and UFCS
 `Iterator::fold(...)` forms are also rejected; numeric reductions must use the
