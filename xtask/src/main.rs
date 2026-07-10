@@ -95,6 +95,8 @@ const DETERMINISM_BANNED_PATTERNS: &[(&str, &str)] = &[
         "parallel floating-point reductions are forbidden",
     ),
 ];
+const NATIVE_LINK_DEPENDENCY_NAMES: &[&str] =
+    &["bindgen", "cc", "clang-sys", "cmake", "cxx", "pkg-config"];
 
 #[derive(Clone, Copy)]
 struct ModelSpec {
@@ -246,21 +248,51 @@ fn scan_determinism_text(path: &Path, text: &str, violations: &mut Vec<String>) 
 
 fn scan_dependency_policy_text(path: &Path, text: &str, violations: &mut Vec<String>) {
     let mut in_dependency_section = false;
+    let mut in_package_section = false;
     for (line_idx, line) in text.lines().enumerate() {
         let trimmed = line.trim();
         if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_package_section = trimmed == "[package]";
             in_dependency_section = matches!(
                 trimmed,
                 "[dependencies]" | "[dev-dependencies]" | "[build-dependencies]"
             );
             continue;
         }
-        if !in_dependency_section
-            || trimmed.is_empty()
-            || trimmed.starts_with('#')
-            || !trimmed.contains('=')
-            || trimmed.contains("path")
-        {
+        if trimmed.is_empty() || trimmed.starts_with('#') || !trimmed.contains('=') {
+            continue;
+        }
+
+        if in_package_section {
+            let key = trimmed
+                .split_once('=')
+                .map(|(key, _)| key.trim())
+                .unwrap_or_default();
+            if matches!(key, "build" | "links") {
+                violations.push(format!(
+                    "{}:{}: `{key}` is forbidden; numeric crates must remain pure Rust without native link/build hooks",
+                    path.display(),
+                    line_idx + 1
+                ));
+            }
+            continue;
+        }
+
+        if !in_dependency_section {
+            continue;
+        }
+        let dep_name = trimmed
+            .split_once('=')
+            .map(|(key, _)| key.trim().trim_matches('"'))
+            .unwrap_or_default();
+        if NATIVE_LINK_DEPENDENCY_NAMES.contains(&dep_name) {
+            violations.push(format!(
+                "{}:{}: dependency `{dep_name}` is forbidden because native C/C++ link/build tooling is not allowed",
+                path.display(),
+                line_idx + 1
+            ));
+        }
+        if trimmed.contains("path") {
             continue;
         }
         if !dependency_line_has_exact_version(trimmed) {
@@ -5345,6 +5377,47 @@ floating_table = { version = "2.0" }
         assert_eq!(violations.len(), 2);
         assert!(violations[0].contains("Cargo.toml:9"), "{violations:?}");
         assert!(violations[1].contains("Cargo.toml:10"), "{violations:?}");
+    }
+
+    #[test]
+    fn dependency_policy_rejects_native_build_hooks_and_link_tooling() {
+        let mut violations = Vec::new();
+        let native_build = concat!("bui", "ld");
+        let native_links = concat!("lin", "ks");
+        let cc_dep = concat!("c", "c");
+        let bindgen_dep = concat!("bind", "gen");
+        let pkg_config_dep = concat!("pkg", "-config");
+        let text = format!(
+            r#"
+[package]
+version = "0.1.0"
+{native_build} = "build.rs"
+{native_links} = "native"
+
+[build-dependencies]
+{cc_dep} = "=1.0.0"
+{bindgen_dep} = {{ version = "=0.1.0" }}
+
+[dev-dependencies]
+{pkg_config_dep} = "=0.3.0"
+"#
+        );
+        scan_dependency_policy_text(Path::new("Cargo.toml"), &text, &mut violations);
+
+        for needle in [
+            native_build,
+            native_links,
+            cc_dep,
+            bindgen_dep,
+            pkg_config_dep,
+        ] {
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains(needle)),
+                "{violations:?}"
+            );
+        }
     }
 
     #[test]
