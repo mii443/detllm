@@ -1119,19 +1119,6 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
     if output_dtlz_path.is_some() && iters != 1 {
         return Err("bench-file: --output-dtlz requires --iters 1".to_owned());
     }
-    if checkpoint_path.is_some() {
-        if output_dtlz_path.is_none() {
-            return Err("bench-file: --checkpoint requires --output-dtlz".to_owned());
-        }
-        if iters != 1 {
-            return Err("bench-file: --checkpoint requires --iters 1".to_owned());
-        }
-        if !matches!(checkpoint_every, Some(value) if value > 0) {
-            return Err("bench-file: --checkpoint requires --checkpoint-every".to_owned());
-        }
-    } else if checkpoint_every.is_some() {
-        return Err("bench-file: --checkpoint-every requires --checkpoint".to_owned());
-    }
     if verify_dtlz_path.is_some() {
         if output_dtlz_path.is_some() {
             return Err(
@@ -1156,6 +1143,19 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
         if iters != 1 {
             return Err("bench-file: --verify-dtlz requires --iters 1".to_owned());
         }
+    }
+    if checkpoint_path.is_some() {
+        if output_dtlz_path.is_none() {
+            return Err("bench-file: --checkpoint requires --output-dtlz".to_owned());
+        }
+        if iters != 1 {
+            return Err("bench-file: --checkpoint requires --iters 1".to_owned());
+        }
+        if !matches!(checkpoint_every, Some(value) if value > 0) {
+            return Err("bench-file: --checkpoint requires --checkpoint-every".to_owned());
+        }
+    } else if checkpoint_every.is_some() {
+        return Err("bench-file: --checkpoint-every requires --checkpoint".to_owned());
     }
     Ok(BenchFileOpts {
         model: model.ok_or("bench-file: missing --model")?,
@@ -4525,6 +4525,16 @@ mod tests {
             "--input".to_owned(),
             "enwik8".to_owned(),
             "--checkpoint".to_owned(),
+        ])
+        .expect_err("checkpoint missing value must be rejected");
+        assert_eq!(err, "bench-file: missing value for --checkpoint");
+
+        let err = parse_bench_file_opts(vec![
+            "--model".to_owned(),
+            "model.gguf".to_owned(),
+            "--input".to_owned(),
+            "enwik8".to_owned(),
+            "--checkpoint".to_owned(),
             "/tmp/bench.checkpoint".to_owned(),
             "--checkpoint-every".to_owned(),
             "100".to_owned(),
@@ -4544,6 +4554,23 @@ mod tests {
         ])
         .expect_err("checkpoint without interval must be rejected");
         assert_eq!(err, "bench-file: --checkpoint requires --checkpoint-every");
+
+        let err = parse_bench_file_opts(vec![
+            "--model".to_owned(),
+            "model.gguf".to_owned(),
+            "--input".to_owned(),
+            "enwik8".to_owned(),
+            "--iters".to_owned(),
+            "2".to_owned(),
+            "--output-dtlz".to_owned(),
+            "/tmp/bench.dtlz".to_owned(),
+            "--checkpoint".to_owned(),
+            "/tmp/bench.checkpoint".to_owned(),
+            "--checkpoint-every".to_owned(),
+            "100".to_owned(),
+        ])
+        .expect_err("checkpoint with multiple iterations must be rejected");
+        assert_eq!(err, "bench-file: --output-dtlz requires --iters 1");
 
         let err = parse_bench_file_opts(vec![
             "--model".to_owned(),
@@ -4572,6 +4599,24 @@ mod tests {
         assert_eq!(
             err,
             "bench-file: --verify-dtlz cannot be combined with --output-dtlz"
+        );
+
+        let err = parse_bench_file_opts(vec![
+            "--model".to_owned(),
+            "model.gguf".to_owned(),
+            "--input".to_owned(),
+            "enwik8".to_owned(),
+            "--verify-dtlz".to_owned(),
+            "/tmp/in.dtlz".to_owned(),
+            "--checkpoint".to_owned(),
+            "/tmp/bench.checkpoint".to_owned(),
+            "--checkpoint-every".to_owned(),
+            "100".to_owned(),
+        ])
+        .expect_err("verify DTLZ cannot be combined with checkpoint");
+        assert_eq!(
+            err,
+            "bench-file: --verify-dtlz cannot be combined with --checkpoint"
         );
 
         let err = parse_bench_file_opts(vec![
