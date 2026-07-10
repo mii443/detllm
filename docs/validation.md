@@ -384,6 +384,11 @@ All six commands passed locally on 2026-07-10. The `parallel,simd` test run
 covered the full workspace, including `parallel_gemv_thread_counts_are_bit_invariant`,
 `testdata_logits_hash_is_invariant_to_chunks_and_threads`, and the
 `bench_file_checkpoint_resume_matches_one_shot_payload` checkpoint regression.
+GitHub Actions `ci` also passed for commit
+`35e367a598da6adf7116494467a12506dfc1b704`:
+<https://github.com/mii443/detllm/actions/runs/29071846577>. The public
+Actions API reported `status=completed`, `conclusion=success`, run number 119,
+created `2026-07-10T05:38:48Z`, updated `2026-07-10T05:40:04Z`.
 
 The AVX2 SIMD kernel path is also executed directly in CI with:
 
