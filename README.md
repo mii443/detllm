@@ -145,8 +145,8 @@ inventory, and required tensor shape/type status.
 
 ## Fixture Benchmark Snapshot
 
-Local release benchmark on `x86_64` WSL2, AMD Ryzen 9 7950X3D, rustc
-`1.95.0`, using:
+Local release benchmark on `x86_64` WSL2, AMD Ryzen 9 7950X3D, commit
+`52288f1`, using:
 
 ```sh
 cargo run --release -p xtask -- bench-testdata --iters 100
@@ -154,10 +154,10 @@ cargo run --release -p xtask -- bench-testdata --iters 100
 
 | check | throughput | note |
 |---|---:|---|
-| `tiny-f32` logits | 111472 tokens/s | 600 fixture tokens, hash stable |
-| `tiny-qmix` logits | 123648 tokens/s | 600 fixture tokens, hash stable |
-| `tiny-f32` codec | 77602 input bytes/s | 3900 bytes, round-trip verified |
-| `tiny-qmix` codec | 51439 input bytes/s | 3900 bytes, round-trip verified |
+| `tiny-f32` logits | 134939 tokens/s | 600 fixture tokens, hash stable |
+| `tiny-qmix` logits | 126505 tokens/s | 600 fixture tokens, hash stable |
+| `tiny-f32` codec | 90295 input bytes/s | 3900 bytes, round-trip verified |
+| `tiny-qmix` codec | 78571 input bytes/s | 3900 bytes, round-trip verified |
 
 These numbers are fixture-scale smoke benchmarks, not target-model compression
 quality measurements.

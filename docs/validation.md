@@ -1656,6 +1656,7 @@ Environment:
 ```text
 Linux main-win 6.6.87.2-microsoft-standard-WSL2 #1 SMP PREEMPT_DYNAMIC Thu Jun 5 18:30:46 UTC 2025 x86_64
 CPU: AMD Ryzen 9 7950X3D 16-Core Processor, 32 logical CPUs
+Commit: 52288f1
 rustc 1.95.0 (59807616e 2026-04-14)
 ```
 
@@ -1663,10 +1664,10 @@ Observed output:
 
 ```text
 bench-testdata iters=100
-logits tiny-f32: hash=92a0280149c6b1505c84dce0d19486a2093f93b7978b579c220000d12e4ef7e7 tokens=600 elapsed_ms=5.383 tokens_per_s=111471.660
-logits tiny-qmix: hash=8a34d3c4a05e9a30b90aadcdca7b6bac91655e6ab67980ccdb6726565d35f3e4 tokens=600 elapsed_ms=4.852 tokens_per_s=123647.630
-codec tiny-f32: input_bytes=3900 payload_bytes=4600 elapsed_ms=50.257 input_bytes_per_s=77601.552
-codec tiny-qmix: input_bytes=3900 payload_bytes=4600 elapsed_ms=75.818 input_bytes_per_s=51438.997
+logits tiny-f32: hash=92a0280149c6b1505c84dce0d19486a2093f93b7978b579c220000d12e4ef7e7 tokens=600 elapsed_ms=4.446 tokens_per_s=134939.412
+logits tiny-qmix: hash=8a34d3c4a05e9a30b90aadcdca7b6bac91655e6ab67980ccdb6726565d35f3e4 tokens=600 elapsed_ms=4.743 tokens_per_s=126505.468
+codec tiny-f32: input_bytes=3900 payload_bytes=4600 elapsed_ms=43.192 input_bytes_per_s=90294.961
+codec tiny-qmix: input_bytes=3900 payload_bytes=4600 elapsed_ms=49.637 input_bytes_per_s=78570.804
 ```
 
 `bench-testdata` verifies that the fixture logits hash does not change during
