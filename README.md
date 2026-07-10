@@ -41,6 +41,8 @@ The shared token sequence is `testdata/tiny.tokens.txt`.
 cargo run -p xtask -- generate-testdata --check
 cargo run -p xtask -- check-determinism
 cargo run -p xtask -- check-ci-workflow
+cargo run -p xtask -- check-benchmark-workflow
+cargo run -p xtask -- check-helper-scripts
 cargo run -p xtask -- model-info --model testdata/tiny-f32.gguf
 cargo run -p xtask -- model-info --model model.gguf
 cargo run -p xtask -- model-info --model model-prefix.gguf --metadata-prefix
