@@ -4380,6 +4380,9 @@ fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static TMP_DIR_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
     #[test]
     fn parse_logits_dump_rejects_malformed_inputs() {
@@ -5548,8 +5551,9 @@ jobs:
     fn unique_tmp_dir() -> PathBuf {
         let mut dir = std::env::temp_dir();
         dir.push(format!(
-            "detllm-xtask-test-{}-{}",
+            "detllm-xtask-test-{}-{}-{}",
             std::process::id(),
+            TMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("time")
