@@ -440,9 +440,9 @@ constructs such as platform transcendental calls, `mul_add`, randomized
 `HashMap`/`HashSet` usage, wasm `relaxed-simd`, and Rayon parallel reductions,
 including reductions hidden behind iterator adaptors such as `.map(...)`.
 Explicit floating-point iterator reductions such as `.sum::<f32>()`,
-`Iterator::sum::<f32>(...)`, and zero-seeded `.fold(...)` forms are also
-rejected; numeric reductions must use the fixed 8-lane helpers or the locally
-specified sequential accumulation sites.
+`Iterator::sum::<f32>(...)`, zero-seeded `.fold(...)`, and UFCS
+`Iterator::fold(...)` forms are also rejected; numeric reductions must use the
+fixed 8-lane helpers or the locally specified sequential accumulation sites.
 It covers both associated-function spellings such as `f64::exp` and method-call
 spellings such as `x.exp()`, so validation helpers cannot accidentally
 reintroduce platform libm through Rust's primitive float methods.
