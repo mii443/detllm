@@ -334,7 +334,7 @@ cargo run -p det-cli -- quant-kernel-hash
 Observed hash:
 
 ```text
-b3ecad1b64412ce5f38dcb0945c73dc203021ba536ca9af83f2747e77a484465
+99832eb2ac8ddeb15731805e876a36b4013ae41c2aca0783ea02890fe9b0efba
 ```
 
 `det-quant` rejects non-finite Q8A activation inputs before quantization.
@@ -384,6 +384,29 @@ All six commands passed locally on 2026-07-10. The `parallel,simd` test run
 covered the full workspace, including `parallel_gemv_thread_counts_are_bit_invariant`,
 `testdata_logits_hash_is_invariant_to_chunks_and_threads`, and the
 `bench_file_checkpoint_resume_matches_one_shot_payload` checkpoint regression.
+Additional local CLI smoke on 2026-07-10 after commit
+`629014ecf0c786b84c7fd8176b0582b64a0fe8cc`:
+
+```sh
+cargo run -p xtask -- generate-testdata --check
+cargo run -p det-cli -- selftest
+cargo run -p det-cli -- quant-kernel-hash
+cargo run -p det-cli -- logits -m testdata/tiny-f32.gguf --tokens 0,1,2,3,0,2 --hash --chunk-size 3
+cargo run -p det-cli -- logits -m testdata/tiny-qmix.gguf --tokens 0,1,2,3,0,2 --hash --chunk-size 3
+```
+
+All five commands passed locally. The observed CLI hashes were:
+
+| check | hash |
+|---|---|
+| `quant-kernel-hash` | `99832eb2ac8ddeb15731805e876a36b4013ae41c2aca0783ea02890fe9b0efba` |
+| `tiny-f32` logits | `92a0280149c6b1505c84dce0d19486a2093f93b7978b579c220000d12e4ef7e7` |
+| `tiny-qmix` logits | `8a34d3c4a05e9a30b90aadcdca7b6bac91655e6ab67980ccdb6726565d35f3e4` |
+
+`quant-kernel-hash` also returned the same
+`99832eb2ac8ddeb15731805e876a36b4013ae41c2aca0783ea02890fe9b0efba` value in
+release mode and with `--features parallel,simd`.
+
 GitHub Actions `ci` also passed for commit
 `35e367a598da6adf7116494467a12506dfc1b704`:
 <https://github.com/mii443/detllm/actions/runs/29071846577>. The public
@@ -2169,7 +2192,7 @@ The same local run also compressed and decompressed `testdata/tiny.tokens.txt`
 through wasmtime for both bundled fixtures and verified byte equality with
 `cmp`.
 
-After adding Q4_K to the quant-kernel hash, the native scalar and AVX2 SIMD
-hash is `b3ecad1b64412ce5f38dcb0945c73dc203021ba536ca9af83f2747e77a484465`.
+The current native scalar and AVX2 SIMD quant-kernel hash is
+`99832eb2ac8ddeb15731805e876a36b4013ae41c2aca0783ea02890fe9b0efba`.
 Local `wasmtime` was not available for this update, so the GitHub Actions
 `wasm` job remains the execution gate for the updated wasm quant-kernel value.
