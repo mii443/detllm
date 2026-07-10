@@ -2498,11 +2498,16 @@ fn is_user_executable(_path: &Path) -> Result<bool, String> {
 }
 
 fn run_helper_check(command: &mut Command, label: &str) -> Result<(), String> {
-    let status = command
-        .status()
+    let output = command
+        .output()
         .map_err(|e| format!("{label}: failed to start: {e}"))?;
-    if !status.success() {
-        return Err(format!("{label}: exited with {status}"));
+    if !output.status.success() {
+        return Err(format!(
+            "{label}: exited with {}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
     Ok(())
 }
