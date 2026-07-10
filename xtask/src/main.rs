@@ -51,6 +51,29 @@ const DETERMINISM_BANNED_PATTERNS: &[(&str, &str)] = &[
     ), // determinism-allow
     ("mul_add", "FMA changes the specified rounding sequence"),    // determinism-allow
     (
+        "is_x86_feature_detected!",
+        "runtime SIMD dispatch can change numeric paths",
+    ), // determinism-allow
+    (
+        "is_aarch64_feature_detected!",
+        "runtime SIMD dispatch can change numeric paths",
+    ), // determinism-allow
+    ("-ffast-math", "fast-math flags are forbidden"),              // determinism-allow
+    ("fadd_fast", "fast floating-point intrinsics are forbidden"), // determinism-allow
+    ("fsub_fast", "fast floating-point intrinsics are forbidden"), // determinism-allow
+    ("fmul_fast", "fast floating-point intrinsics are forbidden"), // determinism-allow
+    ("fdiv_fast", "fast floating-point intrinsics are forbidden"), // determinism-allow
+    (
+        "rsqrtss",
+        "hardware approximate reciprocal sqrt is forbidden",
+    ), // determinism-allow
+    ("rcpps", "hardware approximate reciprocal is forbidden"),     // determinism-allow
+    (
+        "frsqrte",
+        "hardware approximate reciprocal sqrt is forbidden",
+    ), // determinism-allow
+    ("frecpe", "hardware approximate reciprocal is forbidden"),    // determinism-allow
+    (
         "HashMap",
         "use BTreeMap/Vec when iteration order can matter",
     ), // determinism-allow
@@ -5268,6 +5291,40 @@ mod tests {
         assert!(violations[0].contains(banned));
         assert!(violations[1].contains("sample.rs:3"));
         assert!(violations[1].contains(method_banned));
+    }
+
+    #[test]
+    fn determinism_scan_rejects_runtime_dispatch_fast_math_and_approximate_ops() {
+        let mut violations = Vec::new();
+        let runtime_dispatch = concat!("is_x86", "_feature_detected!");
+        let fast_math = concat!("-ffast", "-math");
+        let fast_add = concat!("fadd", "_fast");
+        let x86_approx = concat!("rsqrt", "ss");
+        let neon_approx = concat!("frsqr", "te");
+        let text = [
+            format!("if std::arch::{runtime_dispatch}(\"avx2\") {{}}"),
+            format!("let _ = \"{fast_math}\";"),
+            format!("llvm_intrinsic(\"{fast_add}\");"),
+            format!("asm!(\"{x86_approx} xmm0, xmm0\");"),
+            format!("asm!(\"{neon_approx} v0.4s, v0.4s\");"),
+        ]
+        .join("\n");
+        scan_determinism_text(Path::new("sample.rs"), &text, &mut violations);
+
+        for needle in [
+            runtime_dispatch,
+            fast_math,
+            fast_add,
+            x86_approx,
+            neon_approx,
+        ] {
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains(needle)),
+                "{violations:?}"
+            );
+        }
     }
 
     #[test]
