@@ -247,6 +247,16 @@ fn compress_decompress_round_trips_testdata_model_through_cli() {
                 "detllm compress {label}/{case} failed: {}",
                 String::from_utf8_lossy(&compress.stderr)
             );
+            let encoded = fs::read(&compressed_path).expect("compressed");
+            let header = det_coder::DtlzHeader::decode(&encoded).expect("DTLZ header");
+            assert_eq!(header.flags, det_coder::FLAG_BYTE_ESCAPES);
+            assert_eq!(header.n_ctx, 8);
+            assert_eq!(header.overlap, 2);
+            assert_eq!(header.orig_len, input.len() as u64);
+            assert_eq!(
+                header.model_sha256,
+                sha256_bytes(&fs::read(root.join(model)).expect("model bytes"))
+            );
 
             let decompress = Command::new(detllm())
                 .current_dir(&root)
@@ -363,4 +373,10 @@ fn hex(bytes: &[u8]) -> String {
         out.push(HEX[(b & 0x0f) as usize] as char);
     }
     out
+}
+
+fn sha256_bytes(bytes: &[u8]) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(bytes);
+    hash.finalize()
 }

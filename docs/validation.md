@@ -512,6 +512,10 @@ unknown flag bits, zero `n_ctx`, and `overlap >= n_ctx` are rejected before a
 header is accepted or written by the CLI. `FLAG_BYTE_ESCAPES` is accepted and
 is written by new CLI compression output; `flags=0` remains accepted for
 legacy token-only payloads.
+The public CLI integration round-trip over both repository GGUF fixtures also
+decodes each produced DTLZ header and checks the written byte-escape flag,
+requested `n_ctx`, derived `overlap`, `orig_len`, and model SHA-256 against the
+actual compressed input and model bytes.
 The unit test `rejects_malformed_header_envelope` also covers too-short files,
 bad magic bytes, and unsupported header versions before any payload decoding is
 attempted.
