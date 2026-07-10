@@ -309,6 +309,14 @@ tables.
 `tokenizer.ggml.token_type` metadata must also use known GGUF token type values:
 normal, unknown, control, user-defined, unused, or byte. Unknown numeric values
 are rejected instead of being silently treated as non-emittable.
+Non-emittable token types are excluded from compression token selection while
+remaining decodable if they appear in an existing stream. Byte fallback
+tokenizers apply the same emit mask: present but non-emittable byte fallback
+tokens are not emitted by new codec streams, and those bytes use deterministic
+byte escape symbols instead. The unit tests
+`byte_fallback_codec_escapes_nonemittable_byte_tokens_from_token_type` and
+`sentencepiece_codec_escapes_nonemittable_byte_fallback_tokens` cover that
+boundary.
 GPT-2/BPE merge metadata is also parsed strictly: each merge line must contain
 exactly two non-empty token pieces, and duplicate merge pairs are rejected
 instead of letting a later entry overwrite the earlier rank. This keeps BPE

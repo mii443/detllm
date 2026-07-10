@@ -125,7 +125,8 @@ impl Tokenizer {
                     )
                     .map(Self::SentencePiece)
                 }
-                _ => ByteFallbackTokenizer::from_tokens(tokens).map(Self::ByteFallback),
+                _ => ByteFallbackTokenizer::from_tokens_and_emit_mask(tokens, emit_mask.as_deref())
+                    .map(Self::ByteFallback),
             },
         }
     }
@@ -245,10 +246,19 @@ impl ByteFallbackTokenizer {
     }
 
     pub fn from_gguf(gguf: &det_gguf::Gguf) -> Result<Self, TokenError> {
-        Self::from_tokens(gguf_tokens(gguf)?)
+        let tokens = gguf_tokens(gguf)?;
+        let emit_mask = optional_gguf_emit_mask(gguf, tokens.len())?;
+        Self::from_tokens_and_emit_mask(tokens, emit_mask.as_deref())
     }
 
     pub fn from_tokens(tokens: &[String]) -> Result<Self, TokenError> {
+        Self::from_tokens_and_emit_mask(tokens, None)
+    }
+
+    fn from_tokens_and_emit_mask(
+        tokens: &[String],
+        emit_mask: Option<&[bool]>,
+    ) -> Result<Self, TokenError> {
         let mut pairs = Vec::new();
         for (idx, token) in tokens.iter().enumerate() {
             if let Some(byte) = canonical_byte_fallback_token(token) {
@@ -259,13 +269,38 @@ impl ByteFallbackTokenizer {
                 pairs.push((byte, id));
             }
         }
-        let out = Self::new(&pairs)?;
-        let missing = missing_byte_tokens(&out.byte_to_token);
-        if missing.is_empty() {
-            Ok(out)
-        } else {
-            Err(TokenError::IncompleteByteFallback { missing })
+        let missing = missing_byte_pairs(&pairs);
+        if !missing.is_empty() {
+            return Err(TokenError::IncompleteByteFallback { missing });
         }
+
+        Self::from_pairs_and_emit_mask(&pairs, tokens, emit_mask)
+    }
+
+    fn from_pairs_and_emit_mask(
+        pairs: &[(u8, u32)],
+        tokens: &[String],
+        emit_mask: Option<&[bool]>,
+    ) -> Result<Self, TokenError> {
+        let mut byte_to_token = [None; 256];
+        let mut token_to_byte = BTreeMap::new();
+        for &(byte, token) in pairs {
+            if token_to_byte.contains_key(&token) {
+                return Err(TokenError::DuplicateTokenId(token));
+            }
+            let idx = usize::try_from(token).map_err(|_| TokenError::TokenIndexOverflow)?;
+            if idx >= tokens.len() {
+                return Err(TokenError::InvalidToken(token));
+            }
+            token_to_byte.insert(token, byte);
+            if token_is_emittable(emit_mask, idx) {
+                byte_to_token[byte as usize] = Some(token);
+            }
+        }
+        Ok(Self {
+            byte_to_token,
+            token_to_byte,
+        })
     }
 
     pub fn tokenize_bytes(&self, input: &[u8]) -> Result<Vec<u32>, TokenError> {
@@ -495,7 +530,7 @@ impl SentencePieceTokenizer {
                 return Err(TokenError::NonFiniteScore);
             }
         }
-        let byte_fallback = ByteFallbackTokenizer::from_tokens(tokens)?;
+        let byte_fallback = ByteFallbackTokenizer::from_tokens_and_emit_mask(tokens, emit_mask)?;
         let mut token_to_bytes = BTreeMap::new();
         let mut pieces: BTreeMap<Vec<u8>, (u32, f32)> = BTreeMap::new();
         let mut max_piece_len = 1usize;
@@ -707,11 +742,15 @@ fn missing_byte_values(present: &[bool; 256]) -> Vec<u8> {
         .collect()
 }
 
-fn missing_byte_tokens(byte_to_token: &[Option<u32>; 256]) -> Vec<u8> {
-    byte_to_token
+fn missing_byte_pairs(pairs: &[(u8, u32)]) -> Vec<u8> {
+    let mut present = [false; 256];
+    for &(byte, _) in pairs {
+        present[byte as usize] = true;
+    }
+    present
         .iter()
         .enumerate()
-        .filter_map(|(idx, token)| token.is_none().then_some(idx as u8))
+        .filter_map(|(idx, &exists)| (!exists).then_some(idx as u8))
         .collect()
 }
 
@@ -1078,6 +1117,36 @@ mod tests {
     }
 
     #[test]
+    fn byte_fallback_codec_escapes_nonemittable_byte_tokens_from_token_type() {
+        let tokens = canonical_byte_tokens();
+        let mut token_types = vec![6; tokens.len()];
+        token_types[0xff] = 3;
+
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            "tokenizer.ggml.tokens".to_owned(),
+            det_gguf::MetadataValue::ArrayString(tokens),
+        );
+        metadata.insert(
+            "tokenizer.ggml.token_type".to_owned(),
+            det_gguf::MetadataValue::ArrayI32(token_types),
+        );
+        let gguf = det_gguf::Gguf::from_parts(3, metadata, Vec::new(), 0, 0);
+        let tok = Tokenizer::from_gguf(&gguf).expect("tokenizer");
+
+        assert!(matches!(tok, Tokenizer::ByteFallback(_)));
+        assert_eq!(
+            tok.codec_symbol_stream(&[0xfe, 0xff]).expect("symbols"),
+            [CodecSymbol::Token(0xfe), CodecSymbol::ByteEscape(0xff)]
+        );
+        assert_eq!(
+            tok.tokenize_bytes(&[0xff]),
+            Err(TokenError::MissingByteFallback(0xff))
+        );
+        assert_eq!(tok.detokenize_bytes(&[0xff]).expect("detok"), vec![0xff]);
+    }
+
+    #[test]
     fn byte_bpe_decodes_gpt2_byte_unicode_tokens() {
         let mut tokens: Vec<String> = (0..=255)
             .map(|b| String::from_utf8(gpt2_byte_unicode_token_bytes(b)).expect("utf8"))
@@ -1359,6 +1428,40 @@ mod tests {
             tok.detokenize_bytes(&[control_hello]).expect("detok"),
             b" hello"
         );
+    }
+
+    #[test]
+    fn sentencepiece_codec_escapes_nonemittable_byte_fallback_tokens() {
+        let tokens = canonical_byte_tokens();
+        let mut token_types = vec![6; tokens.len()];
+        token_types[0xff] = 3;
+
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            "tokenizer.ggml.tokens".to_owned(),
+            det_gguf::MetadataValue::ArrayString(tokens),
+        );
+        metadata.insert(
+            "tokenizer.ggml.model".to_owned(),
+            det_gguf::MetadataValue::String("llama".to_owned()),
+        );
+        metadata.insert(
+            "tokenizer.ggml.token_type".to_owned(),
+            det_gguf::MetadataValue::ArrayI32(token_types),
+        );
+        let gguf = det_gguf::Gguf::from_parts(3, metadata, Vec::new(), 0, 0);
+        let tok = Tokenizer::from_gguf(&gguf).expect("tokenizer");
+
+        assert!(matches!(tok, Tokenizer::SentencePiece(_)));
+        assert_eq!(
+            tok.codec_symbol_stream(&[0xfe, 0xff]).expect("symbols"),
+            [CodecSymbol::Token(0xfe), CodecSymbol::ByteEscape(0xff)]
+        );
+        assert_eq!(
+            tok.tokenize_bytes(&[0xff]),
+            Err(TokenError::MissingByteFallback(0xff))
+        );
+        assert_eq!(tok.detokenize_bytes(&[0xff]).expect("detok"), vec![0xff]);
     }
 
     #[test]
