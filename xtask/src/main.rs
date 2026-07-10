@@ -158,6 +158,10 @@ const DETERMINISM_BANNED_PATTERNS: &[(&str, &str)] = &[
         ".sum::<f64>", // determinism-allow
         "floating-point reductions must use det_num fixed-order helpers",
     ),
+    (
+        ".fold(0.0", // determinism-allow
+        "floating-point reductions must use det_num fixed-order helpers",
+    ),
 ];
 const NATIVE_LINK_DEPENDENCY_NAMES: &[&str] =
     &["bindgen", "cc", "clang-sys", "cmake", "cxx", "pkg-config"];
@@ -5636,17 +5640,20 @@ mod tests {
         let banned = concat!("f32::", "exp");
         let method_banned = concat!(".", "exp(");
         let fp_sum_banned = concat!(".sum::<", "f32>");
+        let fp_fold_banned = concat!(".fo", "ld(0.0");
         let text = format!(
-            "let _ = {banned}(1.0);\nlet _ = {banned}(1.0); // determinism-allow\nlet _ = x{method_banned});\nlet _: f32 = xs{fp_sum_banned}();\n"
+            "let _ = {banned}(1.0);\nlet _ = {banned}(1.0); // determinism-allow\nlet _ = x{method_banned});\nlet _: f32 = xs{fp_sum_banned}();\nlet _: f32 = xs.iter(){fp_fold_banned}, |a, b| a + b);\n"
         );
         scan_determinism_text(Path::new("sample.rs"), &text, &mut violations);
-        assert_eq!(violations.len(), 3);
+        assert_eq!(violations.len(), 4);
         assert!(violations[0].contains("sample.rs:1"));
         assert!(violations[0].contains(banned));
         assert!(violations[1].contains("sample.rs:3"));
         assert!(violations[1].contains(method_banned));
         assert!(violations[2].contains("sample.rs:4"));
         assert!(violations[2].contains(fp_sum_banned));
+        assert!(violations[3].contains("sample.rs:5"));
+        assert!(violations[3].contains(fp_fold_banned));
     }
 
     #[test]
