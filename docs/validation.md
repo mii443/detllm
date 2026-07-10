@@ -367,6 +367,10 @@ The `shared_q8a_path_matches_standalone_quantized_gemv` test fixes the
 created for mixed F32/quantized projection groups when any matrix needs it,
 quantized GEMV requires that shared buffer, and the shared-buffer results match
 standalone quantized GEMV bit-for-bit.
+The `quant_scratch_gemv_path_matches_standalone_quantized_gemv` test covers the
+forward-path scratch APIs directly: Q8_0, Q4_0, and Q4_K reuse caller-provided
+Q8A buffers while Q6_K fills Q8_K scratch, and every scratch result matches the
+standalone quantized GEMV bits.
 
 Local validation after the bench checkpoint/resume changes on commit
 `8e0b756921caf6c568af20543ea6ae0dcb00f1b1`:

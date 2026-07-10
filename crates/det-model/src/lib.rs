@@ -3436,6 +3436,61 @@ mod tests {
         );
     }
 
+    #[test]
+    fn quant_scratch_gemv_path_matches_standalone_quantized_gemv() {
+        let mut tensors = Vec::new();
+        let mut bytes = Vec::new();
+        push_q8_tensor(&mut tensors, &mut bytes, "q8.weight", 2, 32, 0x3c00, 2);
+        push_q4_tensor(&mut tensors, &mut bytes, "q4.weight", 2, 32, 0x3c00, 0x99);
+        let gguf = det_gguf::Gguf::from_parts(3, BTreeMap::new(), tensors, 0, bytes.len());
+        let q8 = read_weight_matrix(&gguf, &bytes, "q8.weight", 2, 32).expect("q8");
+        let q4 = read_weight_matrix(&gguf, &bytes, "q4.weight", 2, 32).expect("q4");
+        let q4k = WeightMatrix::Q4K(Q4KMatrix {
+            rows: 2,
+            cols: 256,
+            blocks_per_row: 1,
+            blocks: vec![q4k_block_for_test(0), q4k_block_for_test(1)],
+        });
+        let q6 = WeightMatrix::Q6K(Q6KMatrix {
+            rows: 2,
+            cols: 256,
+            blocks_per_row: 1,
+            blocks: vec![q6_block_for_test(0), q6_block_for_test(1)],
+        });
+
+        let x32: Vec<f32> = (0..32).map(|i| ((i as f32) - 16.0) / 8.0).collect();
+        let x256: Vec<f32> = (0..256).map(|i| ((i as f32) - 128.0) / 64.0).collect();
+        let q8a32 = quantize_q8a(&x32).expect("q8a32");
+        let q8a256 = quantize_q8a(&x256).expect("q8a256");
+        let q8k256 = quantize_q8k(&x256).expect("q8k256");
+
+        for (matrix, input, shared_q8a) in [
+            (&q8, x32.as_slice(), Some(q8a32.as_slice())),
+            (&q4, x32.as_slice(), Some(q8a32.as_slice())),
+            (&q4k, x256.as_slice(), Some(q8a256.as_slice())),
+            (&q6, x256.as_slice(), None),
+        ] {
+            let mut standalone = [0.0f32; 2];
+            let mut scratch_out = [0.0f32; 2];
+            let mut q8k_scratch = Vec::new();
+            matrix.gemv(input, &mut standalone).expect("standalone");
+            matrix
+                .gemv_with_optional_q8a_and_q8k_scratch(
+                    input,
+                    shared_q8a,
+                    &mut q8k_scratch,
+                    &mut scratch_out,
+                )
+                .expect("scratch");
+            assert_eq!(scratch_out.map(f32::to_bits), standalone.map(f32::to_bits));
+            if matches!(matrix, WeightMatrix::Q6K(_)) {
+                assert_eq!(q8k_scratch, q8k256);
+            } else {
+                assert!(q8k_scratch.is_empty());
+            }
+        }
+    }
+
     #[cfg(all(feature = "parallel", not(target_family = "wasm")))]
     #[test]
     fn parallel_gemv_thread_counts_are_bit_invariant() {
