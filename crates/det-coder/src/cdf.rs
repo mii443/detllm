@@ -435,7 +435,10 @@ mod tests {
         assert_eq!(cdf.freq.len(), 3);
         assert!(cdf.freq.iter().all(|&f| f >= 1));
         assert_eq!(cdf.cum[0], 0);
-        assert_eq!(cdf.total, cdf.freq.iter().map(|&f| f as u64).sum());
+        assert_eq!(
+            cdf.total,
+            cdf.freq.iter().map(|&f| f as u64).sum() // determinism-allow: integer CDF total
+        );
         for i in 0..cdf.freq.len() {
             assert_eq!(cdf.symbol_for(cdf.cum[i]), Some(i));
         }
@@ -488,7 +491,10 @@ mod tests {
         let second = logits_to_cdf_with_scratch(&[4.0, -1.0], &mut scratch).expect("second cdf");
         assert_eq!(second.freq.len(), 2);
         assert_eq!(second.cum.len(), 2);
-        assert_eq!(second.total, second.freq.iter().map(|&f| f as u64).sum());
+        assert_eq!(
+            second.total,
+            second.freq.iter().map(|&f| f as u64).sum() // determinism-allow: integer CDF total
+        );
     }
 
     #[test]

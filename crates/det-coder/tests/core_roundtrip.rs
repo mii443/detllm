@@ -7,7 +7,7 @@ fn range_coder_round_trips_deterministic_pattern() {
     for i in 1..freq.len() {
         cum[i] = cum[i - 1] + freq[i - 1];
     }
-    let total: u64 = freq.iter().sum();
+    let total: u64 = freq.iter().sum(); // determinism-allow: integer range-coder total
     let symbols: Vec<usize> = (0..2048).map(|i| (i * 17 + i / 3) % freq.len()).collect();
 
     let mut enc = RangeEncoder::new();
@@ -43,7 +43,7 @@ fn range_coder_round_trips_large_lcg_stream() {
     for i in 1..ALPHABET {
         cum[i] = cum[i - 1] + freq[i - 1];
     }
-    let total: u64 = freq.iter().sum();
+    let total: u64 = freq.iter().sum(); // determinism-allow: integer range-coder total
 
     let mut symbols = Vec::with_capacity(SYMBOLS);
     let mut enc = RangeEncoder::new();

@@ -329,6 +329,10 @@ const DETERMINISM_BANNED_PATTERNS: &[(&str, &str)] = &[
         "floating-point reductions must use det_num fixed-order helpers",
     ),
     (
+        ".sum()", // determinism-allow
+        "inferred iterator sums must be explicitly reviewed as integer-only or replaced by fixed-order helpers",
+    ),
+    (
         "Iterator::fold(", // determinism-allow
         "floating-point reductions must use det_num fixed-order helpers or explicit loops",
     ),
@@ -5852,15 +5856,16 @@ mod tests {
         let banned = concat!("f32::", "exp");
         let method_banned = concat!(".", "exp(");
         let fp_sum_banned = concat!(".sum::<", "f32>");
+        let fp_inferred_sum_banned = concat!(".su", "m()");
         let fp_ufcs_sum_banned = concat!("Iterator::sum", "::<f64>");
         let fp_ufcs_fold_banned = concat!("Iterator::", "fold(");
         let fp_fold_banned = concat!(".fo", "ld(0.0");
         let fp_typed_fold_banned = concat!(".fo", "ld(0f32");
         let text = format!(
-            "let _ = {banned}(1.0);\nlet _ = {banned}(1.0); // determinism-allow\nlet _ = x{method_banned});\nlet _: f32 = xs{fp_sum_banned}();\nlet _: f64 = {fp_ufcs_sum_banned}(xs);\nlet _: f32 = {fp_ufcs_fold_banned}xs, 0.0, |a, b| a + b);\nlet _: f32 = xs.iter(){fp_fold_banned}, |a, b| a + b);\nlet _: f32 = xs.iter(){fp_typed_fold_banned}, |a, b| a + b);\n"
+            "let _ = {banned}(1.0);\nlet _ = {banned}(1.0); // determinism-allow\nlet _ = x{method_banned});\nlet _: f32 = xs{fp_sum_banned}();\nlet _: f32 = xs.iter(){fp_inferred_sum_banned};\nlet _: u64 = xs.iter(){fp_inferred_sum_banned}; // determinism-allow\nlet _: f64 = {fp_ufcs_sum_banned}(xs);\nlet _: f32 = {fp_ufcs_fold_banned}xs, 0.0, |a, b| a + b);\nlet _: f32 = xs.iter(){fp_fold_banned}, |a, b| a + b);\nlet _: f32 = xs.iter(){fp_typed_fold_banned}, |a, b| a + b);\n"
         );
         scan_determinism_text(Path::new("sample.rs"), &text, &mut violations);
-        assert_eq!(violations.len(), 7);
+        assert_eq!(violations.len(), 8);
         assert!(violations[0].contains("sample.rs:1"));
         assert!(violations[0].contains(banned));
         assert!(violations[1].contains("sample.rs:3"));
@@ -5868,13 +5873,15 @@ mod tests {
         assert!(violations[2].contains("sample.rs:4"));
         assert!(violations[2].contains(fp_sum_banned));
         assert!(violations[3].contains("sample.rs:5"));
-        assert!(violations[3].contains(fp_ufcs_sum_banned));
-        assert!(violations[4].contains("sample.rs:6"));
-        assert!(violations[4].contains(fp_ufcs_fold_banned));
-        assert!(violations[5].contains("sample.rs:7"));
-        assert!(violations[5].contains(fp_fold_banned));
-        assert!(violations[6].contains("sample.rs:8"));
-        assert!(violations[6].contains(fp_typed_fold_banned));
+        assert!(violations[3].contains(fp_inferred_sum_banned));
+        assert!(violations[4].contains("sample.rs:7"));
+        assert!(violations[4].contains(fp_ufcs_sum_banned));
+        assert!(violations[5].contains("sample.rs:8"));
+        assert!(violations[5].contains(fp_ufcs_fold_banned));
+        assert!(violations[6].contains("sample.rs:9"));
+        assert!(violations[6].contains(fp_fold_banned));
+        assert!(violations[7].contains("sample.rs:10"));
+        assert!(violations[7].contains(fp_typed_fold_banned));
     }
 
     #[test]

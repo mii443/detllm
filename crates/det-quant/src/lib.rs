@@ -165,7 +165,7 @@ pub fn try_quantize_q8k_block(input: &[f32]) -> Result<Q8KBlock, QuantError> {
         *dst = rounded as i8;
     }
     for (sum, chunk) in bsums.iter_mut().zip(q.chunks_exact(16)) {
-        *sum = chunk.iter().map(|&v| v as i16).sum();
+        *sum = chunk.iter().map(|&v| v as i16).sum(); // determinism-allow: integer Q8_K block sum
     }
     let d = 1.0 / iscale;
     Ok(Q8KBlock { d, q, bsums })
@@ -620,7 +620,7 @@ mod x86_64_sse2 {
     unsafe fn horizontal_sum_i32x4(v: __m128i) -> i32 {
         let mut lanes = [0i32; 4];
         _mm_storeu_si128(lanes.as_mut_ptr().cast::<__m128i>(), v);
-        lanes.iter().sum()
+        lanes.iter().sum() // determinism-allow: integer SIMD lane sum
     }
 }
 
@@ -677,7 +677,7 @@ mod x86_64_avx2 {
     unsafe fn horizontal_sum_i32x8(v: __m256i) -> i32 {
         let mut lanes = [0i32; 8];
         _mm256_storeu_si256(lanes.as_mut_ptr().cast::<__m256i>(), v);
-        lanes.iter().sum()
+        lanes.iter().sum() // determinism-allow: integer SIMD lane sum
     }
 }
 
