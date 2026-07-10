@@ -1455,6 +1455,28 @@ prefix than the 64-token encode-only matrix. Because `--limit-tokens 512` is
 still set, it remains prefix evidence rather than the final full-token M4
 compression-rate measurement.
 
+The same production-shape Qwen2.5 Q8_0 512-token round-trip was also run with
+`--threads 8` and `--threads 16`:
+
+```sh
+scripts/run-target-full-bench.sh --model /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --input /tmp/enwik8 --name qwen25-q8-thread8-512rt --limit-tokens 512 --n-ctx 2048 --threads 8 --progress-every 512
+scripts/run-target-full-bench.sh --model /tmp/detllm-external/qwen2.5-1.5b-instruct-q8_0.gguf --input /tmp/enwik8 --name qwen25-q8-thread16-512rt --limit-tokens 512 --n-ctx 2048 --threads 16 --progress-every 512
+```
+
+Observed output:
+
+| threads | measured bytes | payload bytes | DTLZ bytes | DTLZ SHA-256 | round-trip throughput |
+|---:|---:|---:|---:|---|---:|
+| 8 | 1702 | 83 | 139 | `8eb550073f2296b34c38a3192c93adb1a8c41245d08048fc812fd98d938f0ab7` | 2.522 tokens/s |
+| 16 | 1702 | 83 | 139 | `8eb550073f2296b34c38a3192c93adb1a8c41245d08048fc812fd98d938f0ab7` | 1.710 tokens/s |
+
+Both runs used `mode=round-trip`, `n_ctx=2048`, `overlap=512`, and the same
+measured input SHA-256
+`00474457a0a2b7dab617ddacdab2d0b84ae7de61080c41c57aea1250c7a8413a`.
+This is target-model evidence that the production-shape codec payload is
+thread-count invariant for this larger prefix, though it still remains
+token-limited preflight evidence rather than the final full first-1MB run.
+
 Production-shape Qwen2.5 Q8_0 encode-only preflight over one full `n_ctx=2048`
 measured prefix:
 

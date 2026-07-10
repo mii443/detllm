@@ -202,6 +202,12 @@ mode:
 |---|---:|---:|---:|---:|
 | Qwen2.5 Q8_0 | 1702 | 0.390129 | 0.653349 | 2.554 tokens/s |
 
+The same 512-token production-shape Qwen2.5 round-trip was also run with
+`--threads 8` and `--threads 16`. Both runs wrote a 139-byte DTLZ file with the
+same SHA-256,
+`8eb550073f2296b34c38a3192c93adb1a8c41245d08048fc812fd98d938f0ab7`,
+while verifying byte round-trip internally.
+
 Production-shape encode-only preflight with a full `n_ctx=2048` measured
 prefix:
 
