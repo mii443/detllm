@@ -175,6 +175,7 @@ fn check_determinism() -> Result<(), String> {
         let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         scan_determinism_text(&path, &text, &mut violations);
         if path.file_name().and_then(|name| name.to_str()) == Some("Cargo.toml") {
+            scan_manifest_lint_policy_text(&path, &text, &mut violations);
             scan_dependency_policy_text(&path, &text, &mut violations);
         }
     }
@@ -242,6 +243,27 @@ fn scan_determinism_text(path: &Path, text: &str, violations: &mut Vec<String>) 
                     reason
                 ));
             }
+        }
+    }
+}
+
+fn scan_manifest_lint_policy_text(path: &Path, text: &str, violations: &mut Vec<String>) {
+    if path == Path::new("Cargo.toml") {
+        if !text.contains("[workspace.lints.rust]") || !text.contains("unsafe_code = \"forbid\"") {
+            violations
+                .push("Cargo.toml: workspace lints must forbid unsafe_code by default".to_owned());
+        }
+    }
+
+    let is_quant_manifest = path == Path::new("crates/det-quant/Cargo.toml");
+    for (line_idx, line) in text.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed == "unsafe_code = \"allow\"" && !is_quant_manifest {
+            violations.push(format!(
+                "{}:{}: unsafe_code may only be allowed in det-quant SIMD intrinsics",
+                path.display(),
+                line_idx + 1
+            ));
         }
     }
 }
@@ -5554,6 +5576,52 @@ mod tests {
                 "{violations:?}"
             );
         }
+    }
+
+    #[test]
+    fn manifest_lint_policy_restricts_unsafe_allow_to_det_quant() {
+        let mut violations = Vec::new();
+        scan_manifest_lint_policy_text(
+            Path::new("Cargo.toml"),
+            r#"
+[workspace.lints.rust]
+unsafe_code = "forbid"
+"#,
+            &mut violations,
+        );
+        scan_manifest_lint_policy_text(
+            Path::new("crates/det-quant/Cargo.toml"),
+            r#"
+[lints.rust]
+unsafe_code = "allow"
+"#,
+            &mut violations,
+        );
+        assert!(violations.is_empty(), "{violations:?}");
+
+        scan_manifest_lint_policy_text(Path::new("Cargo.toml"), "[workspace]\n", &mut violations);
+        scan_manifest_lint_policy_text(
+            Path::new("crates/det-model/Cargo.toml"),
+            r#"
+[lints.rust]
+unsafe_code = "allow"
+"#,
+            &mut violations,
+        );
+
+        assert_eq!(violations.len(), 2, "{violations:?}");
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("must forbid unsafe_code")),
+            "{violations:?}"
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("det-quant SIMD intrinsics")),
+            "{violations:?}"
+        );
     }
 
     #[test]
