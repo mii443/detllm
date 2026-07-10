@@ -2813,6 +2813,47 @@ fn validate_ci_workflow_text(text: &str) -> Result<(), String> {
             "cargo build --workspace --target wasm32-wasip1",
         ),
         (
+            "parallel feature clippy",
+            "cargo clippy --workspace --all-targets --features parallel -- -D warnings",
+        ),
+        (
+            "simd feature clippy",
+            "cargo clippy --workspace --all-targets --features simd -- -D warnings",
+        ),
+        (
+            "combined feature clippy",
+            "cargo clippy --workspace --all-targets --features parallel,simd -- -D warnings",
+        ),
+        (
+            "parallel feature tests",
+            "cargo test --workspace --features parallel",
+        ),
+        ("simd feature tests", "cargo test --workspace --features simd"),
+        (
+            "combined feature tests",
+            "cargo test --workspace --features parallel,simd",
+        ),
+        (
+            "wasm parallel feature build",
+            "cargo build --workspace --target wasm32-wasip1 --features parallel",
+        ),
+        (
+            "wasm simd feature build",
+            "cargo build --workspace --target wasm32-wasip1 --features simd",
+        ),
+        (
+            "wasm combined feature build",
+            "cargo build --workspace --target wasm32-wasip1 --features parallel,simd",
+        ),
+        (
+            "native AVX2 simd check",
+            "RUSTFLAGS=\"-C target-feature=+avx2\" cargo test -p det-quant --features simd simd_blocks_match_scalar_bits",
+        ),
+        (
+            "aarch64 simd compile check",
+            "cargo check -p det-quant --target aarch64-unknown-linux-gnu --features simd",
+        ),
+        (
             "wasmtime download retry",
             "curl -fsSL --retry 10 --retry-all-errors --retry-delay 5 --retry-max-time 180",
         ),
@@ -5759,6 +5800,21 @@ version = "=5.0.0"
             .expect_err("missing determinism self-check");
         assert!(err.contains("determinism self-check"), "{err}");
 
+        let missing_feature_tests = valid.replace(
+            "      - run: cargo test --workspace --features parallel,simd\n",
+            "",
+        );
+        let err =
+            validate_ci_workflow_text(&missing_feature_tests).expect_err("missing feature tests");
+        assert!(err.contains("combined feature tests"), "{err}");
+
+        let missing_avx2 = valid.replace(
+            "      - run: RUSTFLAGS=\"-C target-feature=+avx2\" cargo test -p det-quant --features simd simd_blocks_match_scalar_bits\n",
+            "",
+        );
+        let err = validate_ci_workflow_text(&missing_avx2).expect_err("missing avx2 simd check");
+        assert!(err.contains("native AVX2 simd check"), "{err}");
+
         let old_checkout = valid.replace("actions/checkout@v5", "actions/checkout@v4");
         let err = validate_ci_workflow_text(&old_checkout).expect_err("old checkout");
         assert!(err.contains("Node.js 20 action"), "{err}");
@@ -5804,6 +5860,11 @@ jobs:
       - run: cargo run -p xtask -- check-ci-workflow
       - run: cargo run -p xtask -- check-benchmark-workflow
       - run: cargo run -p xtask -- check-helper-scripts
+      - run: cargo clippy --workspace --all-targets --features parallel -- -D warnings
+      - run: cargo clippy --workspace --all-targets --features simd -- -D warnings
+      - run: cargo clippy --workspace --all-targets --features parallel,simd -- -D warnings
+      - run: RUSTFLAGS="-C target-feature=+avx2" cargo test -p det-quant --features simd simd_blocks_match_scalar_bits
+      - run: cargo check -p det-quant --target aarch64-unknown-linux-gnu --features simd
   test:
     strategy:
       matrix:
@@ -5812,6 +5873,9 @@ jobs:
           - name: aarch64-macos
           - name: aarch64-linux
     steps:
+      - run: cargo test --workspace --features parallel
+      - run: cargo test --workspace --features simd
+      - run: cargo test --workspace --features parallel,simd
       - run: cargo run -p det-cli -- logits -m testdata/tiny-f32.gguf --tokens "$(cat testdata/tiny.tokens.txt)" --hash --chunk-size 3
       - uses: actions/upload-artifact@v6
         with:
@@ -5838,6 +5902,9 @@ jobs:
     steps:
       - run: curl -fsSL --retry 10 --retry-all-errors --retry-delay 5 --retry-max-time 180 https://example.invalid/wasmtime.tar.xz -o wasmtime.tar.xz
       - run: cargo build --workspace --target wasm32-wasip1
+      - run: cargo build --workspace --target wasm32-wasip1 --features parallel
+      - run: cargo build --workspace --target wasm32-wasip1 --features simd
+      - run: cargo build --workspace --target wasm32-wasip1 --features parallel,simd
       - run: wasmtime target/wasm32-wasip1/debug/detllm.wasm selftest
       - run: cargo run -p det-cli -- logits -m testdata/tiny-f32.gguf --tokens "$(cat testdata/tiny.tokens.txt)" --hash --chunk-size 3
       - run: wasmtime --dir . target/wasm32-wasip1/debug/detllm.wasm logits -m testdata/tiny-f32.gguf --tokens "$(cat testdata/tiny.tokens.txt)" --hash --chunk-size 3
