@@ -87,6 +87,34 @@ const DETERMINISM_BANNED_PATTERNS: &[(&str, &str)] = &[
         "relaxed target features are not allowed",
     ),
     (
+        "target-feature=+fma", // determinism-allow
+        "FMA target features are forbidden",
+    ),
+    (
+        "target_feature = \"fma", // determinism-allow
+        "FMA target features are forbidden",
+    ),
+    (
+        "enable = \"fma", // determinism-allow
+        "FMA target features are forbidden",
+    ),
+    (
+        "avx512", // determinism-allow
+        "AVX-512 paths require an explicit deterministic reduction design",
+    ),
+    (
+        "avx-512", // determinism-allow
+        "AVX-512 paths require an explicit deterministic reduction design",
+    ),
+    (
+        "vfmadd", // determinism-allow
+        "FMA instructions are forbidden",
+    ),
+    (
+        "fmadd", // determinism-allow
+        "FMA instructions are forbidden",
+    ),
+    (
         ".par_iter().sum", // determinism-allow
         "parallel floating-point reductions are forbidden",
     ),
@@ -5593,6 +5621,10 @@ mod tests {
         let neon_approx = concat!("frsqr", "te");
         let rayon_reduce = concat!(".par_iter().", "reduce");
         let rayon_fold = concat!(".into_par_iter().", "fold");
+        let fma_flag = concat!("target-feature=+", "fma");
+        let fma_attr = concat!("enable = \"", "fma");
+        let avx_wide = concat!("avx", "512");
+        let fma_instruction = concat!("vf", "madd");
         let text = [
             format!("if std::arch::{runtime_dispatch}(\"avx2\") {{}}"),
             format!("let _ = \"{fast_math}\";"),
@@ -5601,6 +5633,10 @@ mod tests {
             format!("asm!(\"{neon_approx} v0.4s, v0.4s\");"),
             format!("let _ = xs{rayon_reduce}(|| 0.0, |a, b| a + b);"),
             format!("let _ = xs{rayon_fold}(|| 0.0, |a, b| a + b);"),
+            format!("RUSTFLAGS=\"-C {fma_flag}\""),
+            format!("#[target_feature({fma_attr}\")] unsafe fn kernel() {{}}"),
+            format!("#[cfg(target_feature = \"{avx_wide}f\")] fn wide() {{}}"),
+            format!("asm!(\"{fma_instruction}132ps ymm0, ymm1, ymm2\");"),
         ]
         .join("\n");
         scan_determinism_text(Path::new("sample.rs"), &text, &mut violations);
@@ -5613,6 +5649,10 @@ mod tests {
             neon_approx,
             rayon_reduce,
             rayon_fold,
+            fma_flag,
+            fma_attr,
+            avx_wide,
+            fma_instruction,
         ] {
             assert!(
                 violations
