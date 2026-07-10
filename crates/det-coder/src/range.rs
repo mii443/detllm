@@ -14,6 +14,13 @@ pub struct RangeEncoder {
     out: Vec<u8>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RangeEncoderSnapshot {
+    pub low: u64,
+    pub range: u64,
+    pub out: Vec<u8>,
+}
+
 impl Default for RangeEncoder {
     fn default() -> Self {
         Self::new()
@@ -26,6 +33,25 @@ impl RangeEncoder {
             low: 0,
             range: u64::MAX,
             out: Vec::new(),
+        }
+    }
+
+    pub fn from_snapshot(snapshot: RangeEncoderSnapshot) -> Result<Self, RangeError> {
+        if snapshot.range == 0 {
+            return Err(RangeError::InvalidFrequency);
+        }
+        Ok(Self {
+            low: snapshot.low,
+            range: snapshot.range,
+            out: snapshot.out,
+        })
+    }
+
+    pub fn snapshot(&self) -> RangeEncoderSnapshot {
+        RangeEncoderSnapshot {
+            low: self.low,
+            range: self.range,
+            out: self.out.clone(),
         }
     }
 
@@ -177,6 +203,30 @@ mod tests {
             out.push(s);
         }
         assert_eq!(out, symbols);
+    }
+
+    #[test]
+    fn encoder_snapshot_resumes_canonical_stream() {
+        let cum = [0u64, 1, 0, 2, 1, 3, 0, 2];
+        let freq = [1u64, 1, 2, 1, 2, 1, 1, 2];
+        let total = 4;
+
+        let mut one_shot = RangeEncoder::new();
+        for (&cum, &freq) in cum.iter().zip(&freq) {
+            one_shot.encode(cum, freq, total).expect("one shot encode");
+        }
+
+        let mut resumed = RangeEncoder::new();
+        for (&cum, &freq) in cum[..4].iter().zip(&freq[..4]) {
+            resumed.encode(cum, freq, total).expect("prefix encode");
+        }
+        let snapshot = resumed.snapshot();
+        let mut resumed = RangeEncoder::from_snapshot(snapshot).expect("restore");
+        for (&cum, &freq) in cum[4..].iter().zip(&freq[4..]) {
+            resumed.encode(cum, freq, total).expect("suffix encode");
+        }
+
+        assert_eq!(resumed.finish(), one_shot.finish());
     }
 
     #[test]

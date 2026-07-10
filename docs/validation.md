@@ -1506,6 +1506,13 @@ through a temporary file and rename as soon as encode finishes. It requires
 `--iters 1`, matching the target-model acceptance run, so a long round-trip
 run leaves a durable compressed file before the decode verification phase
 starts. That file can be checked later with the public `decompress` command.
+`--checkpoint PATH --checkpoint-every N` can be combined with `--output-dtlz`
+on the same single-iteration shape. It atomically saves the range encoder
+state and completed codec-symbol count during encode. Rerunning the same
+command resumes from that checkpoint after validating the model SHA-256, input
+SHA-256, context settings, measured input length, and token count. The
+checkpoint is removed only after the final DTLZ has been written and any
+round-trip verification has completed.
 `--verify-dtlz PATH` resumes from such a saved DTLZ file: it reloads the same
 model and input prefix, verifies the DTLZ header model SHA/context/original
 length, decodes the payload, compares the decoded codec symbols with the fresh
@@ -1530,9 +1537,12 @@ no `--limit-tokens`, round-trip mode, `--no-warmup`, `--show-phases`,
 `--threads 8`, `--n-ctx 2048`, and `--progress-every 1000`. It records the
 combined progress log, the stable `bench-file --summary` output, and a
 `<name>.dtlz` output in `/tmp/detllm-target-bench` unless `--out DIR` is
-provided. In `--verify-dtlz` mode the same wrapper records summary/progress/log
-files for the resumed decode verification without rewriting the saved DTLZ. It
-keeps a `<name>.progress` file updated with the latest progress row. Use
+provided. For encode runs it also passes `--checkpoint
+/tmp/detllm-target-bench/<name>.checkpoint --checkpoint-every 1000`, so an
+interrupted encode can be rerun without discarding completed range-coder work.
+In `--verify-dtlz` mode the same wrapper records summary/progress/log files
+for the resumed decode verification without rewriting the saved DTLZ. It keeps
+a `<name>.progress` file updated with the latest progress row. Use
 `--limit-tokens N --encode-only --estimate-full-run` with the same wrapper only
 for preflight estimates; omit those flags for the acceptance measurement.
 `--estimate-full-run` adds an opt-in `bench-file-estimate` line for

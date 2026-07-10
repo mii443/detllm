@@ -11,5 +11,5 @@ pub use cdf::{
     DecoderDistribution, SymbolRange, BYTE_ESCAPE_SYMBOLS, MAX_SYMBOLS,
 };
 pub use file::{DtlzHeader, FileError, FLAG_BYTE_ESCAPES};
-pub use range::{RangeDecoder, RangeEncoder, RangeError};
+pub use range::{RangeDecoder, RangeEncoder, RangeEncoderSnapshot, RangeError};
 pub use stream::{decode_token_stream, encode_token_stream, StreamError};

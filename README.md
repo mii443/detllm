@@ -95,7 +95,13 @@ throughput, remaining seconds, and estimated total seconds for the current
 encode/decode phase. `--progress-summary PATH` atomically writes the latest
 progress row to a file, which is useful for long runs where terminal output is
 transient. `--summary PATH` also writes the final stdout summary lines to a
-file via same-directory rename. The codec benchmark path reuses a
+file via same-directory rename. `--checkpoint PATH --checkpoint-every N` can
+be combined with `--output-dtlz PATH` on single-iteration runs to atomically
+save the range encoder state and completed codec-symbol count during encode;
+rerunning the same command resumes from that checkpoint after validating the
+model SHA-256, input SHA-256, context settings, input length, and token count.
+The checkpoint is removed after the final DTLZ has been written and any
+round-trip verification has completed. The codec benchmark path reuses a
 streaming KV cache inside each
 fixed context window and only replays the configured overlap after window
 rollover; repeated forward calls also reuse `ForwardWorkspace` scratch buffers
@@ -122,7 +128,8 @@ scale the measured token throughput to the full tokenized first-1MB prefix.
 measurement shape and writes a stable `bench-file` summary, a DTLZ output, and
 a combined progress log under `/tmp/detllm-target-bench` by default. It also
 writes a `<name>.progress` file with the latest atomically replaced progress
-row while the benchmark is running.
+row while the benchmark is running, plus a `<name>.checkpoint` encode
+checkpoint until the run finishes successfully.
 GitHub Actions also includes a `nightly-tinyllama` job that is skipped on
 ordinary push/PR runs and runs only on the scheduled workflow or when
 `workflow_dispatch` is started with `run_nightly_tinyllama=true`; it downloads

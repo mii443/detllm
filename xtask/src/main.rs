@@ -123,7 +123,7 @@ fn real_main() -> Result<(), String> {
         Some("check-ci-workflow") => check_ci_workflow(),
         Some("check-determinism") => check_determinism(),
         _ => Err(
-            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf [--metadata-prefix]|bench-file --model model.gguf --input file [--limit-bytes N] [--limit-tokens N] [--n-ctx N] [--iters N] [--threads N] [--progress-every N] [--progress-summary PATH] [--summary PATH] [--output-dtlz PATH] [--verify-dtlz PATH] [--no-warmup] [--encode-only] [--show-phases] [--estimate-full-run]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N] [--worst-rows N] [--top-diffs N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
+            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf [--metadata-prefix]|bench-file --model model.gguf --input file [--limit-bytes N] [--limit-tokens N] [--n-ctx N] [--iters N] [--threads N] [--progress-every N] [--progress-summary PATH] [--summary PATH] [--output-dtlz PATH] [--checkpoint PATH --checkpoint-every N] [--verify-dtlz PATH] [--no-warmup] [--encode-only] [--show-phases] [--estimate-full-run]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N] [--worst-rows N] [--top-diffs N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
                 .to_owned(),
         ),
     }
@@ -339,6 +339,8 @@ struct BenchFileOpts {
     summary_path: Option<String>,
     output_dtlz_path: Option<String>,
     verify_dtlz_path: Option<String>,
+    checkpoint_path: Option<String>,
+    checkpoint_every: Option<usize>,
     warmup: bool,
     encode_only: bool,
     show_phases: bool,
@@ -946,6 +948,8 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
     let mut summary_path = None;
     let mut output_dtlz_path = None;
     let mut verify_dtlz_path = None;
+    let mut checkpoint_path = None;
+    let mut checkpoint_every = None;
     let mut warmup = true;
     let mut encode_only = false;
     let mut show_phases = false;
@@ -1058,6 +1062,31 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
                 }
                 verify_dtlz_path = Some(raw.clone());
             }
+            "--checkpoint" => {
+                i += 1;
+                let raw = args
+                    .get(i)
+                    .ok_or("bench-file: missing value for --checkpoint")?;
+                if raw.is_empty() {
+                    return Err("bench-file: --checkpoint must not be empty".to_owned());
+                }
+                checkpoint_path = Some(raw.clone());
+            }
+            "--checkpoint-every" => {
+                i += 1;
+                let raw = args
+                    .get(i)
+                    .ok_or("bench-file: missing value for --checkpoint-every")?;
+                let value = raw
+                    .parse::<usize>()
+                    .map_err(|e| format!("bench-file: invalid --checkpoint-every value: {e}"))?;
+                if value == 0 {
+                    return Err(
+                        "bench-file: --checkpoint-every must be greater than zero".to_owned()
+                    );
+                }
+                checkpoint_every = Some(value);
+            }
             "--progress-summary" => {
                 i += 1;
                 let raw = args
@@ -1090,10 +1119,28 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
     if output_dtlz_path.is_some() && iters != 1 {
         return Err("bench-file: --output-dtlz requires --iters 1".to_owned());
     }
+    if checkpoint_path.is_some() {
+        if output_dtlz_path.is_none() {
+            return Err("bench-file: --checkpoint requires --output-dtlz".to_owned());
+        }
+        if iters != 1 {
+            return Err("bench-file: --checkpoint requires --iters 1".to_owned());
+        }
+        if !matches!(checkpoint_every, Some(value) if value > 0) {
+            return Err("bench-file: --checkpoint requires --checkpoint-every".to_owned());
+        }
+    } else if checkpoint_every.is_some() {
+        return Err("bench-file: --checkpoint-every requires --checkpoint".to_owned());
+    }
     if verify_dtlz_path.is_some() {
         if output_dtlz_path.is_some() {
             return Err(
                 "bench-file: --verify-dtlz cannot be combined with --output-dtlz".to_owned(),
+            );
+        }
+        if checkpoint_path.is_some() {
+            return Err(
+                "bench-file: --verify-dtlz cannot be combined with --checkpoint".to_owned(),
             );
         }
         if encode_only {
@@ -1123,6 +1170,8 @@ fn parse_bench_file_opts(args: Vec<String>) -> Result<BenchFileOpts, String> {
         summary_path,
         output_dtlz_path,
         verify_dtlz_path,
+        checkpoint_path,
+        checkpoint_every,
         warmup,
         encode_only,
         show_phases,
@@ -1190,7 +1239,8 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
     }
     let token_prefix_ms = phase_start.elapsed().as_secs_f64() * 1000.0;
     let measured_input_bytes = input.len();
-    let input_sha256 = sha256_hex(&input);
+    let input_sha256_digest = sha256_digest(&input);
+    let input_sha256 = hex(&input_sha256_digest);
 
     if let Some(path) = &opts.verify_dtlz_path {
         return bench_file_verify_dtlz(
@@ -1247,8 +1297,18 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
     let mut output_dtlz = None;
     for _ in 0..opts.iters {
         if opts.encode_only {
-            let payload =
-                encode_symbols_with_model_progress(&model, &symbols, n_ctx, overlap, &progress)?;
+            let payload = encode_symbols_for_bench_file(
+                &model,
+                &symbols,
+                n_ctx,
+                overlap,
+                &progress,
+                opts.checkpoint_path.as_deref(),
+                opts.checkpoint_every,
+                model_sha256_digest,
+                input_sha256_digest,
+                input.len(),
+            )?;
             payload_bytes += payload.len();
             if opts.output_dtlz_path.is_some() {
                 output_dtlz = Some(write_bench_file_dtlz_for_payload(
@@ -1261,8 +1321,18 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
                 )?);
             }
         } else {
-            let payload =
-                encode_symbols_with_model_progress(&model, &symbols, n_ctx, overlap, &progress)?;
+            let payload = encode_symbols_for_bench_file(
+                &model,
+                &symbols,
+                n_ctx,
+                overlap,
+                &progress,
+                opts.checkpoint_path.as_deref(),
+                opts.checkpoint_every,
+                model_sha256_digest,
+                input_sha256_digest,
+                input.len(),
+            )?;
             payload_bytes += payload.len();
             if opts.output_dtlz_path.is_some() {
                 output_dtlz = Some(write_bench_file_dtlz_for_payload(
@@ -1288,6 +1358,9 @@ fn bench_file(opts: BenchFileOpts) -> Result<(), String> {
                 return Err("bench-file: benchmark iteration did not round-trip".to_owned());
             }
         }
+    }
+    if let Some(path) = &opts.checkpoint_path {
+        remove_bench_file_checkpoint(path)?;
     }
     let elapsed = start.elapsed();
     let input_bytes = input.len() * opts.iters;
@@ -1603,6 +1676,224 @@ fn write_bench_file_summary(path: &str, lines: &[String]) -> Result<(), String> 
         return Err(format!("{}: {e}", path.display()));
     }
     Ok(())
+}
+
+const BENCH_FILE_CHECKPOINT_MAGIC: &[u8; 8] = b"DTLZBCK1";
+
+#[derive(Debug)]
+struct BenchFileEncodeCheckpoint {
+    model_sha256: [u8; 32],
+    input_sha256: [u8; 32],
+    n_ctx: usize,
+    overlap: usize,
+    orig_len: usize,
+    symbols_len: usize,
+    symbols_done: usize,
+    elapsed_ns: u64,
+    encoder: det_coder::RangeEncoderSnapshot,
+}
+
+impl BenchFileEncodeCheckpoint {
+    fn validate(
+        &self,
+        model_sha256: [u8; 32],
+        input_sha256: [u8; 32],
+        n_ctx: usize,
+        overlap: usize,
+        orig_len: usize,
+        symbols_len: usize,
+    ) -> Result<(), String> {
+        if self.model_sha256 != model_sha256 {
+            return Err("bench-file: checkpoint model SHA-256 mismatch".to_owned());
+        }
+        if self.input_sha256 != input_sha256 {
+            return Err("bench-file: checkpoint input SHA-256 mismatch".to_owned());
+        }
+        if self.n_ctx != n_ctx {
+            return Err(format!(
+                "bench-file: checkpoint n_ctx {} does not match {n_ctx}",
+                self.n_ctx
+            ));
+        }
+        if self.overlap != overlap {
+            return Err(format!(
+                "bench-file: checkpoint overlap {} does not match {overlap}",
+                self.overlap
+            ));
+        }
+        if self.orig_len != orig_len {
+            return Err(format!(
+                "bench-file: checkpoint orig_len {} does not match {orig_len}",
+                self.orig_len
+            ));
+        }
+        if self.symbols_len != symbols_len {
+            return Err(format!(
+                "bench-file: checkpoint symbols_len {} does not match {symbols_len}",
+                self.symbols_len
+            ));
+        }
+        if self.symbols_done > self.symbols_len {
+            return Err(format!(
+                "bench-file: checkpoint symbols_done {} exceeds symbols_len {}",
+                self.symbols_done, self.symbols_len
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn read_bench_file_checkpoint_if_present(
+    path: &str,
+) -> Result<Option<BenchFileEncodeCheckpoint>, String> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("{path}: {e}")),
+    };
+    parse_bench_file_checkpoint(&bytes, path).map(Some)
+}
+
+fn parse_bench_file_checkpoint(
+    bytes: &[u8],
+    path: &str,
+) -> Result<BenchFileEncodeCheckpoint, String> {
+    let mut cursor = 0usize;
+    if bytes.get(..BENCH_FILE_CHECKPOINT_MAGIC.len())
+        != Some(BENCH_FILE_CHECKPOINT_MAGIC.as_slice())
+    {
+        return Err(format!("{path}: invalid bench-file checkpoint magic"));
+    }
+    cursor += BENCH_FILE_CHECKPOINT_MAGIC.len();
+    let model_sha256 = read_array_32(bytes, &mut cursor, path)?;
+    let input_sha256 = read_array_32(bytes, &mut cursor, path)?;
+    let n_ctx = read_usize_le(bytes, &mut cursor, path)?;
+    let overlap = read_usize_le(bytes, &mut cursor, path)?;
+    let orig_len = read_usize_le(bytes, &mut cursor, path)?;
+    let symbols_len = read_usize_le(bytes, &mut cursor, path)?;
+    let symbols_done = read_usize_le(bytes, &mut cursor, path)?;
+    let elapsed_ns = read_u64_le(bytes, &mut cursor, path)?;
+    let low = read_u64_le(bytes, &mut cursor, path)?;
+    let range = read_u64_le(bytes, &mut cursor, path)?;
+    let payload_len = read_usize_le(bytes, &mut cursor, path)?;
+    let end = cursor
+        .checked_add(payload_len)
+        .ok_or_else(|| format!("{path}: checkpoint payload length overflow"))?;
+    let payload = bytes
+        .get(cursor..end)
+        .ok_or_else(|| format!("{path}: truncated checkpoint payload"))?
+        .to_vec();
+    if end != bytes.len() {
+        return Err(format!("{path}: trailing bytes after checkpoint payload"));
+    }
+    Ok(BenchFileEncodeCheckpoint {
+        model_sha256,
+        input_sha256,
+        n_ctx,
+        overlap,
+        orig_len,
+        symbols_len,
+        symbols_done,
+        elapsed_ns,
+        encoder: det_coder::RangeEncoderSnapshot {
+            low,
+            range,
+            out: payload,
+        },
+    })
+}
+
+fn write_bench_file_checkpoint(
+    path: &str,
+    checkpoint: &BenchFileEncodeCheckpoint,
+) -> Result<(), String> {
+    let path = Path::new(path);
+    if path.as_os_str().is_empty() {
+        return Err("bench-file: --checkpoint must not be empty".to_owned());
+    }
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("bench-file: invalid --checkpoint path: {}", path.display()))?;
+    let tmp = parent.join(format!(".{file_name}.{}.tmp", std::process::id()));
+    let body = encode_bench_file_checkpoint(checkpoint)?;
+    fs::write(&tmp, body).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    if let Err(e) = fs::rename(&tmp, path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("{}: {e}", path.display()));
+    }
+    Ok(())
+}
+
+fn encode_bench_file_checkpoint(checkpoint: &BenchFileEncodeCheckpoint) -> Result<Vec<u8>, String> {
+    let mut out = Vec::with_capacity(
+        BENCH_FILE_CHECKPOINT_MAGIC.len() + 32 + 32 + 9 * 8 + checkpoint.encoder.out.len(),
+    );
+    out.extend_from_slice(BENCH_FILE_CHECKPOINT_MAGIC);
+    out.extend_from_slice(&checkpoint.model_sha256);
+    out.extend_from_slice(&checkpoint.input_sha256);
+    push_usize_as_u64(&mut out, checkpoint.n_ctx, "n_ctx")?;
+    push_usize_as_u64(&mut out, checkpoint.overlap, "overlap")?;
+    push_usize_as_u64(&mut out, checkpoint.orig_len, "orig_len")?;
+    push_usize_as_u64(&mut out, checkpoint.symbols_len, "symbols_len")?;
+    push_usize_as_u64(&mut out, checkpoint.symbols_done, "symbols_done")?;
+    push_u64(&mut out, checkpoint.elapsed_ns);
+    push_u64(&mut out, checkpoint.encoder.low);
+    push_u64(&mut out, checkpoint.encoder.range);
+    push_usize_as_u64(&mut out, checkpoint.encoder.out.len(), "payload_len")?;
+    out.extend_from_slice(&checkpoint.encoder.out);
+    Ok(out)
+}
+
+fn remove_bench_file_checkpoint(path: &str) -> Result<(), String> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("{path}: {e}")),
+    }
+}
+
+fn push_usize_as_u64(out: &mut Vec<u8>, value: usize, field: &str) -> Result<(), String> {
+    let value = u64::try_from(value)
+        .map_err(|_| format!("bench-file: checkpoint {field} does not fit u64"))?;
+    push_u64(out, value);
+    Ok(())
+}
+
+fn read_array_32(bytes: &[u8], cursor: &mut usize, path: &str) -> Result<[u8; 32], String> {
+    let slice = read_exact(bytes, cursor, 32, path)?;
+    let mut out = [0u8; 32];
+    out.copy_from_slice(slice);
+    Ok(out)
+}
+
+fn read_usize_le(bytes: &[u8], cursor: &mut usize, path: &str) -> Result<usize, String> {
+    let value = read_u64_le(bytes, cursor, path)?;
+    usize::try_from(value).map_err(|_| format!("{path}: checkpoint value does not fit usize"))
+}
+
+fn read_u64_le(bytes: &[u8], cursor: &mut usize, path: &str) -> Result<u64, String> {
+    let slice = read_exact(bytes, cursor, 8, path)?;
+    let mut raw = [0u8; 8];
+    raw.copy_from_slice(slice);
+    Ok(u64::from_le_bytes(raw))
+}
+
+fn read_exact<'a>(
+    bytes: &'a [u8],
+    cursor: &mut usize,
+    len: usize,
+    path: &str,
+) -> Result<&'a [u8], String> {
+    let end = cursor
+        .checked_add(len)
+        .ok_or_else(|| format!("{path}: checkpoint length overflow"))?;
+    let slice = bytes
+        .get(*cursor..end)
+        .ok_or_else(|| format!("{path}: truncated checkpoint"))?;
+    *cursor = end;
+    Ok(slice)
 }
 
 #[derive(Debug)]
@@ -3008,6 +3299,119 @@ fn encode_tokens_with_model(
     encode_symbols_with_model_progress(model, tokens, n_ctx, overlap, &BenchFileProgress::default())
 }
 
+#[allow(clippy::too_many_arguments)]
+fn encode_symbols_for_bench_file(
+    model: &det_model::F32Llama,
+    symbols: &[usize],
+    n_ctx: usize,
+    overlap: usize,
+    progress: &BenchFileProgress,
+    checkpoint_path: Option<&str>,
+    checkpoint_every: Option<usize>,
+    model_sha256: [u8; 32],
+    input_sha256: [u8; 32],
+    orig_len: usize,
+) -> Result<Vec<u8>, String> {
+    let Some(checkpoint_path) = checkpoint_path else {
+        return encode_symbols_with_model_progress(model, symbols, n_ctx, overlap, progress);
+    };
+    let checkpoint_every =
+        checkpoint_every.ok_or("bench-file: --checkpoint requires --checkpoint-every")?;
+    encode_symbols_with_model_checkpoint(
+        model,
+        symbols,
+        n_ctx,
+        overlap,
+        progress,
+        checkpoint_path,
+        checkpoint_every,
+        model_sha256,
+        input_sha256,
+        orig_len,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode_symbols_with_model_checkpoint(
+    model: &det_model::F32Llama,
+    symbols: &[usize],
+    n_ctx: usize,
+    overlap: usize,
+    progress: &BenchFileProgress,
+    checkpoint_path: &str,
+    checkpoint_every: usize,
+    model_sha256: [u8; 32],
+    input_sha256: [u8; 32],
+    orig_len: usize,
+) -> Result<Vec<u8>, String> {
+    validate_window(n_ctx, overlap, model.config.context_length)?;
+    let vocab_len = model.output.rows();
+    let mut start_pos = 0usize;
+    let mut elapsed_offset_s = 0.0f64;
+    let mut enc = det_coder::RangeEncoder::new();
+    if let Some(checkpoint) = read_bench_file_checkpoint_if_present(checkpoint_path)? {
+        checkpoint.validate(
+            model_sha256,
+            input_sha256,
+            n_ctx,
+            overlap,
+            orig_len,
+            symbols.len(),
+        )?;
+        start_pos = checkpoint.symbols_done;
+        elapsed_offset_s = checkpoint.elapsed_ns as f64 / 1_000_000_000.0;
+        enc = det_coder::RangeEncoder::from_snapshot(checkpoint.encoder)
+            .map_err(|e| format!("bench-file: checkpoint range state error: {e:?}"))?;
+        eprintln!(
+            "bench-file-checkpoint-resume path={} tokens_done={} tokens_total={} payload_bytes={}",
+            checkpoint_path,
+            start_pos,
+            symbols.len(),
+            enc.snapshot().out.len()
+        );
+    }
+
+    let mut context_tokens: Vec<usize> = symbols[..start_pos]
+        .iter()
+        .copied()
+        .filter(|&symbol| det_token::Tokenizer::codec_symbol_is_token(symbol, vocab_len))
+        .collect();
+    let mut state = WindowedModelState::new(model, n_ctx)?;
+    let replay_start = window_start_for_encoded_prefix(context_tokens.len(), n_ctx, overlap);
+    state.replay(replay_start, &context_tokens[replay_start..])?;
+    let start = Instant::now();
+    for (pos, &symbol) in symbols.iter().enumerate().skip(start_pos) {
+        state.sync(context_tokens.len(), &context_tokens, overlap)?;
+        let range = state.symbol_range(symbol)?;
+        enc.encode(range.cum, range.freq as u64, range.total)
+            .map_err(|e| format!("range encode error: {e:?}"))?;
+        if det_token::Tokenizer::codec_symbol_is_token(symbol, vocab_len) {
+            context_tokens.push(symbol);
+            state.advance(symbol)?;
+        }
+        let done = pos + 1;
+        let elapsed_s = elapsed_offset_s + start.elapsed().as_secs_f64();
+        report_bench_file_progress_elapsed("encode", done, symbols.len(), progress, elapsed_s)?;
+        if done == symbols.len() || done % checkpoint_every == 0 {
+            write_bench_file_checkpoint(
+                checkpoint_path,
+                &BenchFileEncodeCheckpoint {
+                    model_sha256,
+                    input_sha256,
+                    n_ctx,
+                    overlap,
+                    orig_len,
+                    symbols_len: symbols.len(),
+                    symbols_done: done,
+                    elapsed_ns: seconds_to_nanoseconds(elapsed_s),
+                    encoder: enc.snapshot(),
+                },
+            )?;
+        }
+    }
+    Ok(enc.finish())
+}
+
 fn encode_symbols_with_model_progress(
     model: &det_model::F32Llama,
     symbols: &[usize],
@@ -3096,6 +3500,16 @@ fn report_bench_file_progress(
     progress: &BenchFileProgress,
     start: Instant,
 ) -> Result<(), String> {
+    report_bench_file_progress_elapsed(phase, done, total, progress, start.elapsed().as_secs_f64())
+}
+
+fn report_bench_file_progress_elapsed(
+    phase: &str,
+    done: usize,
+    total: usize,
+    progress: &BenchFileProgress,
+    elapsed_s: f64,
+) -> Result<(), String> {
     let should_report = match progress.every {
         Some(every) => done == total || done % every == 0,
         None => done == total && progress.summary_path.is_some(),
@@ -3103,8 +3517,6 @@ fn report_bench_file_progress(
     if !should_report {
         return Ok(());
     }
-    let elapsed = start.elapsed();
-    let elapsed_s = elapsed.as_secs_f64();
     let line = bench_file_progress_line(phase, done, total, elapsed_s);
     if progress.every.is_some() {
         eprintln!("{line}");
@@ -3113,6 +3525,18 @@ fn report_bench_file_progress(
         write_bench_file_summary(path, &[line])?;
     }
     Ok(())
+}
+
+fn seconds_to_nanoseconds(seconds: f64) -> u64 {
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return 0;
+    }
+    let nanos = seconds * 1_000_000_000.0;
+    if nanos >= u64::MAX as f64 {
+        u64::MAX
+    } else {
+        nanos.round() as u64
+    }
 }
 
 fn bench_file_progress_line(phase: &str, done: usize, total: usize, elapsed_s: f64) -> String {
@@ -3297,6 +3721,14 @@ fn next_window_start(pos: usize, window_start: usize, n_ctx: usize, overlap: usi
     } else {
         window_start
     }
+}
+
+fn window_start_for_encoded_prefix(encoded_tokens: usize, n_ctx: usize, overlap: usize) -> usize {
+    let mut window_start = 0usize;
+    for pos in 0..encoded_tokens {
+        window_start = next_window_start(pos, window_start, n_ctx, overlap);
+    }
+    window_start
 }
 
 fn validate_window(n_ctx: usize, overlap: usize, model_ctx: usize) -> Result<(), String> {
@@ -3940,6 +4372,10 @@ mod tests {
             "/tmp/bench.summary".to_owned(),
             "--output-dtlz".to_owned(),
             "/tmp/bench.dtlz".to_owned(),
+            "--checkpoint".to_owned(),
+            "/tmp/bench.checkpoint".to_owned(),
+            "--checkpoint-every".to_owned(),
+            "100".to_owned(),
             "--no-warmup".to_owned(),
             "--encode-only".to_owned(),
             "--show-phases".to_owned(),
@@ -3960,6 +4396,11 @@ mod tests {
         );
         assert_eq!(opts.summary_path.as_deref(), Some("/tmp/bench.summary"));
         assert_eq!(opts.output_dtlz_path.as_deref(), Some("/tmp/bench.dtlz"));
+        assert_eq!(
+            opts.checkpoint_path.as_deref(),
+            Some("/tmp/bench.checkpoint")
+        );
+        assert_eq!(opts.checkpoint_every, Some(100));
         assert_eq!(opts.verify_dtlz_path, None);
         assert!(!opts.warmup);
         assert!(opts.encode_only);
@@ -4077,6 +4518,45 @@ mod tests {
         ])
         .expect_err("output DTLZ with multiple iterations must be rejected");
         assert_eq!(err, "bench-file: --output-dtlz requires --iters 1");
+
+        let err = parse_bench_file_opts(vec![
+            "--model".to_owned(),
+            "model.gguf".to_owned(),
+            "--input".to_owned(),
+            "enwik8".to_owned(),
+            "--checkpoint".to_owned(),
+            "/tmp/bench.checkpoint".to_owned(),
+            "--checkpoint-every".to_owned(),
+            "100".to_owned(),
+        ])
+        .expect_err("checkpoint without output DTLZ must be rejected");
+        assert_eq!(err, "bench-file: --checkpoint requires --output-dtlz");
+
+        let err = parse_bench_file_opts(vec![
+            "--model".to_owned(),
+            "model.gguf".to_owned(),
+            "--input".to_owned(),
+            "enwik8".to_owned(),
+            "--output-dtlz".to_owned(),
+            "/tmp/bench.dtlz".to_owned(),
+            "--checkpoint".to_owned(),
+            "/tmp/bench.checkpoint".to_owned(),
+        ])
+        .expect_err("checkpoint without interval must be rejected");
+        assert_eq!(err, "bench-file: --checkpoint requires --checkpoint-every");
+
+        let err = parse_bench_file_opts(vec![
+            "--model".to_owned(),
+            "model.gguf".to_owned(),
+            "--input".to_owned(),
+            "enwik8".to_owned(),
+            "--output-dtlz".to_owned(),
+            "/tmp/bench.dtlz".to_owned(),
+            "--checkpoint-every".to_owned(),
+            "100".to_owned(),
+        ])
+        .expect_err("checkpoint interval without path must be rejected");
+        assert_eq!(err, "bench-file: --checkpoint-every requires --checkpoint");
 
         let err = parse_bench_file_opts(vec![
             "--model".to_owned(),
@@ -4263,6 +4743,103 @@ mod tests {
             .count();
         assert_eq!(leftovers, 0);
         fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
+    fn bench_file_checkpoint_resume_matches_one_shot_payload() {
+        let dir = unique_tmp_dir();
+        fs::create_dir_all(&dir).expect("mkdir");
+        let path = dir.join("bench.checkpoint");
+        let path_str = path.to_str().expect("utf8 path");
+
+        let model_bytes = tiny_f32_gguf();
+        let gguf = det_gguf::parse(&model_bytes).expect("gguf");
+        let model = det_model::F32Llama::from_gguf(&gguf, &model_bytes).expect("model");
+        let symbols = [0usize, 1, 2, 3, 0, 2, 1, 3, 2, 0];
+        let n_ctx = 3;
+        let overlap = 1;
+        let model_sha256 = sha256_digest(&model_bytes);
+        let input_sha256 = [9u8; 32];
+
+        let expected = encode_symbols_with_model_progress(
+            &model,
+            &symbols,
+            n_ctx,
+            overlap,
+            &BenchFileProgress::default(),
+        )
+        .expect("one-shot encode");
+
+        let mut enc = det_coder::RangeEncoder::new();
+        let mut state = WindowedModelState::new(&model, n_ctx).expect("state");
+        let mut context_tokens = Vec::new();
+        for (pos, &symbol) in symbols[..4].iter().enumerate() {
+            state
+                .sync(context_tokens.len(), &context_tokens, overlap)
+                .expect("sync");
+            let range = state.symbol_range(symbol).expect("range");
+            enc.encode(range.cum, range.freq as u64, range.total)
+                .expect("encode");
+            context_tokens.push(symbol);
+            state.advance(symbol).expect("advance");
+            assert_eq!(pos + 1, context_tokens.len());
+        }
+        write_bench_file_checkpoint(
+            path_str,
+            &BenchFileEncodeCheckpoint {
+                model_sha256,
+                input_sha256,
+                n_ctx,
+                overlap,
+                orig_len: 123,
+                symbols_len: symbols.len(),
+                symbols_done: 4,
+                elapsed_ns: 42_000_000,
+                encoder: enc.snapshot(),
+            },
+        )
+        .expect("write checkpoint");
+
+        let resumed = encode_symbols_with_model_checkpoint(
+            &model,
+            &symbols,
+            n_ctx,
+            overlap,
+            &BenchFileProgress::default(),
+            path_str,
+            4,
+            model_sha256,
+            input_sha256,
+            123,
+        )
+        .expect("resume encode");
+
+        assert_eq!(resumed, expected);
+        let checkpoint = read_bench_file_checkpoint_if_present(path_str)
+            .expect("read checkpoint")
+            .expect("checkpoint exists");
+        assert_eq!(checkpoint.symbols_done, symbols.len());
+        assert!(checkpoint.elapsed_ns >= 42_000_000);
+        fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
+    fn bench_file_checkpoint_rejects_mismatched_input() {
+        let checkpoint = BenchFileEncodeCheckpoint {
+            model_sha256: [1u8; 32],
+            input_sha256: [2u8; 32],
+            n_ctx: 8,
+            overlap: 2,
+            orig_len: 3,
+            symbols_len: 5,
+            symbols_done: 4,
+            elapsed_ns: 0,
+            encoder: det_coder::RangeEncoder::new().snapshot(),
+        };
+        let err = checkpoint
+            .validate([1u8; 32], [3u8; 32], 8, 2, 3, 5)
+            .expect_err("input mismatch");
+        assert_eq!(err, "bench-file: checkpoint input SHA-256 mismatch");
     }
 
     #[test]

@@ -10,7 +10,8 @@ By default this is the final enwik8 first-1MB acceptance shape: no token limit,
 round-trip verification, no warmup, phase output, progress output, and a
 bench-file summary plus DTLZ output written through xtask's atomic output
 paths. A progress summary file is atomically updated while the benchmark is
-running.
+running. Encode runs that write DTLZ also keep a resumable checkpoint at
+<out>/<name>.checkpoint until the final DTLZ has been written and verified.
 USAGE
 }
 
@@ -136,6 +137,7 @@ mkdir -p "$out_dir"
 summary_path="$out_dir/$name.summary"
 progress_summary_path="$out_dir/$name.progress"
 dtlz_path="$out_dir/$name.dtlz"
+checkpoint_path="$out_dir/$name.checkpoint"
 log_path="$out_dir/$name.log"
 
 cmd=(
@@ -155,7 +157,7 @@ cmd=(
 if [[ -n "$verify_dtlz" ]]; then
   cmd+=(--verify-dtlz "$verify_dtlz")
 else
-  cmd+=(--output-dtlz "$dtlz_path")
+  cmd+=(--output-dtlz "$dtlz_path" --checkpoint "$checkpoint_path" --checkpoint-every "$progress_every")
 fi
 
 if [[ -n "$limit_tokens" ]]; then
@@ -180,6 +182,7 @@ if [[ -n "$verify_dtlz" ]]; then
   echo "verify-dtlz: $verify_dtlz"
 else
   echo "dtlz: $dtlz_path"
+  echo "checkpoint: $checkpoint_path"
 fi
 echo "log: $log_path"
 printf 'command:'
