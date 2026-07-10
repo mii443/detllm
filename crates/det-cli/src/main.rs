@@ -1452,6 +1452,33 @@ mod tests {
         assert!(err.contains("DTLZ header error: BadMagic"), "{err}");
         assert!(!restored_path.exists());
 
+        let mut encoded = det_coder::DtlzHeader {
+            flags: det_coder::FLAG_BYTE_ESCAPES,
+            model_sha256: [0; 32],
+            n_ctx: 8,
+            overlap: 1,
+            orig_len: 0,
+        }
+        .encode();
+        encoded[4..6].copy_from_slice(&(det_coder::file::VERSION + 1).to_le_bytes());
+        fs::write(&compressed_path, encoded).expect("write unsupported version header");
+
+        let err = decompress(vec![
+            "-m".to_owned(),
+            missing_model_path.to_string_lossy().into_owned(),
+            "-i".to_owned(),
+            compressed_path.to_string_lossy().into_owned(),
+            "-o".to_owned(),
+            restored_path.to_string_lossy().into_owned(),
+        ])
+        .expect_err("unsupported version should be rejected before model load");
+
+        assert!(
+            err.contains("DTLZ header error: UnsupportedVersion"),
+            "{err}"
+        );
+        assert!(!restored_path.exists());
+
         let unsupported_flags = det_coder::FLAG_BYTE_ESCAPES << 1;
         let encoded = det_coder::DtlzHeader {
             flags: unsupported_flags,
