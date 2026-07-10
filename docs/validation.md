@@ -368,6 +368,21 @@ created for mixed F32/quantized projection groups when any matrix needs it,
 quantized GEMV requires that shared buffer, and the shared-buffer results match
 standalone quantized GEMV bit-for-bit.
 
+Local validation after the bench checkpoint/resume changes on commit
+`8e0b756921caf6c568af20543ea6ae0dcb00f1b1`:
+
+```sh
+cargo test --workspace
+cargo test --workspace --features parallel,simd
+cargo run -p xtask -- check-determinism
+cargo run -p xtask -- check-ci-workflow
+```
+
+All four commands passed locally on 2026-07-10. The `parallel,simd` test run
+covered the full workspace, including `parallel_gemv_thread_counts_are_bit_invariant`,
+`testdata_logits_hash_is_invariant_to_chunks_and_threads`, and the
+`bench_file_checkpoint_resume_matches_one_shot_payload` checkpoint regression.
+
 The AVX2 SIMD kernel path is also executed directly in CI with:
 
 ```sh
