@@ -253,11 +253,23 @@ const DETERMINISM_BANNED_PATTERNS: &[(&str, &str)] = &[
         "FMA target features are forbidden",
     ),
     (
+        "+fma", // determinism-allow
+        "FMA target features are forbidden",
+    ),
+    (
         "target_feature = \"fma", // determinism-allow
         "FMA target features are forbidden",
     ),
     (
         "enable = \"fma", // determinism-allow
+        "FMA target features are forbidden",
+    ),
+    (
+        ",fma", // determinism-allow
+        "FMA target features are forbidden",
+    ),
+    (
+        ", fma", // determinism-allow
         "FMA target features are forbidden",
     ),
     (
@@ -6003,8 +6015,11 @@ mod tests {
         let rayon_reduce = concat!(".par_iter().", "reduce");
         let rayon_fold = concat!(".into_par_iter().", "fold");
         let fma_flag = concat!("target-feature=+", "fma");
+        let fma_feature_tail = concat!("+", "fma");
         let native_cpu = concat!("target-cpu=", "native");
         let fma_attr = concat!("enable = \"", "fma");
+        let fma_attr_tail = concat!(",", "fma");
+        let fma_attr_tail_spaced = concat!(", ", "fma");
         let avx_wide = concat!("avx", "512");
         let fma_instruction = concat!("vf", "madd");
         let text = [
@@ -6017,8 +6032,11 @@ mod tests {
             format!("let _ = xs{rayon_reduce}(|| 0.0, |a, b| a + b);"),
             format!("let _ = xs{rayon_fold}(|| 0.0, |a, b| a + b);"),
             format!("RUSTFLAGS=\"-C {fma_flag}\""),
+            format!("RUSTFLAGS=\"-C target-feature=+avx2,{fma_feature_tail}\""),
             format!("RUSTFLAGS=\"-C {native_cpu}\""),
             format!("#[target_feature({fma_attr}\")] unsafe fn kernel() {{}}"),
+            format!("#[target_feature(enable = \"avx2{fma_attr_tail}\")] unsafe fn kernel_tail() {{}}"),
+            format!("#[target_feature(enable = \"avx2{fma_attr_tail_spaced}\")] unsafe fn kernel_tail_spaced() {{}}"),
             format!("#[cfg(target_feature = \"{avx_wide}f\")] fn wide() {{}}"),
             format!("{inline_asm}\"{fma_instruction}132ps ymm0, ymm1, ymm2\");"),
         ]
@@ -6036,8 +6054,11 @@ mod tests {
             rayon_reduce,
             rayon_fold,
             fma_flag,
+            fma_feature_tail,
             native_cpu,
             fma_attr,
+            fma_attr_tail,
+            fma_attr_tail_spaced,
             avx_wide,
             fma_instruction,
         ] {
