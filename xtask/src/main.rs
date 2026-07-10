@@ -48,7 +48,23 @@ const DETERMINISM_BANNED_PATTERNS: &[(&str, &str)] = &[
         "platform transcendental functions are forbidden",
     ), // determinism-allow
     (
+        "f32::tan(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
         "f32::tanh",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f32::asinh(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f32::acosh(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f32::atanh(",
         "platform transcendental functions are forbidden",
     ), // determinism-allow
     (".exp(", "use det_num deterministic exp routines"),           // determinism-allow
@@ -67,7 +83,20 @@ const DETERMINISM_BANNED_PATTERNS: &[(&str, &str)] = &[
         ".sin_cos(",
         "platform transcendental functions are forbidden",
     ), // determinism-allow
+    (".tan(", "platform transcendental functions are forbidden"), // determinism-allow
     (".tanh(", "platform transcendental functions are forbidden"), // determinism-allow
+    (
+        ".asinh(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        ".acosh(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        ".atanh(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
     (
         "f32::exp2(",
         "platform transcendental functions are forbidden",
@@ -152,7 +181,23 @@ const DETERMINISM_BANNED_PATTERNS: &[(&str, &str)] = &[
         "platform transcendental functions are forbidden",
     ), // determinism-allow
     (
+        "f64::tan(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
         "f64::tanh",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f64::asinh(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f64::acosh(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f64::atanh(",
         "platform transcendental functions are forbidden",
     ), // determinism-allow
     (
@@ -5969,6 +6014,7 @@ mod tests {
             concat!("f32::", "exp_m1("),
             concat!("f32::", "powi("),
             concat!("f32::", "sin_cos("),
+            concat!("f32::", "tan("),
             concat!("f32::", "exp2("),
             concat!("f32::", "log2("),
             concat!("f32::", "log10("),
@@ -5978,6 +6024,9 @@ mod tests {
             concat!("f32::", "atan2("),
             concat!("f32::", "sinh("),
             concat!("f32::", "cosh("),
+            concat!("f32::", "asinh("),
+            concat!("f32::", "acosh("),
+            concat!("f32::", "atanh("),
             concat!("f32::", "cbrt("),
             concat!("f32::", "hypot("),
             concat!(".", "log("),
@@ -5985,6 +6034,7 @@ mod tests {
             concat!(".", "exp_m1("),
             concat!(".", "powi("),
             concat!(".", "sin_cos("),
+            concat!(".", "tan("),
             concat!(".", "exp2("),
             concat!(".", "log2("),
             concat!(".", "log10("),
@@ -5994,6 +6044,9 @@ mod tests {
             concat!(".", "atan2("),
             concat!(".", "sinh("),
             concat!(".", "cosh("),
+            concat!(".", "asinh("),
+            concat!(".", "acosh("),
+            concat!(".", "atanh("),
             concat!(".", "cbrt("),
             concat!(".", "hypot("),
             concat!("f64::", "log("),
@@ -6001,6 +6054,7 @@ mod tests {
             concat!("f64::", "exp_m1("),
             concat!("f64::", "powi("),
             concat!("f64::", "sin_cos("),
+            concat!("f64::", "tan("),
             concat!("f64::", "exp2("),
             concat!("f64::", "log2("),
             concat!("f64::", "log10("),
@@ -6010,6 +6064,9 @@ mod tests {
             concat!("f64::", "atan2("),
             concat!("f64::", "sinh("),
             concat!("f64::", "cosh("),
+            concat!("f64::", "asinh("),
+            concat!("f64::", "acosh("),
+            concat!("f64::", "atanh("),
             concat!("f64::", "cbrt("),
             concat!("f64::", "hypot("),
         ];

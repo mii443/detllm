@@ -459,9 +459,9 @@ spellings such as `x.exp()`, so validation helpers cannot accidentally
 reintroduce platform libm through Rust's primitive float methods.
 The platform-libm guard also covers adjacent primitive float transcendental
 helpers such as arbitrary-base `log`, `ln_1p`, `exp_m1`, `exp2`, `log2`,
-`log10`, `powi`, `sin_cos`, inverse trig, hyperbolic trig, `cbrt`, and
-`hypot`; `sqrt` remains allowed by `detllm-design.md` because IEEE 754 requires
-correctly rounded square root.
+`log10`, `powi`, `sin_cos`, `tan`, inverse trig, hyperbolic trig including
+`asinh`/`acosh`/`atanh`, `cbrt`, and `hypot`; `sqrt` remains allowed by
+`detllm-design.md` because IEEE 754 requires correctly rounded square root.
 It intentionally excludes prose docs and the design file itself to avoid
 flagging normative descriptions. The GitHub Actions `hygiene` job runs this
 check after stale-testdata validation.
