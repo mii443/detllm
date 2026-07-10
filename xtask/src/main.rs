@@ -6098,7 +6098,7 @@ mod tests {
             format!("let _: std::collections::{hash_map}<u8, u8> = std::collections::{hash_map}::new();"),
             format!("use std::collections::{{BTreeMap, {hash_map} as Map}};"),
             format!("let _: {hash_set}<u8> = {hash_set}::new();"),
-            format!("let _: BTreeMap<u8, u8> = BTreeMap::new();"),
+            "let _: BTreeMap<u8, u8> = BTreeMap::new();".to_owned(),
         ]
         .join("\n");
 
