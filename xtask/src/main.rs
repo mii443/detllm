@@ -3121,6 +3121,11 @@ fn check_helper_scripts() -> Result<(), String> {
         )?;
     }
 
+    let target_full_bench_path = Path::new("scripts/run-target-full-bench.sh");
+    let target_full_bench_text = fs::read_to_string(target_full_bench_path)
+        .map_err(|e| format!("{}: {e}", target_full_bench_path.display()))?;
+    validate_target_full_bench_script_text(&target_full_bench_text)?;
+
     require_executable_script(
         Path::new("scripts/reference_logits_transformers.py"),
         "#!/usr/bin/env python3",
@@ -3137,6 +3142,53 @@ fn check_helper_scripts() -> Result<(), String> {
         "helper script structure check passed shell_scripts={}",
         shell_scripts.len()
     );
+    Ok(())
+}
+
+fn validate_target_full_bench_script_text(text: &str) -> Result<(), String> {
+    let required = [
+        ("first-1MB byte limit default", "limit_bytes=\"1048576\""),
+        ("production n_ctx default", "n_ctx=\"2048\""),
+        ("fixed thread default", "threads=\"8\""),
+        ("summary output path", "summary_path=\"$out_dir/$name.summary\""),
+        (
+            "progress summary output path",
+            "progress_summary_path=\"$out_dir/$name.progress\"",
+        ),
+        ("DTLZ output path", "dtlz_path=\"$out_dir/$name.dtlz\""),
+        (
+            "checkpoint output path",
+            "checkpoint_path=\"$out_dir/$name.checkpoint\"",
+        ),
+        ("stable summary option", "--summary \"$summary_path\""),
+        ("progress interval option", "--progress-every \"$progress_every\""),
+        (
+            "progress summary option",
+            "--progress-summary \"$progress_summary_path\"",
+        ),
+        ("verify DTLZ mode", "cmd+=(--verify-dtlz \"$verify_dtlz\")"),
+        (
+            "DTLZ output with checkpoint",
+            "cmd+=(--output-dtlz \"$dtlz_path\" --checkpoint \"$checkpoint_path\" --checkpoint-every \"$progress_every\")",
+        ),
+        (
+            "verify DTLZ encode-only guard",
+            "--verify-dtlz cannot be combined with --encode-only",
+        ),
+        (
+            "verify DTLZ estimate guard",
+            "--verify-dtlz cannot be combined with --estimate-full-run",
+        ),
+        ("default no-warmup branch", "if [[ \"$warmup\" != \"true\" ]]; then"),
+        ("default no-warmup option", "cmd+=(--no-warmup)"),
+    ];
+    for (label, needle) in required {
+        if !text.contains(needle) {
+            return Err(format!(
+                "target full bench script is missing {label}: {needle}"
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -6626,6 +6678,34 @@ version = "=5.0.0"
         assert!(err.contains("Node.js 20 action"), "{err}");
     }
 
+    #[test]
+    fn target_full_bench_script_check_requires_resume_safe_shape() {
+        let valid = valid_target_full_bench_script_text();
+        validate_target_full_bench_script_text(valid).expect("valid target full bench script");
+
+        let missing_checkpoint = valid.replace(
+            " --checkpoint \"$checkpoint_path\" --checkpoint-every \"$progress_every\"",
+            "",
+        );
+        let err = validate_target_full_bench_script_text(&missing_checkpoint)
+            .expect_err("missing checkpoint");
+        assert!(err.contains("DTLZ output with checkpoint"), "{err}");
+
+        let missing_progress_summary =
+            valid.replace("  --progress-summary \"$progress_summary_path\"\n", "");
+        let err = validate_target_full_bench_script_text(&missing_progress_summary)
+            .expect_err("missing progress summary");
+        assert!(err.contains("progress summary option"), "{err}");
+
+        let missing_verify_guard = valid.replace(
+            "  echo \"--verify-dtlz cannot be combined with --encode-only\" >&2\n",
+            "",
+        );
+        let err = validate_target_full_bench_script_text(&missing_verify_guard)
+            .expect_err("missing guard");
+        assert!(err.contains("verify DTLZ encode-only guard"), "{err}");
+    }
+
     fn valid_ci_workflow_text() -> &'static str {
         r#"
 on:
@@ -6746,6 +6826,38 @@ jobs:
       - uses: actions/upload-artifact@v6
         with:
           name: bench-testdata-${{ matrix.name }}
+"#
+    }
+
+    fn valid_target_full_bench_script_text() -> &'static str {
+        r#"
+limit_bytes="1048576"
+n_ctx="2048"
+threads="8"
+summary_path="$out_dir/$name.summary"
+progress_summary_path="$out_dir/$name.progress"
+dtlz_path="$out_dir/$name.dtlz"
+checkpoint_path="$out_dir/$name.checkpoint"
+cmd=(
+  cargo run --release -p xtask --features parallel,simd -- bench-file
+  --summary "$summary_path"
+  --progress-every "$progress_every"
+  --progress-summary "$progress_summary_path"
+)
+if [[ -n "$verify_dtlz" ]]; then
+  cmd+=(--verify-dtlz "$verify_dtlz")
+else
+  cmd+=(--output-dtlz "$dtlz_path" --checkpoint "$checkpoint_path" --checkpoint-every "$progress_every")
+fi
+if [[ -n "$verify_dtlz" && "$encode_only" == "true" ]]; then
+  echo "--verify-dtlz cannot be combined with --encode-only" >&2
+fi
+if [[ -n "$verify_dtlz" && "$estimate_full_run" == "true" ]]; then
+  echo "--verify-dtlz cannot be combined with --estimate-full-run" >&2
+fi
+if [[ "$warmup" != "true" ]]; then
+  cmd+=(--no-warmup)
+fi
 "#
     }
 
