@@ -3115,6 +3115,10 @@ fn check_helper_scripts() -> Result<(), String> {
             Command::new("bash").arg("-n").arg(path),
             &format!("bash -n {}", path.display()),
         )?;
+        run_helper_check(
+            Command::new(path).arg("--help"),
+            &format!("{} --help", path.display()),
+        )?;
     }
 
     require_executable_script(
