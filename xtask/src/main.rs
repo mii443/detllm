@@ -287,6 +287,7 @@ fn is_policy_file(path: &Path) -> bool {
 
 fn scan_determinism_text(path: &Path, text: &str, violations: &mut Vec<String>) {
     let mut in_banned_pattern_table = false;
+    let mut rayon_chain_start = None;
     for (line_idx, line) in text.lines().enumerate() {
         if line.contains("DETERMINISM_BANNED_PATTERNS") {
             in_banned_pattern_table = true;
@@ -307,6 +308,43 @@ fn scan_determinism_text(path: &Path, text: &str, violations: &mut Vec<String>) 
                     reason
                 ));
             }
+        }
+        if line.contains("determinism-allow") {
+            if line.contains(';') {
+                rayon_chain_start = None;
+            }
+            continue;
+        }
+        if line.contains(".par_iter()")
+            || line.contains(".par_chunks(")
+            || line.contains(".into_par_iter()")
+        {
+            rayon_chain_start.get_or_insert(line_idx + 1);
+        }
+        if let Some(start_line) = rayon_chain_start {
+            for reduction in [
+                ".sum",
+                ".reduce",
+                ".reduce_with",
+                ".try_reduce",
+                ".fold",
+                ".fold_with",
+                ".try_fold",
+            ] {
+                if line.contains(reduction) {
+                    violations.push(format!(
+                        "{}:{}: banned Rayon reduction `{}` in chain starting at line {}: parallel floating-point reductions are forbidden",
+                        path.display(),
+                        line_idx + 1,
+                        reduction,
+                        start_line
+                    ));
+                    break;
+                }
+            }
+        }
+        if line.contains(';') {
+            rayon_chain_start = None;
         }
     }
 }
@@ -5661,6 +5699,46 @@ mod tests {
                 "{violations:?}"
             );
         }
+    }
+
+    #[test]
+    fn determinism_scan_rejects_rayon_reductions_after_adaptors() {
+        let mut violations = Vec::new();
+        let par_iter = concat!(".par_", "iter()");
+        let into_par_iter = concat!(".into_", "par_iter()");
+        let par_chunks = concat!(".par_", "chunks(8)");
+        let sum = concat!(".s", "um()");
+        let try_reduce = concat!(".try_", "reduce");
+        let text = format!(
+            r#"
+let _: f32 = xs{par_iter}.map(|x| *x){sum};
+let _: f32 = ys
+    {into_par_iter}
+    .map(|x| x)
+    {try_reduce}(|| 0.0, |a, b| Ok(a + b))?;
+let _: Vec<f32> = zs{par_chunks}.map(|chunk| chunk[0]).collect();
+"#
+        );
+        scan_determinism_text(Path::new("sample.rs"), &text, &mut violations);
+
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("banned Rayon reduction `.sum`")),
+            "{violations:?}"
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("banned Rayon reduction `.try_reduce`")),
+            "{violations:?}"
+        );
+        assert!(
+            violations
+                .iter()
+                .all(|violation| !violation.contains("collect")),
+            "{violations:?}"
+        );
     }
 
     #[test]
