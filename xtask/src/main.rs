@@ -1,3 +1,5 @@
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
 use std::{
     collections::BTreeMap,
     env,
@@ -2443,12 +2445,17 @@ fn check_helper_scripts() -> Result<(), String> {
         return Err("helper script check found no shell scripts".to_owned());
     }
     for path in &shell_scripts {
+        require_executable_script(path, "#!/usr/bin/env bash")?;
         run_helper_check(
             Command::new("bash").arg("-n").arg(path),
             &format!("bash -n {}", path.display()),
         )?;
     }
 
+    require_executable_script(
+        Path::new("scripts/reference_logits_transformers.py"),
+        "#!/usr/bin/env python3",
+    )?;
     run_helper_check(
         Command::new("python3")
             .arg("-B")
@@ -2462,6 +2469,32 @@ fn check_helper_scripts() -> Result<(), String> {
         shell_scripts.len()
     );
     Ok(())
+}
+
+fn require_executable_script(path: &Path, expected_shebang: &str) -> Result<(), String> {
+    let text = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let first_line = text.lines().next().unwrap_or_default();
+    if first_line != expected_shebang {
+        return Err(format!(
+            "{}: expected shebang {expected_shebang:?}, found {first_line:?}",
+            path.display()
+        ));
+    }
+    if !is_user_executable(path)? {
+        return Err(format!("{}: script is not executable", path.display()));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn is_user_executable(path: &Path) -> Result<bool, String> {
+    let metadata = fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(metadata.permissions().mode() & 0o100 != 0)
+}
+
+#[cfg(not(unix))]
+fn is_user_executable(_path: &Path) -> Result<bool, String> {
+    Ok(true)
 }
 
 fn run_helper_check(command: &mut Command, label: &str) -> Result<(), String> {
