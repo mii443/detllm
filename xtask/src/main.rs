@@ -247,23 +247,27 @@ fn scan_determinism_text(path: &Path, text: &str, violations: &mut Vec<String>) 
 }
 
 fn scan_dependency_policy_text(path: &Path, text: &str, violations: &mut Vec<String>) {
-    let mut in_dependency_section = false;
-    let mut in_package_section = false;
+    let mut section = DependencyPolicySection::Other;
     for (line_idx, line) in text.lines().enumerate() {
         let trimmed = line.trim();
         if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            in_package_section = trimmed == "[package]";
-            in_dependency_section = matches!(
-                trimmed,
-                "[dependencies]" | "[dev-dependencies]" | "[build-dependencies]"
-            );
+            section = classify_dependency_policy_section(trimmed);
+            if let DependencyPolicySection::DependencyTable(dep_name) = &section {
+                if NATIVE_LINK_DEPENDENCY_NAMES.contains(&dep_name.as_str()) {
+                    violations.push(format!(
+                        "{}:{}: dependency `{dep_name}` is forbidden because native C/C++ link/build tooling is not allowed",
+                        path.display(),
+                        line_idx + 1
+                    ));
+                }
+            }
             continue;
         }
         if trimmed.is_empty() || trimmed.starts_with('#') || !trimmed.contains('=') {
             continue;
         }
 
-        if in_package_section {
+        if matches!(section, DependencyPolicySection::Package) {
             let key = trimmed
                 .split_once('=')
                 .map(|(key, _)| key.trim())
@@ -278,31 +282,131 @@ fn scan_dependency_policy_text(path: &Path, text: &str, violations: &mut Vec<Str
             continue;
         }
 
-        if !in_dependency_section {
-            continue;
-        }
-        let dep_name = trimmed
-            .split_once('=')
-            .map(|(key, _)| key.trim().trim_matches('"'))
-            .unwrap_or_default();
-        if NATIVE_LINK_DEPENDENCY_NAMES.contains(&dep_name) {
-            violations.push(format!(
-                "{}:{}: dependency `{dep_name}` is forbidden because native C/C++ link/build tooling is not allowed",
-                path.display(),
-                line_idx + 1
-            ));
-        }
-        if trimmed.contains("path") {
-            continue;
-        }
-        if !dependency_line_has_exact_version(trimmed) {
-            violations.push(format!(
-                "{}:{}: dependency versions must be exact (`=x.y.z`) or path-based for deterministic builds",
-                path.display(),
-                line_idx + 1
-            ));
+        match &section {
+            DependencyPolicySection::DependencyList => {
+                let dep_name = trimmed
+                    .split_once('=')
+                    .map(|(key, _)| key.trim().trim_matches('"'))
+                    .unwrap_or_default();
+                if NATIVE_LINK_DEPENDENCY_NAMES.contains(&dep_name) {
+                    violations.push(format!(
+                        "{}:{}: dependency `{dep_name}` is forbidden because native C/C++ link/build tooling is not allowed",
+                        path.display(),
+                        line_idx + 1
+                    ));
+                }
+                if dependency_line_is_path_or_workspace(trimmed) {
+                    continue;
+                }
+                if !dependency_line_has_exact_version(trimmed) {
+                    violations.push(format!(
+                        "{}:{}: dependency `{dep_name}` versions must be exact (`=x.y.z`) or path-based for deterministic builds",
+                        path.display(),
+                        line_idx + 1
+                    ));
+                }
+            }
+            DependencyPolicySection::DependencyTable(dep_name) => {
+                let key = trimmed
+                    .split_once('=')
+                    .map(|(key, _)| key.trim())
+                    .unwrap_or_default();
+                if matches!(key, "path" | "workspace") {
+                    continue;
+                }
+                if key == "version" {
+                    let value = trimmed
+                        .split_once('=')
+                        .map(|(_, value)| value)
+                        .unwrap_or("");
+                    if !dependency_value_is_exact(value) {
+                        violations.push(format!(
+                            "{}:{}: dependency `{dep_name}` versions must be exact (`=x.y.z`) or path-based for deterministic builds",
+                            path.display(),
+                            line_idx + 1
+                        ));
+                    }
+                }
+            }
+            DependencyPolicySection::Package | DependencyPolicySection::Other => {}
         }
     }
+}
+
+enum DependencyPolicySection {
+    Package,
+    DependencyList,
+    DependencyTable(String),
+    Other,
+}
+
+fn classify_dependency_policy_section(raw: &str) -> DependencyPolicySection {
+    let section = raw
+        .trim_matches('[')
+        .trim_matches(']')
+        .trim()
+        .trim_matches('"');
+    if section == "package" {
+        return DependencyPolicySection::Package;
+    }
+    if is_dependency_list_section(section) {
+        return DependencyPolicySection::DependencyList;
+    }
+    if let Some(dep_name) = dependency_table_name(section) {
+        return DependencyPolicySection::DependencyTable(dep_name);
+    }
+    DependencyPolicySection::Other
+}
+
+fn is_dependency_list_section(section: &str) -> bool {
+    matches!(
+        section,
+        "dependencies"
+            | "dev-dependencies"
+            | "build-dependencies"
+            | "workspace.dependencies"
+            | "workspace.dev-dependencies"
+            | "workspace.build-dependencies"
+    ) || target_dependency_section_suffix(section).is_some()
+}
+
+fn dependency_table_name(section: &str) -> Option<String> {
+    for prefix in [
+        "dependencies.",
+        "dev-dependencies.",
+        "build-dependencies.",
+        "workspace.dependencies.",
+        "workspace.dev-dependencies.",
+        "workspace.build-dependencies.",
+    ] {
+        if let Some(dep_name) = section.strip_prefix(prefix) {
+            return Some(dep_name.trim_matches('"').to_owned());
+        }
+    }
+    for suffix in [
+        ".dependencies.",
+        ".dev-dependencies.",
+        ".build-dependencies.",
+    ] {
+        if let Some((prefix, dep_name)) = section.split_once(suffix) {
+            if prefix.starts_with("target.") {
+                return Some(dep_name.trim_matches('"').to_owned());
+            }
+        }
+    }
+    None
+}
+
+fn target_dependency_section_suffix(section: &str) -> Option<&str> {
+    [".dependencies", ".dev-dependencies", ".build-dependencies"]
+        .into_iter()
+        .find(|suffix| section.starts_with("target.") && section.ends_with(suffix))
+}
+
+fn dependency_line_is_path_or_workspace(line: &str) -> bool {
+    line.split_once('=')
+        .map(|(_, rhs)| rhs.contains("path") || rhs.contains("workspace"))
+        .unwrap_or(false)
 }
 
 fn dependency_line_has_exact_version(line: &str) -> bool {
@@ -310,19 +414,23 @@ fn dependency_line_has_exact_version(line: &str) -> bool {
         return true;
     };
     let rhs = rhs.trim();
-    if let Some(version_value) = rhs.strip_prefix('"') {
-        return version_value.starts_with('=');
+    if dependency_value_is_exact(rhs) {
+        return true;
     }
     if let Some(version_pos) = rhs.find("version") {
         let version_rhs = &rhs[version_pos + "version".len()..];
         if let Some((_, value)) = version_rhs.split_once('=') {
-            let value = value.trim();
-            return value
-                .strip_prefix('"')
-                .is_some_and(|version_value| version_value.starts_with('='));
+            return dependency_value_is_exact(value);
         }
     }
     false
+}
+
+fn dependency_value_is_exact(value: &str) -> bool {
+    value
+        .trim()
+        .strip_prefix('"')
+        .is_some_and(|version_value| version_value.starts_with('='))
 }
 
 fn generate_testdata(check: bool) -> Result<(), String> {
@@ -5418,6 +5526,53 @@ version = "0.1.0"
                 "{violations:?}"
             );
         }
+    }
+
+    #[test]
+    fn dependency_policy_covers_workspace_target_and_table_sections() {
+        let mut violations = Vec::new();
+        let native_list_dep = concat!("cma", "ke");
+        let native_table_dep = concat!("bind", "gen");
+        let text = format!(
+            r#"
+[package]
+version = "0.1.0"
+
+[workspace.dependencies]
+pinned = "=1.2.3"
+floating_workspace = "1.0"
+
+[target.'cfg(unix)'.dependencies]
+local = {{ path = "../local" }}
+member = {{ workspace = true }}
+floating_target = "2.0"
+{native_list_dep} = "=3.0.0"
+
+[dependencies.detail]
+version = "4.0"
+default-features = false
+
+[target.'cfg(target_os = "macos")'.dev-dependencies.{native_table_dep}]
+version = "=5.0.0"
+"#
+        );
+        scan_dependency_policy_text(Path::new("Cargo.toml"), &text, &mut violations);
+
+        for needle in [
+            "floating_workspace",
+            "floating_target",
+            native_list_dep,
+            "detail",
+            native_table_dep,
+        ] {
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains(needle)),
+                "{violations:?}"
+            );
+        }
+        assert_eq!(violations.len(), 5, "{violations:?}");
     }
 
     #[test]
