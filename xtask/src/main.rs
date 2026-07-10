@@ -37,6 +37,61 @@ const DETERMINISM_BANNED_PATTERNS: &[(&str, &str)] = &[
     (".ln(", "use det_num deterministic ln routines"),             // determinism-allow
     (".powf(", "platform transcendental functions are forbidden"), // determinism-allow
     (".tanh(", "platform transcendental functions are forbidden"), // determinism-allow
+    (
+        "f32::exp2(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f32::log2(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f32::log10(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f32::asin(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f32::acos(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f32::atan(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f32::atan2(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f32::sinh(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f32::cosh(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f32::cbrt(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f32::hypot(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (".exp2(", "platform transcendental functions are forbidden"), // determinism-allow
+    (".log2(", "platform transcendental functions are forbidden"), // determinism-allow
+    (".log10(", "platform transcendental functions are forbidden"), // determinism-allow
+    (".asin(", "platform transcendental functions are forbidden"), // determinism-allow
+    (".acos(", "platform transcendental functions are forbidden"), // determinism-allow
+    (".atan(", "platform transcendental functions are forbidden"), // determinism-allow
+    (".atan2(", "platform transcendental functions are forbidden"), // determinism-allow
+    (".sinh(", "platform transcendental functions are forbidden"), // determinism-allow
+    (".cosh(", "platform transcendental functions are forbidden"), // determinism-allow
+    (".cbrt(", "platform transcendental functions are forbidden"), // determinism-allow
+    (".hypot(", "platform transcendental functions are forbidden"), // determinism-allow
     ("f64::exp", "use vendored deterministic libm routines"),      // determinism-allow
     ("f64::sin", "use vendored deterministic libm routines"),      // determinism-allow
     ("f64::cos", "use vendored deterministic libm routines"),      // determinism-allow
@@ -47,6 +102,50 @@ const DETERMINISM_BANNED_PATTERNS: &[(&str, &str)] = &[
     ), // determinism-allow
     (
         "f64::tanh",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f64::exp2(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f64::log2(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f64::log10(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f64::asin(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f64::acos(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f64::atan(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f64::atan2(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f64::sinh(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f64::cosh(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f64::cbrt(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f64::hypot(",
         "platform transcendental functions are forbidden",
     ), // determinism-allow
     ("mul_add", "FMA changes the specified rounding sequence"),    // determinism-allow
@@ -5695,6 +5794,62 @@ mod tests {
         assert!(violations[5].contains(fp_fold_banned));
         assert!(violations[6].contains("sample.rs:8"));
         assert!(violations[6].contains(fp_typed_fold_banned));
+    }
+
+    #[test]
+    fn determinism_scan_rejects_extended_platform_transcendentals() {
+        let mut violations = Vec::new();
+        let banned_patterns = [
+            concat!("f32::", "exp2("),
+            concat!("f32::", "log2("),
+            concat!("f32::", "log10("),
+            concat!("f32::", "asin("),
+            concat!("f32::", "acos("),
+            concat!("f32::", "atan("),
+            concat!("f32::", "atan2("),
+            concat!("f32::", "sinh("),
+            concat!("f32::", "cosh("),
+            concat!("f32::", "cbrt("),
+            concat!("f32::", "hypot("),
+            concat!(".", "exp2("),
+            concat!(".", "log2("),
+            concat!(".", "log10("),
+            concat!(".", "asin("),
+            concat!(".", "acos("),
+            concat!(".", "atan("),
+            concat!(".", "atan2("),
+            concat!(".", "sinh("),
+            concat!(".", "cosh("),
+            concat!(".", "cbrt("),
+            concat!(".", "hypot("),
+            concat!("f64::", "exp2("),
+            concat!("f64::", "log2("),
+            concat!("f64::", "log10("),
+            concat!("f64::", "asin("),
+            concat!("f64::", "acos("),
+            concat!("f64::", "atan("),
+            concat!("f64::", "atan2("),
+            concat!("f64::", "sinh("),
+            concat!("f64::", "cosh("),
+            concat!("f64::", "cbrt("),
+            concat!("f64::", "hypot("),
+        ];
+        let text = banned_patterns
+            .iter()
+            .map(|pattern| format!("let _ = {pattern}1.0);"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        scan_determinism_text(Path::new("sample.rs"), &text, &mut violations);
+
+        for pattern in banned_patterns {
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains(pattern)),
+                "{violations:?}"
+            );
+        }
     }
 
     #[test]
