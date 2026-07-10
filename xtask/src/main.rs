@@ -17,8 +17,7 @@ const QMIX_MODEL_PATH: &str = "testdata/tiny-qmix.gguf";
 const QMIX_HASH_PATH: &str = "testdata/tiny-qmix.logits.sha256";
 const TOKENS_PATH: &str = "testdata/tiny.tokens.txt";
 const TOKENS: &[usize] = &[0, 1, 2, 3, 0, 2];
-const DETERMINISM_CHECK_ROOTS: &[&str] =
-    &["crates", "xtask/src", ".github/workflows", "Cargo.toml"];
+const DETERMINISM_CHECK_ROOTS: &[&str] = &["crates", "xtask", ".github/workflows", "Cargo.toml"];
 const DETERMINISM_BANNED_PATTERNS: &[(&str, &str)] = &[
     ("f32::exp", "use det_num::exp_f32 instead of platform libm"), // determinism-allow
     ("f32::sin", "use vendored deterministic libm routines"),      // determinism-allow
@@ -135,13 +134,18 @@ fn real_main() -> Result<(), String> {
 }
 
 fn check_determinism() -> Result<(), String> {
+    let mut violations = Vec::new();
+    if !Path::new("Cargo.lock").is_file() {
+        violations
+            .push("Cargo.lock is required for deterministic dependency resolution".to_owned());
+    }
+
     let mut files = Vec::new();
     for root in DETERMINISM_CHECK_ROOTS {
         collect_policy_files(Path::new(root), &mut files)?;
     }
     files.sort();
 
-    let mut violations = Vec::new();
     for path in files {
         let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         scan_determinism_text(&path, &text, &mut violations);
@@ -5284,6 +5288,16 @@ floating_table = { version = "2.0" }
         assert_eq!(violations.len(), 2);
         assert!(violations[0].contains("Cargo.toml:9"), "{violations:?}");
         assert!(violations[1].contains("Cargo.toml:10"), "{violations:?}");
+    }
+
+    #[test]
+    fn determinism_roots_cover_xtask_manifest_and_lockfile() {
+        assert!(DETERMINISM_CHECK_ROOTS.contains(&"xtask"));
+        assert!(!DETERMINISM_CHECK_ROOTS.contains(&"xtask/src"));
+        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("workspace root");
+        assert!(workspace_root.join("Cargo.lock").is_file());
     }
 
     #[test]
