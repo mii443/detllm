@@ -27,6 +27,7 @@ jobs:
       - run: cargo run -p xtask -- check-determinism
       - run: cargo run -p xtask -- check-ci-workflow
       - run: cargo run -p xtask -- check-benchmark-workflow
+      - run: cargo run -p xtask -- check-helper-scripts
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo clippy --workspace --all-targets --features parallel -- -D warnings
       - run: cargo clippy --workspace --all-targets --features simd -- -D warnings

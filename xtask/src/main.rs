@@ -5,6 +5,7 @@ use std::{
     fs,
     io::Read as _,
     path::{Path, PathBuf},
+    process::Command,
     time::Instant,
 };
 
@@ -122,9 +123,10 @@ fn real_main() -> Result<(), String> {
         }
         Some("check-ci-workflow") => check_ci_workflow(),
         Some("check-benchmark-workflow") => check_benchmark_workflow(),
+        Some("check-helper-scripts") => check_helper_scripts(),
         Some("check-determinism") => check_determinism(),
         _ => Err(
-            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf [--metadata-prefix]|bench-file --model model.gguf --input file [--limit-bytes N] [--limit-tokens N] [--n-ctx N] [--iters N] [--threads N] [--progress-every N] [--progress-summary PATH] [--summary PATH] [--output-dtlz PATH] [--checkpoint PATH --checkpoint-every N] [--verify-dtlz PATH] [--no-warmup] [--encode-only] [--show-phases] [--estimate-full-run]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N] [--worst-rows N] [--top-diffs N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-benchmark-workflow|check-determinism>"
+            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf [--metadata-prefix]|bench-file --model model.gguf --input file [--limit-bytes N] [--limit-tokens N] [--n-ctx N] [--iters N] [--threads N] [--progress-every N] [--progress-summary PATH] [--summary PATH] [--output-dtlz PATH] [--checkpoint PATH --checkpoint-every N] [--verify-dtlz PATH] [--no-warmup] [--encode-only] [--show-phases] [--estimate-full-run]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N] [--worst-rows N] [--top-diffs N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-benchmark-workflow|check-helper-scripts|check-determinism>"
                 .to_owned(),
         ),
     }
@@ -2427,6 +2429,51 @@ fn check_benchmark_workflow() -> Result<(), String> {
     Ok(())
 }
 
+fn check_helper_scripts() -> Result<(), String> {
+    let mut shell_scripts = Vec::new();
+    for entry in fs::read_dir("scripts").map_err(|e| format!("scripts: {e}"))? {
+        let entry = entry.map_err(|e| format!("scripts: {e}"))?;
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) == Some("sh") {
+            shell_scripts.push(path);
+        }
+    }
+    shell_scripts.sort();
+    if shell_scripts.is_empty() {
+        return Err("helper script check found no shell scripts".to_owned());
+    }
+    for path in &shell_scripts {
+        run_helper_check(
+            Command::new("bash").arg("-n").arg(path),
+            &format!("bash -n {}", path.display()),
+        )?;
+    }
+
+    run_helper_check(
+        Command::new("python3")
+            .arg("-B")
+            .arg("scripts/reference_logits_transformers.py")
+            .arg("--help"),
+        "python3 -B scripts/reference_logits_transformers.py --help",
+    )?;
+
+    println!(
+        "helper script structure check passed shell_scripts={}",
+        shell_scripts.len()
+    );
+    Ok(())
+}
+
+fn run_helper_check(command: &mut Command, label: &str) -> Result<(), String> {
+    let status = command
+        .status()
+        .map_err(|e| format!("{label}: failed to start: {e}"))?;
+    if !status.success() {
+        return Err(format!("{label}: exited with {status}"));
+    }
+    Ok(())
+}
+
 fn validate_ci_workflow_text(text: &str) -> Result<(), String> {
     for old_action in [
         "uses: actions/checkout@v4",
@@ -2543,6 +2590,10 @@ fn validate_ci_workflow_text(text: &str) -> Result<(), String> {
         (
             "benchmark workflow self-check in hygiene",
             "cargo run -p xtask -- check-benchmark-workflow",
+        ),
+        (
+            "helper script self-check in hygiene",
+            "cargo run -p xtask -- check-helper-scripts",
         ),
     ];
     for (label, needle) in required {
@@ -5348,6 +5399,7 @@ jobs:
       - uses: actions/checkout@v5
       - run: cargo run -p xtask -- check-ci-workflow
       - run: cargo run -p xtask -- check-benchmark-workflow
+      - run: cargo run -p xtask -- check-helper-scripts
   test:
     strategy:
       matrix:
