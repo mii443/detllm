@@ -444,13 +444,13 @@ used for validation must be explicit and covered by bit-equivalence tests.
 Inline assembly via `asm!` or `global_asm!` is rejected because it can bypass
 the reviewed `core::arch` SIMD paths and their bit-equivalence tests.
 Explicit floating-point iterator reductions such as `.sum::<f32>()`,
-`Iterator::sum::<f32>(...)`, inferred `.sum()` calls, `.reduce(...)`,
-`.fold(...)`, `.try_fold(...)`, and the corresponding UFCS forms are also
-rejected; numeric reductions must use the fixed 8-lane helpers or the locally
-specified sequential accumulation sites. Integer-only or otherwise nonnumeric
-iterator reductions require a local `determinism-allow` marker so future
-inferred floating-point reductions cannot hide behind assignment-side type
-inference.
+`Iterator::sum::<f32>(...)`, `.product::<f32>()`, inferred `.sum()` or
+`.product()` calls, `.reduce(...)`, `.fold(...)`, `.try_fold(...)`, and the
+corresponding UFCS forms are also rejected; numeric reductions must use the
+fixed 8-lane helpers or the locally specified sequential accumulation sites.
+Integer-only or otherwise nonnumeric iterator reductions require a local
+`determinism-allow` marker so future inferred floating-point reductions cannot
+hide behind assignment-side type inference.
 It covers both associated-function spellings such as `f64::exp` and method-call
 spellings such as `x.exp()`, so validation helpers cannot accidentally
 reintroduce platform libm through Rust's primitive float methods.

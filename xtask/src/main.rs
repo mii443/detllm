@@ -333,6 +333,26 @@ const DETERMINISM_BANNED_PATTERNS: &[(&str, &str)] = &[
         "inferred iterator sums must be explicitly reviewed as integer-only or replaced by fixed-order helpers",
     ),
     (
+        ".product::<f32>", // determinism-allow
+        "floating-point reductions must use explicit fixed-order loops",
+    ),
+    (
+        ".product::<f64>", // determinism-allow
+        "floating-point reductions must use explicit fixed-order loops",
+    ),
+    (
+        "Iterator::product::<f32>", // determinism-allow
+        "floating-point reductions must use explicit fixed-order loops",
+    ),
+    (
+        "Iterator::product::<f64>", // determinism-allow
+        "floating-point reductions must use explicit fixed-order loops",
+    ),
+    (
+        ".product()", // determinism-allow
+        "inferred iterator products must be explicitly reviewed or replaced by fixed-order loops",
+    ),
+    (
         ".reduce(", // determinism-allow
         "iterator reductions must be explicitly reviewed or replaced by fixed-order helpers",
     ),
@@ -5857,6 +5877,9 @@ mod tests {
         let method_banned = concat!(".", "exp(");
         let fp_sum_banned = concat!(".sum::<", "f32>");
         let fp_inferred_sum_banned = concat!(".su", "m()");
+        let fp_product_banned = concat!(".product::<", "f32>");
+        let fp_inferred_product_banned = concat!(".pro", "duct()");
+        let fp_ufcs_product_banned = concat!("Iterator::product", "::<f64>");
         let fp_reduce_banned = concat!(".redu", "ce(");
         let fp_ufcs_reduce_banned = concat!("Iterator::", "reduce(");
         let fp_ufcs_sum_banned = concat!("Iterator::sum", "::<f64>");
@@ -5868,10 +5891,10 @@ mod tests {
         let fp_try_fold_banned = concat!(".try_", "fold(");
         let fp_ufcs_try_fold_banned = concat!("Iterator::", "try_fold(");
         let text = format!(
-            "let _ = {banned}(1.0);\nlet _ = {banned}(1.0); // determinism-allow\nlet _ = x{method_banned});\nlet _: f32 = xs{fp_sum_banned}();\nlet _: f32 = xs.iter(){fp_inferred_sum_banned};\nlet _: u64 = xs.iter(){fp_inferred_sum_banned}; // determinism-allow\nlet _: f32 = xs.iter(){fp_reduce_banned}|a, b| a + b);\nlet _: f32 = {fp_ufcs_reduce_banned}xs, |a, b| a + b);\nlet _: f64 = {fp_ufcs_sum_banned}(xs);\nlet _: f32 = {fp_ufcs_fold_banned}xs, 0.0, |a, b| a + b);\nlet _: f32 = xs.iter(){fp_fold_inferred_banned}, |a, b| a + b);\nlet _: f32 = xs.iter(){fp_fold_banned}, |a, b| a + b);\nlet _: f32 = xs.iter(){fp_typed_fold_banned}, |a, b| a + b);\nlet _: Result<f32, ()> = xs.iter(){fp_try_fold_banned}0.0, |a, b| Ok(a + b));\nlet _: Result<f32, ()> = {fp_ufcs_try_fold_banned}xs, 0.0, |a, b| Ok(a + b));\n"
+            "let _ = {banned}(1.0);\nlet _ = {banned}(1.0); // determinism-allow\nlet _ = x{method_banned});\nlet _: f32 = xs{fp_sum_banned}();\nlet _: f32 = xs.iter(){fp_inferred_sum_banned};\nlet _: u64 = xs.iter(){fp_inferred_sum_banned}; // determinism-allow\nlet _: f32 = xs{fp_product_banned}();\nlet _: f32 = xs.iter(){fp_inferred_product_banned};\nlet _: f64 = {fp_ufcs_product_banned}(xs);\nlet _: f32 = xs.iter(){fp_reduce_banned}|a, b| a + b);\nlet _: f32 = {fp_ufcs_reduce_banned}xs, |a, b| a + b);\nlet _: f64 = {fp_ufcs_sum_banned}(xs);\nlet _: f32 = {fp_ufcs_fold_banned}xs, 0.0, |a, b| a + b);\nlet _: f32 = xs.iter(){fp_fold_inferred_banned}, |a, b| a + b);\nlet _: f32 = xs.iter(){fp_fold_banned}, |a, b| a + b);\nlet _: f32 = xs.iter(){fp_typed_fold_banned}, |a, b| a + b);\nlet _: Result<f32, ()> = xs.iter(){fp_try_fold_banned}0.0, |a, b| Ok(a + b));\nlet _: Result<f32, ()> = {fp_ufcs_try_fold_banned}xs, 0.0, |a, b| Ok(a + b));\n"
         );
         scan_determinism_text(Path::new("sample.rs"), &text, &mut violations);
-        assert_eq!(violations.len(), 13);
+        assert_eq!(violations.len(), 16);
         let contains_violation = |line: usize, pattern: &str| {
             let location = format!("sample.rs:{line}:");
             violations
@@ -5882,15 +5905,18 @@ mod tests {
         assert!(contains_violation(3, method_banned));
         assert!(contains_violation(4, fp_sum_banned));
         assert!(contains_violation(5, fp_inferred_sum_banned));
-        assert!(contains_violation(7, fp_reduce_banned));
-        assert!(contains_violation(8, fp_ufcs_reduce_banned));
-        assert!(contains_violation(9, fp_ufcs_sum_banned));
-        assert!(contains_violation(10, fp_ufcs_fold_banned));
-        assert!(contains_violation(11, fp_method_fold_banned));
-        assert!(contains_violation(12, fp_method_fold_banned));
-        assert!(contains_violation(13, fp_method_fold_banned));
-        assert!(contains_violation(14, fp_try_fold_banned));
-        assert!(contains_violation(15, fp_ufcs_try_fold_banned));
+        assert!(contains_violation(7, fp_product_banned));
+        assert!(contains_violation(8, fp_inferred_product_banned));
+        assert!(contains_violation(9, fp_ufcs_product_banned));
+        assert!(contains_violation(10, fp_reduce_banned));
+        assert!(contains_violation(11, fp_ufcs_reduce_banned));
+        assert!(contains_violation(12, fp_ufcs_sum_banned));
+        assert!(contains_violation(13, fp_ufcs_fold_banned));
+        assert!(contains_violation(14, fp_method_fold_banned));
+        assert!(contains_violation(15, fp_method_fold_banned));
+        assert!(contains_violation(16, fp_method_fold_banned));
+        assert!(contains_violation(17, fp_try_fold_banned));
+        assert!(contains_violation(18, fp_ufcs_try_fold_banned));
     }
 
     #[test]
