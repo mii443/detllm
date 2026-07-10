@@ -2626,6 +2626,10 @@ fn validate_ci_workflow_text(text: &str) -> Result<(), String> {
             "cargo run -p xtask -- check-ci-workflow",
         ),
         (
+            "determinism self-check in hygiene",
+            "cargo run -p xtask -- check-determinism",
+        ),
+        (
             "benchmark workflow self-check in hygiene",
             "cargo run -p xtask -- check-benchmark-workflow",
         ),
@@ -5394,6 +5398,12 @@ floating_table = { version = "2.0" }
         let err = validate_ci_workflow_text(&missing_nightly).expect_err("missing nightly");
         assert!(err.contains("nightly TinyLlama job"), "{err}");
 
+        let missing_determinism =
+            valid.replace("      - run: cargo run -p xtask -- check-determinism\n", "");
+        let err = validate_ci_workflow_text(&missing_determinism)
+            .expect_err("missing determinism self-check");
+        assert!(err.contains("determinism self-check"), "{err}");
+
         let old_checkout = valid.replace("actions/checkout@v5", "actions/checkout@v4");
         let err = validate_ci_workflow_text(&old_checkout).expect_err("old checkout");
         assert!(err.contains("Node.js 20 action"), "{err}");
@@ -5435,6 +5445,7 @@ jobs:
   hygiene:
     steps:
       - uses: actions/checkout@v5
+      - run: cargo run -p xtask -- check-determinism
       - run: cargo run -p xtask -- check-ci-workflow
       - run: cargo run -p xtask -- check-benchmark-workflow
       - run: cargo run -p xtask -- check-helper-scripts
