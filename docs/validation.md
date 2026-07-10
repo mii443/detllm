@@ -2135,6 +2135,18 @@ cmp testdata/tiny.tokens.txt wasm-codec-smoke/tiny-f32.restored
 
 The same commands run for `testdata/tiny-qmix.gguf`.
 
+Local build-only check on 2026-07-10 after commit
+`7d959ff Record latest CI success`:
+
+```sh
+cargo build -p det-cli --target wasm32-wasip1
+```
+
+This passed with the installed `wasm32-wasip1` target. `wasmtime` was not
+installed in the local environment for this run, so wasm execution remains
+covered by the GitHub Actions `wasm` job and the earlier local wasmtime run
+recorded below.
+
 Local run recorded with `wasmtime 46.0.1 (823d1b8f2 2026-06-24)`:
 
 ```sh
