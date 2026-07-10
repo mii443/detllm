@@ -21,6 +21,26 @@ fn detllm() -> &'static str {
 }
 
 #[test]
+fn selftest_reports_ok_through_cli() {
+    let root = workspace_root();
+    let output = Command::new(detllm())
+        .current_dir(&root)
+        .arg("selftest")
+        .output()
+        .expect("run detllm selftest");
+
+    assert!(
+        output.status.success(),
+        "detllm selftest failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("utf8 stdout"),
+        "ok\n"
+    );
+}
+
+#[test]
 fn logits_hash_matches_testdata_golden_through_cli() {
     let root = workspace_root();
     let tokens = fs::read_to_string(root.join("testdata/tiny.tokens.txt")).expect("tokens fixture");
