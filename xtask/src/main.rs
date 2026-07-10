@@ -28,6 +28,26 @@ const DETERMINISM_BANNED_PATTERNS: &[(&str, &str)] = &[
         "platform transcendental functions are forbidden",
     ), // determinism-allow
     (
+        "f32::log(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f32::ln_1p(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f32::exp_m1(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f32::powi(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f32::sin_cos(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
         "f32::tanh",
         "platform transcendental functions are forbidden",
     ), // determinism-allow
@@ -36,6 +56,17 @@ const DETERMINISM_BANNED_PATTERNS: &[(&str, &str)] = &[
     (".cos(", "use vendored deterministic libm routines"),         // determinism-allow
     (".ln(", "use det_num deterministic ln routines"),             // determinism-allow
     (".powf(", "platform transcendental functions are forbidden"), // determinism-allow
+    (".log(", "platform transcendental functions are forbidden"),  // determinism-allow
+    (".ln_1p(", "platform transcendental functions are forbidden"), // determinism-allow
+    (
+        ".exp_m1(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (".powi(", "platform transcendental functions are forbidden"), // determinism-allow
+    (
+        ".sin_cos(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
     (".tanh(", "platform transcendental functions are forbidden"), // determinism-allow
     (
         "f32::exp2(",
@@ -98,6 +129,26 @@ const DETERMINISM_BANNED_PATTERNS: &[(&str, &str)] = &[
     ("f64::ln", "use vendored deterministic libm routines"),       // determinism-allow
     (
         "f64::powf",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f64::log(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f64::ln_1p(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f64::exp_m1(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f64::powi(",
+        "platform transcendental functions are forbidden",
+    ), // determinism-allow
+    (
+        "f64::sin_cos(",
         "platform transcendental functions are forbidden",
     ), // determinism-allow
     (
@@ -5800,6 +5851,11 @@ mod tests {
     fn determinism_scan_rejects_extended_platform_transcendentals() {
         let mut violations = Vec::new();
         let banned_patterns = [
+            concat!("f32::", "log("),
+            concat!("f32::", "ln_1p("),
+            concat!("f32::", "exp_m1("),
+            concat!("f32::", "powi("),
+            concat!("f32::", "sin_cos("),
             concat!("f32::", "exp2("),
             concat!("f32::", "log2("),
             concat!("f32::", "log10("),
@@ -5811,6 +5867,11 @@ mod tests {
             concat!("f32::", "cosh("),
             concat!("f32::", "cbrt("),
             concat!("f32::", "hypot("),
+            concat!(".", "log("),
+            concat!(".", "ln_1p("),
+            concat!(".", "exp_m1("),
+            concat!(".", "powi("),
+            concat!(".", "sin_cos("),
             concat!(".", "exp2("),
             concat!(".", "log2("),
             concat!(".", "log10("),
@@ -5822,6 +5883,11 @@ mod tests {
             concat!(".", "cosh("),
             concat!(".", "cbrt("),
             concat!(".", "hypot("),
+            concat!("f64::", "log("),
+            concat!("f64::", "ln_1p("),
+            concat!("f64::", "exp_m1("),
+            concat!("f64::", "powi("),
+            concat!("f64::", "sin_cos("),
             concat!("f64::", "exp2("),
             concat!("f64::", "log2("),
             concat!("f64::", "log10("),
