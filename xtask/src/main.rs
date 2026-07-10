@@ -353,8 +353,30 @@ const DETERMINISM_BANNED_PATTERNS: &[(&str, &str)] = &[
         "floating-point reductions must use det_num fixed-order helpers",
     ),
 ];
-const NATIVE_LINK_DEPENDENCY_NAMES: &[&str] =
-    &["bindgen", "cc", "clang-sys", "cmake", "cxx", "pkg-config"];
+const NATIVE_LINK_DEPENDENCY_NAMES: &[&str] = &[
+    "accelerate-src",
+    "bindgen",
+    "blas",
+    "blas-src",
+    "blas-sys",
+    "cc",
+    "cblas",
+    "cblas-sys",
+    "clang-sys",
+    "cmake",
+    "cxx",
+    "intel-mkl-src",
+    "lapack",
+    "lapack-src",
+    "lapack-sys",
+    "libm",
+    "libm-sys",
+    "netlib-src",
+    "openblas-src",
+    "openblas-sys",
+    "pkg-config",
+    "sleef-sys",
+];
 
 #[derive(Clone, Copy)]
 struct ModelSpec {
@@ -6100,6 +6122,9 @@ floating_table = { version = "2.0" }
         let cc_dep = concat!("c", "c");
         let bindgen_dep = concat!("bind", "gen");
         let pkg_config_dep = concat!("pkg", "-config");
+        let openblas_dep = concat!("open", "blas-src");
+        let blas_sys_dep = concat!("blas", "-sys");
+        let libm_dep = concat!("lib", "m");
         let text = format!(
             r#"
 [package]
@@ -6113,6 +6138,11 @@ version = "0.1.0"
 
 [dev-dependencies]
 {pkg_config_dep} = "=0.3.0"
+
+[dependencies]
+{openblas_dep} = "=0.10.0"
+{blas_sys_dep} = "=0.1.0"
+{libm_dep} = "=0.2.8"
 "#
         );
         scan_dependency_policy_text(Path::new("Cargo.toml"), &text, &mut violations);
@@ -6123,6 +6153,9 @@ version = "0.1.0"
             cc_dep,
             bindgen_dep,
             pkg_config_dep,
+            openblas_dep,
+            blas_sys_dep,
+            libm_dep,
         ] {
             assert!(
                 violations

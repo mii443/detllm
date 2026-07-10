@@ -463,6 +463,9 @@ dependencies are accepted, while external dependencies must use exact
 `=x.y.z` versions. This keeps future third-party additions aligned with the
 `detllm-design.md` requirement that numerically relevant dependencies not float
 across builds.
+Native numeric dependencies and wrappers such as BLAS/LAPACK/OpenBLAS/MKL,
+SLEEF, and external `libm` crates are rejected alongside native build/link
+tooling; deterministic math must stay in reviewed Rust source or vendored code.
 
 ## Compression Smoke
 
