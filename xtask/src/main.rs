@@ -121,9 +121,10 @@ fn real_main() -> Result<(), String> {
             verify_logits_hashes(parse_verify_logits_hashes_opts(args.collect())?)
         }
         Some("check-ci-workflow") => check_ci_workflow(),
+        Some("check-benchmark-workflow") => check_benchmark_workflow(),
         Some("check-determinism") => check_determinism(),
         _ => Err(
-            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf [--metadata-prefix]|bench-file --model model.gguf --input file [--limit-bytes N] [--limit-tokens N] [--n-ctx N] [--iters N] [--threads N] [--progress-every N] [--progress-summary PATH] [--summary PATH] [--output-dtlz PATH] [--checkpoint PATH --checkpoint-every N] [--verify-dtlz PATH] [--no-warmup] [--encode-only] [--show-phases] [--estimate-full-run]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N] [--worst-rows N] [--top-diffs N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-determinism>"
+            "usage: cargo run -p xtask -- <generate-testdata [--check]|bench-testdata [--iters N]|model-info --model model.gguf [--metadata-prefix]|bench-file --model model.gguf --input file [--limit-bytes N] [--limit-tokens N] [--n-ctx N] [--iters N] [--threads N] [--progress-every N] [--progress-summary PATH] [--summary PATH] [--output-dtlz PATH] [--checkpoint PATH --checkpoint-every N] [--verify-dtlz PATH] [--no-warmup] [--encode-only] [--show-phases] [--estimate-full-run]|compare-logits --actual det.bin --reference ref.bin [--min-cosine X] [--row-size N] [--rows N] [--worst-rows N] [--top-diffs N]|compare-llamacpp-logprobs --model model.gguf --reference llama.logits [--max-rms-diff X] [--max-abs-diff X] [--max-target-abs-diff X] [--threads N]|verify-logits-hashes --dir DIR --expected-count N|check-ci-workflow|check-benchmark-workflow|check-determinism>"
                 .to_owned(),
         ),
     }
@@ -2418,6 +2419,14 @@ fn check_ci_workflow() -> Result<(), String> {
     Ok(())
 }
 
+fn check_benchmark_workflow() -> Result<(), String> {
+    let path = Path::new(".github/workflows/benchmarks.yml");
+    let text = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    validate_benchmark_workflow_text(&text)?;
+    println!("benchmark workflow structure check passed");
+    Ok(())
+}
+
 fn validate_ci_workflow_text(text: &str) -> Result<(), String> {
     for old_action in [
         "uses: actions/checkout@v4",
@@ -2531,6 +2540,10 @@ fn validate_ci_workflow_text(text: &str) -> Result<(), String> {
             "workflow self-check in hygiene",
             "cargo run -p xtask -- check-ci-workflow",
         ),
+        (
+            "benchmark workflow self-check in hygiene",
+            "cargo run -p xtask -- check-benchmark-workflow",
+        ),
     ];
     for (label, needle) in required {
         if !text.contains(needle) {
@@ -2559,6 +2572,83 @@ fn validate_ci_workflow_text(text: &str) -> Result<(), String> {
                 .to_owned(),
         );
     }
+    Ok(())
+}
+
+fn validate_benchmark_workflow_text(text: &str) -> Result<(), String> {
+    for old_action in [
+        "uses: actions/checkout@v4",
+        "uses: actions/upload-artifact@v4",
+    ] {
+        if text.contains(old_action) {
+            return Err(format!(
+                "benchmark workflow must not use Node.js 20 action: {old_action}"
+            ));
+        }
+    }
+
+    let required = [
+        ("manual workflow dispatch trigger", "  workflow_dispatch:"),
+        ("iters workflow input", "      iters:"),
+        ("benchmark job", "  bench-testdata:"),
+        ("matrix fail-fast disabled", "      fail-fast: false"),
+        ("x86_64-linux target", "name: x86_64-linux"),
+        ("aarch64-macos target", "name: aarch64-macos"),
+        ("aarch64-linux target", "name: aarch64-linux"),
+        ("node24 checkout action", "uses: actions/checkout@v5"),
+        (
+            "stable rust toolchain",
+            "uses: dtolnay/rust-toolchain@stable",
+        ),
+        (
+            "positive iters validation",
+            "iters must be greater than zero",
+        ),
+        (
+            "benchmark command",
+            "cargo run --release -p xtask -- bench-testdata --iters",
+        ),
+        (
+            "benchmark target metadata",
+            "printf 'benchmark-target=%s\\n' '${{ matrix.name }}'",
+        ),
+        (
+            "runner OS metadata",
+            "printf 'runner-os=%s\\n' \"$RUNNER_OS\"",
+        ),
+        (
+            "runner architecture metadata",
+            "printf 'runner-arch=%s\\n' \"$RUNNER_ARCH\"",
+        ),
+        ("kernel metadata", "uname -a"),
+        ("rustc metadata", "rustc --version"),
+        (
+            "node24 artifact upload action",
+            "uses: actions/upload-artifact@v6",
+        ),
+        ("artifact naming", "name: bench-testdata-${{ matrix.name }}"),
+    ];
+    for (label, needle) in required {
+        if !text.contains(needle) {
+            return Err(format!("benchmark workflow is missing {label}: {needle}"));
+        }
+    }
+
+    let benchmark_targets =
+        text.matches("name: aarch64-").count() + text.matches("name: x86_64-linux").count();
+    if benchmark_targets != 3 {
+        return Err(format!(
+            "benchmark workflow must define exactly three benchmark targets, found {benchmark_targets}"
+        ));
+    }
+
+    let artifact_uploads = text.matches("uses: actions/upload-artifact@v6").count();
+    if artifact_uploads != 1 {
+        return Err(format!(
+            "benchmark workflow must upload exactly one artifact group, found {artifact_uploads}"
+        ));
+    }
+
     Ok(())
 }
 
@@ -5220,6 +5310,30 @@ floating_table = { version = "2.0" }
         assert!(err.contains("Node.js 20 action"), "{err}");
     }
 
+    #[test]
+    fn benchmark_workflow_check_requires_target_matrix_and_artifacts() {
+        let valid = valid_benchmark_workflow_text();
+        validate_benchmark_workflow_text(valid).expect("valid benchmark workflow");
+
+        let missing_target = valid.replace("          - name: aarch64-linux", "");
+        let err = validate_benchmark_workflow_text(&missing_target)
+            .expect_err("missing benchmark target");
+        assert!(err.contains("aarch64-linux target"), "{err}");
+
+        let missing_artifact = valid.replace("uses: actions/upload-artifact@v6", "");
+        let err = validate_benchmark_workflow_text(&missing_artifact).expect_err("missing upload");
+        assert!(err.contains("artifact upload action"), "{err}");
+
+        let missing_iters_guard = valid.replace("iters must be greater than zero", "");
+        let err = validate_benchmark_workflow_text(&missing_iters_guard)
+            .expect_err("missing iters guard");
+        assert!(err.contains("positive iters validation"), "{err}");
+
+        let old_checkout = valid.replace("actions/checkout@v5", "actions/checkout@v4");
+        let err = validate_benchmark_workflow_text(&old_checkout).expect_err("old checkout");
+        assert!(err.contains("Node.js 20 action"), "{err}");
+    }
+
     fn valid_ci_workflow_text() -> &'static str {
         r#"
 on:
@@ -5233,6 +5347,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: cargo run -p xtask -- check-ci-workflow
+      - run: cargo run -p xtask -- check-benchmark-workflow
   test:
     strategy:
       matrix:
@@ -5284,6 +5399,48 @@ jobs:
       - run: cargo run --release -p det-cli -- logits -m "$TINYLLAMA_GGUF" --tokens 1,2,3 --hash --threads 2
       - run: cargo run --release -p det-cli -- compress -m "$TINYLLAMA_GGUF" -i /tmp/detllm-nightly-input.txt -o /tmp/detllm-nightly-output.dtlz --n-ctx 8 --threads 2
       - run: cargo run --release -p det-cli -- decompress -m "$TINYLLAMA_GGUF" -i /tmp/detllm-nightly-output.dtlz -o /tmp/detllm-nightly-restored.txt --threads 2
+"#
+    }
+
+    fn valid_benchmark_workflow_text() -> &'static str {
+        r#"
+on:
+  workflow_dispatch:
+    inputs:
+      iters:
+jobs:
+  bench-testdata:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86_64-linux
+          - name: aarch64-macos
+          - name: aarch64-linux
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - run: |
+          case "${{ github.event.inputs.iters }}" in
+            0)
+              echo "iters must be greater than zero" >&2
+              exit 2
+              ;;
+          esac
+          {
+            printf 'benchmark-target=%s\n' '${{ matrix.name }}'
+            printf 'runner-os=%s\n' "$RUNNER_OS"
+            printf 'runner-arch=%s\n' "$RUNNER_ARCH"
+            printf 'uname='
+            uname -a
+            printf 'rustc='
+            rustc --version
+            printf 'command=cargo run --release -p xtask -- bench-testdata --iters %s\n' '${{ github.event.inputs.iters }}'
+            cargo run --release -p xtask -- bench-testdata --iters "${{ github.event.inputs.iters }}"
+          } | tee bench-testdata-${{ matrix.name }}.txt
+      - uses: actions/upload-artifact@v6
+        with:
+          name: bench-testdata-${{ matrix.name }}
 "#
     }
 
