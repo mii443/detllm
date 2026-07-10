@@ -6089,6 +6089,49 @@ mod tests {
     }
 
     #[test]
+    fn determinism_scan_rejects_unordered_hash_collections() {
+        let mut violations = Vec::new();
+        let hash_map = concat!("Hash", "Map");
+        let hash_set = concat!("Hash", "Set");
+        let text = [
+            format!("use std::collections::{hash_map};"),
+            format!("let _: std::collections::{hash_map}<u8, u8> = std::collections::{hash_map}::new();"),
+            format!("use std::collections::{{BTreeMap, {hash_map} as Map}};"),
+            format!("let _: {hash_set}<u8> = {hash_set}::new();"),
+            format!("let _: BTreeMap<u8, u8> = BTreeMap::new();"),
+        ]
+        .join("\n");
+
+        scan_determinism_text(Path::new("sample.rs"), &text, &mut violations);
+
+        assert_eq!(violations.len(), 4, "{violations:?}");
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("sample.rs:1:") && violation.contains(hash_map)),
+            "{violations:?}"
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("sample.rs:2:") && violation.contains(hash_map)),
+            "{violations:?}"
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("sample.rs:3:") && violation.contains(hash_map)),
+            "{violations:?}"
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("sample.rs:4:") && violation.contains(hash_set)),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
     fn determinism_scan_rejects_runtime_dispatch_fast_math_and_approximate_ops() {
         let mut violations = Vec::new();
         let runtime_dispatch = concat!("is_x86", "_feature_detected!");
