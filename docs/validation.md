@@ -473,6 +473,9 @@ across builds.
 Native numeric dependencies and wrappers such as BLAS/LAPACK/OpenBLAS/MKL,
 SLEEF, and external `libm` crates are rejected alongside native build/link
 tooling; deterministic math must stay in reviewed Rust source or vendored code.
+The dependency hygiene check also inspects `Cargo.lock` package names for the
+same native build/link tooling list, so a seemingly harmless direct dependency
+cannot hide a transitive `cc`, `cmake`, BLAS, SLEEF, or external `libm` package.
 
 ## Compression Smoke
 
