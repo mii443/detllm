@@ -408,10 +408,10 @@ All five commands passed locally. The observed CLI hashes were:
 release mode and with `--features parallel,simd`.
 
 GitHub Actions `ci` also passed for commit
-`35e367a598da6adf7116494467a12506dfc1b704`:
-<https://github.com/mii443/detllm/actions/runs/29071846577>. The public
-Actions API reported `status=completed`, `conclusion=success`, run number 119,
-created `2026-07-10T05:38:48Z`, updated `2026-07-10T05:40:04Z`.
+`3dd1e0903682544a052b812294933a67c6eba449`:
+<https://github.com/mii443/detllm/actions/runs/29072369651>. The public
+Actions API reported `status=completed`, `conclusion=success`, run number 123,
+created `2026-07-10T05:52:00Z`, updated `2026-07-10T05:53:11Z`.
 
 The AVX2 SIMD kernel path is also executed directly in CI with:
 
