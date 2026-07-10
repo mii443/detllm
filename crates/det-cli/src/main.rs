@@ -1503,6 +1503,52 @@ mod tests {
         assert!(err.contains("DTLZ header error: UnsupportedFlags"), "{err}");
         assert!(!restored_path.exists());
 
+        let encoded = det_coder::DtlzHeader {
+            flags: det_coder::FLAG_BYTE_ESCAPES,
+            model_sha256: [0; 32],
+            n_ctx: 0,
+            overlap: 0,
+            orig_len: 0,
+        }
+        .encode();
+        fs::write(&compressed_path, encoded).expect("write invalid context header");
+
+        let err = decompress(vec![
+            "-m".to_owned(),
+            missing_model_path.to_string_lossy().into_owned(),
+            "-i".to_owned(),
+            compressed_path.to_string_lossy().into_owned(),
+            "-o".to_owned(),
+            restored_path.to_string_lossy().into_owned(),
+        ])
+        .expect_err("invalid context should be rejected before model load");
+
+        assert!(err.contains("DTLZ header error: InvalidContext"), "{err}");
+        assert!(!restored_path.exists());
+
+        let encoded = det_coder::DtlzHeader {
+            flags: det_coder::FLAG_BYTE_ESCAPES,
+            model_sha256: [0; 32],
+            n_ctx: 8,
+            overlap: 8,
+            orig_len: 0,
+        }
+        .encode();
+        fs::write(&compressed_path, encoded).expect("write invalid overlap header");
+
+        let err = decompress(vec![
+            "-m".to_owned(),
+            missing_model_path.to_string_lossy().into_owned(),
+            "-i".to_owned(),
+            compressed_path.to_string_lossy().into_owned(),
+            "-o".to_owned(),
+            restored_path.to_string_lossy().into_owned(),
+        ])
+        .expect_err("invalid overlap should be rejected before model load");
+
+        assert!(err.contains("DTLZ header error: InvalidOverlap"), "{err}");
+        assert!(!restored_path.exists());
+
         let _ = fs::remove_dir_all(dir);
     }
 
