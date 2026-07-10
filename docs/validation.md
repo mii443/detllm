@@ -1655,6 +1655,32 @@ for the resumed decode verification without rewriting the saved DTLZ. It keeps
 a `<name>.progress` file updated with the latest progress row. Use
 `--limit-tokens N --encode-only --estimate-full-run` with the same wrapper only
 for preflight estimates; omit those flags for the acceptance measurement.
+The `check-helper-scripts` hygiene check also validates the
+`scripts/run-target-full-bench.sh` wrapper shape: the first-1MB byte limit,
+production context/thread defaults, summary/progress outputs, DTLZ output,
+checkpoint output, `--verify-dtlz` branch, and no-warmup default must remain
+present. The unit test
+`target_full_bench_script_check_requires_resume_safe_shape` verifies that the
+check fails if the checkpoint, progress-summary option, or verify-mode guards
+are removed.
+The tiny-fixture unit test `bench_file_verify_dtlz_replays_saved_output`
+exercises the same bench-file DTLZ persistence and resume-verification path
+without external models: it writes a DTLZ plus summary through `--output-dtlz`,
+asserts the checkpoint is removed after completion, then reruns through
+`--verify-dtlz` and checks the verify summary records `mode=verify-dtlz`, the
+`bench-file-verify-dtlz` row, and the restored SHA-256. Local validation on
+commit `18d4ae3` passed:
+
+```sh
+cargo fmt --all --check
+cargo test -p xtask
+cargo clippy -p xtask --all-targets -- -D warnings
+```
+
+GitHub Actions run
+<https://github.com/mii443/detllm/actions/runs/29084830217> completed
+successfully for the same commit, including the `hygiene`,
+native/wasm/toolchain jobs, and final `logits-hash-match` artifact comparison.
 `--estimate-full-run` adds an opt-in `bench-file-estimate` line for
 `--limit-tokens` preflights, reporting the full tokenized prefix, full input
 byte count, scale factor, measured token throughput, and estimated measured
