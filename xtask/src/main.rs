@@ -87,6 +87,10 @@ const DETERMINISM_BANNED_PATTERNS: &[(&str, &str)] = &[
         "relaxed target features are not allowed",
     ),
     (
+        "target-cpu=native", // determinism-allow
+        "host-dependent CPU code generation is forbidden",
+    ),
+    (
         "target-feature=+fma", // determinism-allow
         "FMA target features are forbidden",
     ),
@@ -5704,6 +5708,7 @@ mod tests {
         let rayon_reduce = concat!(".par_iter().", "reduce");
         let rayon_fold = concat!(".into_par_iter().", "fold");
         let fma_flag = concat!("target-feature=+", "fma");
+        let native_cpu = concat!("target-cpu=", "native");
         let fma_attr = concat!("enable = \"", "fma");
         let avx_wide = concat!("avx", "512");
         let fma_instruction = concat!("vf", "madd");
@@ -5716,6 +5721,7 @@ mod tests {
             format!("let _ = xs{rayon_reduce}(|| 0.0, |a, b| a + b);"),
             format!("let _ = xs{rayon_fold}(|| 0.0, |a, b| a + b);"),
             format!("RUSTFLAGS=\"-C {fma_flag}\""),
+            format!("RUSTFLAGS=\"-C {native_cpu}\""),
             format!("#[target_feature({fma_attr}\")] unsafe fn kernel() {{}}"),
             format!("#[cfg(target_feature = \"{avx_wide}f\")] fn wide() {{}}"),
             format!("asm!(\"{fma_instruction}132ps ymm0, ymm1, ymm2\");"),
@@ -5732,6 +5738,7 @@ mod tests {
             rayon_reduce,
             rayon_fold,
             fma_flag,
+            native_cpu,
             fma_attr,
             avx_wide,
             fma_instruction,
