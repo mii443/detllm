@@ -248,11 +248,20 @@ fn scan_determinism_text(path: &Path, text: &str, violations: &mut Vec<String>) 
 
 fn scan_dependency_policy_text(path: &Path, text: &str, violations: &mut Vec<String>) {
     let mut section = DependencyPolicySection::Other;
+    let mut table_state: Option<DependencyTablePolicyState> = None;
     for (line_idx, line) in text.lines().enumerate() {
         let trimmed = line.trim();
         if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            finalize_dependency_table_policy(path, table_state.take(), violations);
             section = classify_dependency_policy_section(trimmed);
             if let DependencyPolicySection::DependencyTable(dep_name) = &section {
+                table_state = Some(DependencyTablePolicyState {
+                    dep_name: dep_name.clone(),
+                    start_line: line_idx + 1,
+                    has_path_or_workspace: false,
+                    has_exact_version: false,
+                    saw_version: false,
+                });
                 if NATIVE_LINK_DEPENDENCY_NAMES.contains(&dep_name.as_str()) {
                     violations.push(format!(
                         "{}:{}: dependency `{dep_name}` is forbidden because native C/C++ link/build tooling is not allowed",
@@ -312,14 +321,24 @@ fn scan_dependency_policy_text(path: &Path, text: &str, violations: &mut Vec<Str
                     .map(|(key, _)| key.trim())
                     .unwrap_or_default();
                 if matches!(key, "path" | "workspace") {
+                    if let Some(table_state) = table_state.as_mut() {
+                        table_state.has_path_or_workspace = true;
+                    }
                     continue;
                 }
                 if key == "version" {
+                    if let Some(table_state) = table_state.as_mut() {
+                        table_state.saw_version = true;
+                    }
                     let value = trimmed
                         .split_once('=')
                         .map(|(_, value)| value)
                         .unwrap_or("");
-                    if !dependency_value_is_exact(value) {
+                    if dependency_value_is_exact(value) {
+                        if let Some(table_state) = table_state.as_mut() {
+                            table_state.has_exact_version = true;
+                        }
+                    } else {
                         violations.push(format!(
                             "{}:{}: dependency `{dep_name}` versions must be exact (`=x.y.z`) or path-based for deterministic builds",
                             path.display(),
@@ -331,6 +350,7 @@ fn scan_dependency_policy_text(path: &Path, text: &str, violations: &mut Vec<Str
             DependencyPolicySection::Package | DependencyPolicySection::Other => {}
         }
     }
+    finalize_dependency_table_policy(path, table_state, violations);
 }
 
 enum DependencyPolicySection {
@@ -338,6 +358,34 @@ enum DependencyPolicySection {
     DependencyList,
     DependencyTable(String),
     Other,
+}
+
+struct DependencyTablePolicyState {
+    dep_name: String,
+    start_line: usize,
+    has_path_or_workspace: bool,
+    has_exact_version: bool,
+    saw_version: bool,
+}
+
+fn finalize_dependency_table_policy(
+    path: &Path,
+    table_state: Option<DependencyTablePolicyState>,
+    violations: &mut Vec<String>,
+) {
+    let Some(table_state) = table_state else {
+        return;
+    };
+    if table_state.has_path_or_workspace || table_state.has_exact_version || table_state.saw_version
+    {
+        return;
+    }
+    violations.push(format!(
+        "{}:{}: dependency `{}` must declare an exact version (`=x.y.z`), path, or workspace source for deterministic builds",
+        path.display(),
+        table_state.start_line,
+        table_state.dep_name
+    ));
 }
 
 fn classify_dependency_policy_section(raw: &str) -> DependencyPolicySection {
@@ -5552,6 +5600,10 @@ floating_target = "2.0"
 version = "4.0"
 default-features = false
 
+[dependencies.git_detail]
+git = "https://example.invalid/repo"
+rev = "abcdef"
+
 [target.'cfg(target_os = "macos")'.dev-dependencies.{native_table_dep}]
 version = "=5.0.0"
 "#
@@ -5563,6 +5615,7 @@ version = "=5.0.0"
             "floating_target",
             native_list_dep,
             "detail",
+            "git_detail",
             native_table_dep,
         ] {
             assert!(
@@ -5572,7 +5625,7 @@ version = "=5.0.0"
                 "{violations:?}"
             );
         }
-        assert_eq!(violations.len(), 5, "{violations:?}");
+        assert_eq!(violations.len(), 6, "{violations:?}");
     }
 
     #[test]
