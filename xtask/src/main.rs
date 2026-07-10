@@ -248,11 +248,11 @@ fn scan_determinism_text(path: &Path, text: &str, violations: &mut Vec<String>) 
 }
 
 fn scan_manifest_lint_policy_text(path: &Path, text: &str, violations: &mut Vec<String>) {
-    if path == Path::new("Cargo.toml") {
-        if !text.contains("[workspace.lints.rust]") || !text.contains("unsafe_code = \"forbid\"") {
-            violations
-                .push("Cargo.toml: workspace lints must forbid unsafe_code by default".to_owned());
-        }
+    if path == Path::new("Cargo.toml")
+        && (!text.contains("[workspace.lints.rust]") || !text.contains("unsafe_code = \"forbid\""))
+    {
+        violations
+            .push("Cargo.toml: workspace lints must forbid unsafe_code by default".to_owned());
     }
 
     let is_quant_manifest = path == Path::new("crates/det-quant/Cargo.toml");
