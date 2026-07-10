@@ -1681,6 +1681,10 @@ GitHub Actions run
 <https://github.com/mii443/detllm/actions/runs/29084830217> completed
 successfully for the same commit, including the `hygiene`,
 native/wasm/toolchain jobs, and final `logits-hash-match` artifact comparison.
+The follow-up documentation commit `684335e` also completed successfully in
+GitHub Actions run
+<https://github.com/mii443/detllm/actions/runs/29085088359>, covering the same
+push CI matrix after recording this DTLZ verification coverage.
 `--estimate-full-run` adds an opt-in `bench-file-estimate` line for
 `--limit-tokens` preflights, reporting the full tokenized prefix, full input
 byte count, scale factor, measured token throughput, and estimated measured
