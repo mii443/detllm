@@ -95,6 +95,34 @@ const DETERMINISM_BANNED_PATTERNS: &[(&str, &str)] = &[
         "parallel floating-point reductions are forbidden",
     ),
     (
+        ".par_iter().reduce", // determinism-allow
+        "parallel floating-point reductions are forbidden",
+    ),
+    (
+        ".par_chunks().reduce", // determinism-allow
+        "parallel floating-point reductions are forbidden",
+    ),
+    (
+        ".into_par_iter().reduce", // determinism-allow
+        "parallel floating-point reductions are forbidden",
+    ),
+    (
+        ".par_iter().fold", // determinism-allow
+        "parallel floating-point reductions are forbidden",
+    ),
+    (
+        ".par_chunks().fold", // determinism-allow
+        "parallel floating-point reductions are forbidden",
+    ),
+    (
+        ".into_par_iter().fold", // determinism-allow
+        "parallel floating-point reductions are forbidden",
+    ),
+    (
+        ".into_par_iter().sum", // determinism-allow
+        "parallel floating-point reductions are forbidden",
+    ),
+    (
         ".sum::<f32>", // determinism-allow
         "floating-point reductions must use det_num fixed-order helpers",
     ),
@@ -5563,12 +5591,16 @@ mod tests {
         let fast_add = concat!("fadd", "_fast");
         let x86_approx = concat!("rsqrt", "ss");
         let neon_approx = concat!("frsqr", "te");
+        let rayon_reduce = concat!(".par_iter().", "reduce");
+        let rayon_fold = concat!(".into_par_iter().", "fold");
         let text = [
             format!("if std::arch::{runtime_dispatch}(\"avx2\") {{}}"),
             format!("let _ = \"{fast_math}\";"),
             format!("llvm_intrinsic(\"{fast_add}\");"),
             format!("asm!(\"{x86_approx} xmm0, xmm0\");"),
             format!("asm!(\"{neon_approx} v0.4s, v0.4s\");"),
+            format!("let _ = xs{rayon_reduce}(|| 0.0, |a, b| a + b);"),
+            format!("let _ = xs{rayon_fold}(|| 0.0, |a, b| a + b);"),
         ]
         .join("\n");
         scan_determinism_text(Path::new("sample.rs"), &text, &mut violations);
@@ -5579,6 +5611,8 @@ mod tests {
             fast_add,
             x86_approx,
             neon_approx,
+            rayon_reduce,
+            rayon_fold,
         ] {
             assert!(
                 violations
